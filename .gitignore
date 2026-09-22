@@ -1,0 +1,9 @@
+/target/
+**/*.rs.bk
+.worktrees
+CLAUDE.local.md
+.env
+.idea/
+.vscode/
+*.swp
+.DS_Store
