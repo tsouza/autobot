@@ -198,13 +198,13 @@ mod tests {
     #[test]
     fn a_number_is_resolved_to_its_node_id() {
         let api = Recorded::new(FOUND);
-        let id = node_id(&api, "tsouza/autobot", &PullRequest::Number(236)).unwrap();
+        let id = node_id(&api, "octo-org/autobot", &PullRequest::Number(236)).unwrap();
         assert_eq!(id, ID);
         assert_eq!(
             *api.calls.borrow(),
             [(
                 PULL_REQUEST_ID.to_owned(),
-                json!({ "owner": "tsouza", "name": "autobot", "number": 236 })
+                json!({ "owner": "octo-org", "name": "autobot", "number": 236 })
             )]
         );
     }
@@ -213,14 +213,14 @@ mod tests {
     fn a_node_id_is_used_as_is_without_a_call() {
         let api = Recorded::new(NOT_FOUND);
         let pr = PullRequest::NodeId(ID.to_owned());
-        assert_eq!(node_id(&api, "tsouza/autobot", &pr).unwrap(), ID);
+        assert_eq!(node_id(&api, "octo-org/autobot", &pr).unwrap(), ID);
         assert!(api.calls.borrow().is_empty());
     }
 
     #[test]
     fn an_unknown_number_or_a_bad_repository_is_an_error() {
         let api = Recorded::new(NOT_FOUND);
-        let err = node_id(&api, "tsouza/autobot", &PullRequest::Number(99999)).unwrap_err();
+        let err = node_id(&api, "octo-org/autobot", &PullRequest::Number(99999)).unwrap_err();
         assert!(err.to_string().contains("number of 99999"), "{err}");
         let err = node_id(&api, "autobot", &PullRequest::Number(1)).unwrap_err();
         assert!(err.to_string().contains("owner/name"), "{err}");
