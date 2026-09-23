@@ -6,17 +6,66 @@
 //!
 //! The repository is resolved once, by [`repository`]: `GITHUB_REPOSITORY` when it is set
 //! and not blank (the value is trimmed), otherwise the repository the `origin` remote points at.
+//!
+//! The pull request scripts share [`pr_number`] for their only argument and [`pages`] for
+//! reading a paged list resource.
 
 pub mod graph;
+pub mod label_gate;
 pub mod main_red;
 pub mod settings;
 pub mod verdict;
 
 use crate::process::Cmd;
 use crate::{Error, Result, git};
+use serde_json::Value;
+use settings::Api;
 use std::path::Path;
 
 const API: &str = "https://api.github.com";
+
+/// Items requested per page by [`pages`]; a shorter page is the last one.
+pub const PAGE_SIZE: usize = 100;
+
+/// Every item of the paged list resource `path` relative to the repository (for example
+/// `pulls/12/files`), in the order GitHub returns them. Pages of [`PAGE_SIZE`] items are read
+/// until one is shorter, so a list whose length is a multiple of [`PAGE_SIZE`] ends with an
+/// empty page.
+///
+/// # Errors
+/// Fails if a GitHub call fails or a page is not a JSON array.
+pub fn pages(api: &impl Api, path: &str) -> Result<Vec<Value>> {
+    let mut all = Vec::new();
+    for page in 1.. {
+        let path = format!("{path}?per_page={PAGE_SIZE}&page={page}");
+        let Value::Array(batch) = api.request(Method::Get, &path, None)? else {
+            return Err(Error::Parse(format!("{path}: not a JSON array")));
+        };
+        let last = batch.len() < PAGE_SIZE;
+        all.extend(batch);
+        if last {
+            break;
+        }
+    }
+    Ok(all)
+}
+
+/// The pull request number that is the only element of `args`; `script` names the script in
+/// the usage error.
+///
+/// # Errors
+/// Fails when `args` is empty, has more than one element, or its element is not a number.
+pub fn pr_number(args: impl IntoIterator<Item = String>, script: &str) -> Result<u64> {
+    let mut args = args.into_iter();
+    match (args.next(), args.next()) {
+        (Some(pr), None) => pr
+            .parse()
+            .map_err(|_| Error::Parse(format!("not a pull request number: `{pr}`"))),
+        _ => Err(Error::Parse(format!(
+            "usage: {script} <pull-request-number>"
+        ))),
+    }
+}
 
 /// Resolves the API token from an environment lookup and a CLI fallback.
 ///
@@ -153,7 +202,9 @@ fn headers<B>(req: ureq::RequestBuilder<B>, auth: &str) -> ureq::RequestBuilder<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
+    use serde_json::json;
+    use std::cell::{Cell, RefCell};
+    use std::collections::BTreeMap;
 
     const ALIAS_REMOTE: &str = "git@github.com-tsouza:tsouza/autobot.git\n";
 
@@ -191,5 +242,112 @@ mod tests {
         assert!(err.to_string().contains("not a GitHub remote URL"), "{err}");
         let err = resolve_repo(None, || Err(Error::Parse("no origin".into()))).unwrap_err();
         assert!(err.to_string().contains("no origin"), "{err}");
+    }
+
+    /// Serves GET responses by path, fails an unknown path the way GitHub answers an unknown
+    /// resource, and records every path asked for.
+    struct Pages {
+        responses: BTreeMap<String, Value>,
+        gets: RefCell<Vec<String>>,
+    }
+
+    impl Api for Pages {
+        fn request(&self, method: Method, path: &str, _body: Option<&Value>) -> Result<Value> {
+            assert_eq!(method, Method::Get, "paging only reads");
+            self.gets.borrow_mut().push(path.to_owned());
+            self.responses
+                .get(path)
+                .cloned()
+                .ok_or_else(|| Error::Http(format!("404 {path}")))
+        }
+    }
+
+    fn numbered(range: std::ops::Range<usize>) -> Value {
+        range.map(|n| json!({ "n": n })).collect()
+    }
+
+    #[test]
+    fn pages_reads_until_a_short_page_and_keeps_order() {
+        let api = Pages {
+            responses: BTreeMap::from([
+                (
+                    "pulls/7/files?per_page=100&page=1".to_owned(),
+                    numbered(0..100),
+                ),
+                (
+                    "pulls/7/files?per_page=100&page=2".to_owned(),
+                    numbered(100..103),
+                ),
+            ]),
+            gets: RefCell::new(Vec::new()),
+        };
+        let items = pages(&api, "pulls/7/files").unwrap();
+        assert_eq!(Value::Array(items), numbered(0..103));
+        assert_eq!(api.gets.borrow().len(), 2);
+    }
+
+    #[test]
+    fn pages_reads_the_empty_page_after_an_exact_multiple() {
+        let api = Pages {
+            responses: BTreeMap::from([
+                (
+                    "issues/7/comments?per_page=100&page=1".to_owned(),
+                    numbered(0..100),
+                ),
+                (
+                    "issues/7/comments?per_page=100&page=2".to_owned(),
+                    json!([]),
+                ),
+            ]),
+            gets: RefCell::new(Vec::new()),
+        };
+        assert_eq!(pages(&api, "issues/7/comments").unwrap().len(), 100);
+        assert_eq!(
+            *api.gets.borrow(),
+            [
+                "issues/7/comments?per_page=100&page=1",
+                "issues/7/comments?per_page=100&page=2",
+            ]
+        );
+    }
+
+    #[test]
+    fn pages_reports_a_page_that_is_not_an_array_and_a_failed_call() {
+        let api = Pages {
+            responses: BTreeMap::from([(
+                "pulls/7/files?per_page=100&page=1".to_owned(),
+                json!({"message": "Not Found"}),
+            )]),
+            gets: RefCell::new(Vec::new()),
+        };
+        let err = pages(&api, "pulls/7/files").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            Error::Parse("pulls/7/files?per_page=100&page=1: not a JSON array".into()).to_string()
+        );
+        let err = pages(&api, "pulls/8/files").unwrap_err();
+        assert!(err.to_string().contains("404 pulls/8/files"), "{err}");
+    }
+
+    #[test]
+    fn pr_number_takes_exactly_one_number_and_names_the_script() {
+        assert_eq!(pr_number(["52".to_owned()], "label_gate").unwrap(), 52);
+        let err = pr_number(Vec::new(), "label_gate").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("usage: label_gate <pull-request-number>"),
+            "{err}"
+        );
+        let err = pr_number(["1".to_owned(), "2".to_owned()], "review_gate").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("usage: review_gate <pull-request-number>"),
+            "{err}"
+        );
+        let err = pr_number(["x".to_owned()], "review_gate").unwrap_err();
+        assert!(
+            err.to_string().contains("not a pull request number: `x`"),
+            "{err}"
+        );
     }
 }
