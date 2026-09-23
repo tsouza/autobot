@@ -88,6 +88,9 @@ pub enum ProviderRule {
     /// A send the provider rate limited answers [`SendError::RateLimited`], never an
     /// acknowledgement or a transport fault, and applies nothing.
     RateLimitReported,
+    /// A rate-limit answer claims non-application exactly when the operation's capability
+    /// declares `rate_limit_authoritative`.
+    RateLimitAuthority,
 }
 
 /// Runs the provider suite against the adapters `harness` makes.
@@ -430,11 +433,25 @@ fn faulted<H: ProviderHarness>(
     harness.fault_next_send(&mut adapter, fault);
     let sent = adapter.send(&req);
     if fault == ProviderFault::RateLimited {
-        c.check(
-            sent == Err(SendError::RateLimited),
-            ProviderRule::RateLimitReported,
-            || format!("a rate-limited send of {op} answered {sent:?}"),
-        );
+        match sent {
+            Err(SendError::RateLimited {
+                proves_non_application,
+            }) => c.check(
+                proves_non_application == cap.rate_limit_authoritative,
+                ProviderRule::RateLimitAuthority,
+                || {
+                    format!(
+                        "a rate-limited send of {op} claimed non-application {proves_non_application} \
+                         with rate_limit_authoritative {}",
+                        cap.rate_limit_authoritative
+                    )
+                },
+            ),
+            other => c.fail(
+                ProviderRule::RateLimitReported,
+                format!("a rate-limited send of {op} answered {other:?}"),
+            ),
+        }
         let applied = harness.applications(&adapter, op, &key);
         c.check(applied == 0, ProviderRule::RateLimitReported, || {
             format!("a rate-limited send of {op} was applied {applied} times")

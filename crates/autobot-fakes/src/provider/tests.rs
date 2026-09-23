@@ -119,12 +119,39 @@ fn a_rate_limit_throttles_its_window_and_then_lets_calls_through() {
         forge(Script::new().then(Trigger::any(Call::Send), Fault::RateLimited { calls: 2 }));
     let req = request("label", key(3));
     for _ in 0..2 {
-        assert_eq!(p.send(&req), Err(SendError::RateLimited));
+        assert_eq!(
+            p.send(&req),
+            Err(SendError::RateLimited {
+                proves_non_application: false
+            })
+        );
         assert_eq!(p.applications(&req.operation, &req.operation_key), 0);
     }
     assert!(p.script().is_empty());
     assert!(matches!(p.send(&req), Ok(SendAck::Accepted(_))));
     assert_eq!(p.applications(&req.operation, &req.operation_key), 1);
+}
+
+#[test]
+fn a_rate_limit_answer_claims_non_application_only_under_an_authoritative_capability() {
+    let script = Script::new().then(Trigger::any(Call::Send), Fault::RateLimited { calls: 2 });
+    let mut ci = ProviderFixture::ci().unwrap().with_script(script).build();
+    for (operation, authoritative) in [("run", true), ("status", false)] {
+        let cap = ci
+            .capabilities()
+            .into_iter()
+            .find(|c| c.operation.as_str() == operation)
+            .unwrap();
+        assert_eq!(cap.rate_limit_authoritative, authoritative);
+        let req = request(operation, key(9));
+        assert_eq!(
+            ci.send(&req),
+            Err(SendError::RateLimited {
+                proves_non_application: authoritative
+            })
+        );
+        assert_eq!(ci.applications(&req.operation, &req.operation_key), 0);
+    }
 }
 
 #[test]
