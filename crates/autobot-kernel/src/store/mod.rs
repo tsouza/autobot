@@ -56,8 +56,9 @@
 //! - A domain commit sets `last_receipt_ref` to its command's receipt; a control commit leaves
 //!   it, since its receipt is the ring entry it appends.
 //! - A lane commit refused by a guard of its transition ends [`CommitOutcome::Refused`] with
-//!   the guard's identifier and the revision and commit sequence it read, the proof the owner
-//!   ruled for a guard refusal in #328, which the design text does not yet state.
+//!   the guard's identifier and the revision and commit sequence it read: the guard-refusal
+//!   proof of KERNEL §2, which names the guard and the revision; the commit sequence goes
+//!   beyond that text.
 //! - [`CommitOutcome`] is not a [`CommitObservation`](crate::types::CommitObservation): the
 //!   protocol sees only the target, and a rejection needs the command's receipt as well
 //!   (KERNEL §2), so the protocol reports what the target proves and leaves rejection to the
