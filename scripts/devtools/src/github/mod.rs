@@ -1,4 +1,4 @@
-//! A minimal GitHub REST client.
+//! A minimal GitHub REST and GraphQL client.
 //!
 //! The token comes from the first non-empty value of `GITHUB_TOKEN` and `GH_TOKEN`; when both
 //! are unset or empty, it is read from `<cli> auth token`, where `<cli>` is `AUTOBOT_GH_CLI` if
@@ -10,6 +10,7 @@
 //! The pull request scripts share [`pr_number`] for their only argument and [`pages`] for
 //! reading a paged list resource.
 
+pub mod automerge;
 pub mod graph;
 pub mod label_gate;
 pub mod main_red;
@@ -23,6 +24,7 @@ use settings::Api;
 use std::path::Path;
 
 const API: &str = "https://api.github.com";
+const GRAPHQL: &str = "https://api.github.com/graphql";
 
 /// Items requested per page by [`pages`]; a shorter page is the last one.
 pub const PAGE_SIZE: usize = 100;
@@ -166,15 +168,67 @@ impl Client {
         } else {
             format!("{API}/repos/{}/{path}", self.repo)
         };
+        self.send(method, &url, body)
+    }
+
+    /// POSTs a GraphQL `query` (or mutation) with its `variables` and returns the `data` of
+    /// the response, as [`graphql_data`] extracts it.
+    ///
+    /// # Errors
+    /// Fails on a transport error, a non-success status, a non-JSON body, or a response that
+    /// carries GraphQL errors or no `data`.
+    pub fn graphql(&self, query: &str, variables: &Value) -> Result<Value> {
+        let body = serde_json::json!({ "query": query, "variables": variables });
+        graphql_data(self.send(Method::Post, GRAPHQL, Some(&body))?)
+    }
+
+    /// Sends `method` to the absolute `url` with the headers every request carries.
+    fn send(&self, method: Method, url: &str, body: Option<&Value>) -> Result<Value> {
         let auth = format!("Bearer {}", self.token);
         let http = |e: ureq::Error| Error::Http(format!("{method:?} {url}: {e}"));
         let response = match method {
-            Method::Get => headers(self.agent.get(&url), &auth).call(),
-            Method::Post => headers(self.agent.post(&url), &auth).send_json(body),
-            Method::Put => headers(self.agent.put(&url), &auth).send_json(body),
-            Method::Patch => headers(self.agent.patch(&url), &auth).send_json(body),
+            Method::Get => headers(self.agent.get(url), &auth).call(),
+            Method::Post => headers(self.agent.post(url), &auth).send_json(body),
+            Method::Put => headers(self.agent.put(url), &auth).send_json(body),
+            Method::Patch => headers(self.agent.patch(url), &auth).send_json(body),
         };
         response.map_err(http)?.body_mut().read_json().map_err(http)
+    }
+}
+
+/// The `data` of a GraphQL response. GitHub answers a failed query with a success status and
+/// an `errors` array, so a response with a non-empty `errors` is an error, whose message joins
+/// every error's `message`; so is a response without `data`.
+///
+/// # Errors
+/// Fails as described above.
+pub fn graphql_data(mut response: Value) -> Result<Value> {
+    if let Some(errors) = response["errors"].as_array().filter(|e| !e.is_empty()) {
+        let messages: Vec<&str> = errors
+            .iter()
+            .map(|e| e["message"].as_str().unwrap_or("error without a message"))
+            .collect();
+        return Err(Error::Http(format!("GraphQL: {}", messages.join("; "))));
+    }
+    match response.get_mut("data").map(Value::take) {
+        Some(data) if !data.is_null() => Ok(data),
+        _ => Err(Error::Parse("GraphQL response has no `data`".to_owned())),
+    }
+}
+
+/// The GraphQL calls a module makes, so tests can serve recorded responses in place of
+/// [`Client`].
+pub trait GraphQl {
+    /// Runs `query` with `variables` and returns the `data` of the response.
+    ///
+    /// # Errors
+    /// Fails as [`Client::graphql`] does.
+    fn graphql(&self, query: &str, variables: &Value) -> Result<Value>;
+}
+
+impl GraphQl for Client {
+    fn graphql(&self, query: &str, variables: &Value) -> Result<Value> {
+        Client::graphql(self, query, variables)
     }
 }
 
@@ -205,6 +259,11 @@ mod tests {
     use serde_json::json;
     use std::cell::{Cell, RefCell};
     use std::collections::BTreeMap;
+
+    // Recorded from `automerge::PULL_REQUEST_ID` on tsouza/autobot with number 236, and with
+    // number 99999, which does not exist; shared with the `automerge` tests.
+    pub(super) const FOUND: &str = r#"{"data":{"repository":{"pullRequest":{"id":"PR_kwDOUmSub88AAAABEq1tqw","number":236}}}}"#;
+    pub(super) const NOT_FOUND: &str = r#"{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],"locations":[{"line":1,"column":91}],"message":"Could not resolve to a PullRequest with the number of 99999."}]}"#;
 
     const ALIAS_REMOTE: &str = "git@github.com-tsouza:tsouza/autobot.git\n";
 
@@ -349,5 +408,41 @@ mod tests {
             err.to_string().contains("not a pull request number: `x`"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn graphql_data_returns_the_data_of_a_successful_response() {
+        let data = graphql_data(serde_json::from_str(FOUND).unwrap()).unwrap();
+        assert_eq!(
+            data,
+            serde_json::json!({"repository": {"pullRequest": {"id": "PR_kwDOUmSub88AAAABEq1tqw", "number": 236}}})
+        );
+    }
+
+    #[test]
+    fn graphql_errors_fail_even_with_data_present() {
+        let err = graphql_data(serde_json::from_str(NOT_FOUND).unwrap()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "GitHub API error: GraphQL: Could not resolve to a PullRequest with the number of 99999."
+        );
+        let two = serde_json::json!({"errors": [{"message": "a"}, {"type": "X"}]});
+        let err = graphql_data(two).unwrap_err();
+        assert!(
+            err.to_string()
+                .ends_with("GraphQL: a; error without a message"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn graphql_response_without_data_is_an_error() {
+        for response in [
+            serde_json::json!({}),
+            serde_json::json!({"data": null, "errors": []}),
+        ] {
+            let err = graphql_data(response.clone()).unwrap_err();
+            assert!(err.to_string().contains("no `data`"), "{response}");
+        }
     }
 }

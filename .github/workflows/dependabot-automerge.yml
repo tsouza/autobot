@@ -1,0 +1,34 @@
+# Enables GitHub auto-merge (squash) on pull requests opened by Dependabot, and does nothing
+# else: it never approves or merges, so the pull request still merges only when every required
+# check passes, including a `review-gate` verdict. `just dependabot-automerge` calls the
+# enablePullRequestAutoMerge mutation, which only arms auto-merge and fails instead of merging
+# when nothing is pending. The workflow and the script run from the default branch; nothing
+# from the pull request is checked out or run. For any other author the job is skipped.
+name: dependabot-automerge
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] runs default-branch code only
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  enable-auto-merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with:
+          tool: just,rust-script
+      - run: just dependabot-automerge "$PR_NODE_ID"
+        env:
+          PR_NODE_ID: ${{ github.event.pull_request.node_id }}
+          GITHUB_TOKEN: ${{ github.token }}

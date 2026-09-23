@@ -80,6 +80,11 @@ main-red *args:
 label-gate pr:
     {{rs}} scripts/label_gate.rs {{pr}}
 
+# Enable auto-merge (squash) on pull request `pr`, given by its number or GraphQL node id.
+[positional-arguments]
+dependabot-automerge pr:
+    {{rs}} scripts/dependabot_automerge.rs "$1"
+
 # CI job: formatting.
 ci-fmt: fmt-check
 
