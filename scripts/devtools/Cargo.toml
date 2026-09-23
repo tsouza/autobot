@@ -21,5 +21,9 @@ serde_json = "=1.0.151"
 toml = { version = "=1.1.6", optional = true, default-features = false, features = ["parse", "serde", "std"] }
 ureq = { version = "=3.4.2", optional = true, default-features = false, features = ["rustls", "json"] }
 
+# Test-only: the workflow check parses YAML.
+[dev-dependencies]
+yaml-rust2 = { version = "=0.13.0", default-features = false }
+
 [lints]
 workspace = true

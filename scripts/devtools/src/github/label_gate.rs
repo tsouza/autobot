@@ -470,7 +470,11 @@ mod tests {
             .filter_map(|s| s.lines().find_map(|l| l.trim().strip_prefix("run: ")))
             .filter(|r| r.starts_with("just "))
             .collect();
-        assert_eq!(runs, ["just label-gate \"$PR\""], "{steps:?}");
+        assert_eq!(
+            runs,
+            ["just toolchain", "just label-gate \"$PR\""],
+            "{steps:?}"
+        );
         let gate = steps
             .iter()
             .find(|s| s.contains("just label-gate"))
