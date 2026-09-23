@@ -14,7 +14,7 @@
 //! - the server's local cache directory and the `.worktrees` directory of the main working
 //!   tree, followed through symlinks, are on the filesystem whose UUID
 //!   `~/.config/autobot/local.toml` names as `require_mount_uuid`, when it names one (see
-//!   [`crate::worktree::Settings`]);
+//!   [`crate::worktree::Settings`] and [`crate::worktree::check_volume`]);
 //! - the Justfile exports no `CARGO_*` variable, read from `just --dump --dump-format json`:
 //!   no exported assignment or recipe parameter of that name, and no dotenv loading (by
 //!   `dotenv-load`, `dotenv-required`, `dotenv-override`, `dotenv-filename` or `dotenv-path`).
@@ -30,7 +30,9 @@
 //! time is counted too.
 
 use crate::process::Cmd;
-use crate::worktree::{Settings, findmnt_uuid, local_config_dir, main_worktree, refusal};
+use crate::worktree::{
+    Settings, check_volume, findmnt_uuid, local_config_dir, main_worktree, refusal,
+};
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 
@@ -210,43 +212,6 @@ pub fn cargo_configs(dir: &Path, cargo_home: &Path) -> Result<(PathBuf, Vec<(Pat
         }
     }
     Ok((home, configs))
-}
-
-/// Resolves `path` through symlinks and, when `want` is set, checks that the filesystem
-/// holding it has that UUID according to `mount_uuid`. Returns the resolved path.
-///
-/// # Errors
-/// Fails if `path` does not lead to an existing directory, or if the UUID differs or is
-/// unknown.
-pub fn check_volume(
-    label: &str,
-    path: &Path,
-    want: Option<&str>,
-    mount_uuid: &dyn Fn(&Path) -> Result<Option<String>>,
-) -> Result<PathBuf> {
-    let resolved = std::fs::canonicalize(path)
-        .ok()
-        .filter(|p| p.is_dir())
-        .ok_or_else(|| {
-            refusal(
-                label,
-                format!("{} does not lead to an existing directory", path.display()),
-            )
-        })?;
-    if let Some(want) = want {
-        let got = mount_uuid(&resolved)?;
-        if got.as_deref() != Some(want) {
-            return Err(refusal(
-                label,
-                format!(
-                    "{} is on a filesystem with UUID {}, but local.toml requires {want}",
-                    resolved.display(),
-                    got.as_deref().unwrap_or("<none>"),
-                ),
-            ));
-        }
-    }
-    Ok(resolved)
 }
 
 /// The local cache directory from the `cache_location` of `sccache --show-stats

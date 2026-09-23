@@ -153,14 +153,62 @@ pub fn main_worktree(dir: &Path) -> Result<PathBuf> {
         .ok_or_else(|| Error::Parse(format!("git common dir `{}` has no parent", common.trim())))
 }
 
-/// Resolves `<main worktree>/.worktrees`, following a symlink, and applies the mount check.
+/// Resolves `path` through symlinks and, when `want` is set, checks that the filesystem
+/// holding it has that UUID according to `mount_uuid`. Returns the resolved path.
+///
+/// Refusals are reported under operation `op`.
+///
+/// # Errors
+/// Fails if `path` does not lead to an existing directory, or if `want` is set and the UUID
+/// differs or is unknown.
+pub fn check_volume(
+    op: &str,
+    path: &Path,
+    want: Option<&str>,
+    mount_uuid: &dyn Fn(&Path) -> Result<Option<String>>,
+) -> Result<PathBuf> {
+    let resolved = std::fs::canonicalize(path)
+        .map_err(|e| e.to_string())
+        .and_then(|p| {
+            if p.is_dir() {
+                Ok(p)
+            } else {
+                Err(format!("{} is not a directory", p.display()))
+            }
+        })
+        .map_err(|why| {
+            refusal(
+                op,
+                format!(
+                    "{} does not lead to an existing directory ({why})",
+                    path.display()
+                ),
+            )
+        })?;
+    if let Some(want) = want {
+        let got = mount_uuid(&resolved)?;
+        if got.as_deref() != Some(want) {
+            return Err(refusal(
+                op,
+                format!(
+                    "{} is on a filesystem with UUID {}, but local.toml requires {want}; \
+                     is the volume mounted?",
+                    resolved.display(),
+                    got.as_deref().unwrap_or("<none>"),
+                ),
+            ));
+        }
+    }
+    Ok(resolved)
+}
+
+/// Resolves `<main worktree>/.worktrees` and applies the volume check (see [`check_volume`]).
 ///
 /// Creates `.worktrees` as a directory when nothing exists at that path.
 ///
 /// # Errors
-/// Fails if `.worktrees` is a symlink whose target is missing, if it cannot be created, or if
-/// `settings.require_mount_uuid` is set and `mount_uuid` of the resolved directory differs
-/// or is `None`.
+/// Fails if `.worktrees` cannot be created, or on any refusal of [`check_volume`] with
+/// `settings.require_mount_uuid` as the wanted UUID.
 pub fn worktrees_dir(
     main: &Path,
     settings: &Settings,
@@ -171,38 +219,12 @@ pub fn worktrees_dir(
         std::fs::create_dir(&link)
             .map_err(|e| io_error(&format!("create {}", link.display()), &e))?;
     }
-    let resolved = std::fs::canonicalize(&link).map_err(|e| {
-        refusal(
-            "resolve .worktrees",
-            format!(
-                "{} does not lead to an existing directory ({e})",
-                link.display()
-            ),
-        )
-    })?;
-    if !resolved.is_dir() {
-        return Err(refusal(
-            "resolve .worktrees",
-            format!("{} is not a directory", resolved.display()),
-        ));
-    }
-    if let Some(want) = &settings.require_mount_uuid {
-        match mount_uuid(&resolved)? {
-            Some(got) if got == *want => {}
-            got => {
-                return Err(refusal(
-                    "check the worktree volume",
-                    format!(
-                        "{} is on a filesystem with UUID {}, but local.toml requires {want}; \
-                         is the volume mounted?",
-                        resolved.display(),
-                        got.as_deref().unwrap_or("<none>"),
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(resolved)
+    check_volume(
+        "check the worktree volume",
+        &link,
+        settings.require_mount_uuid.as_deref(),
+        mount_uuid,
+    )
 }
 
 /// Creates the worktree for issue `issue` titled `title` and returns its path.
