@@ -8,7 +8,7 @@ Depends on: `AUTOBOT-THESIS.md`. Definitions summarize the document named beside
 | Layer | Meaning | Dependency rule |
 |---|---|---|
 | **CORE** | Terms without which an invariant in `AUTOBOT-THESIS.md` cannot be stated, or which M0 must implement. Removing one makes AutoBot unsafe, not merely less capable. | A CORE definition references only CORE terms. It never names an EXTENSION or EXTERNAL term, not even in passing. |
-| **EXTENSION** | Capabilities built on the core that can be disabled, replaced or absent while every core invariant still holds: learning and routing, TypeSafe decision policy, forge mirroring, observability, the CLI. | An EXTENSION definition references CORE and EXTENSION terms. An extension never creates authority the core does not grant. |
+| **EXTENSION** | Capabilities built on the core that can be disabled, replaced or absent while every core invariant still holds: learning and routing, TypeSafe decision policy, forge mirroring, observability, the CLI, the onboarding MCP server. | An EXTENSION definition references CORE and EXTENSION terms. An extension never creates authority the core does not grant. |
 | **EXTERNAL** | Systems, actors and tools AutoBot runs on, observes or adapts to but does not own. Their facts enter AutoBot only through authenticated observation and a core commit. | An EXTERNAL thing is never authoritative for AutoBot state. |
 
 The check that closes this glossary: every term used in a core document is defined here under CORE, or appears on the DEFERRED list in `AUTOBOT-M0-AND-GATES.md`. Every term used in an extension file is defined here under CORE or EXTENSION. Where a core rule needs a party AutoBot does not own (a provider, the witness), the *role* is a CORE term and the *service that fills it* is EXTERNAL.
@@ -81,8 +81,8 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 
 ### Plans and graph
 
-- **`WorkBrief` / `Intake` / `PlanProposal`** — The immutable source document; its processing record; the mutable candidate graph whose acceptance creates the `Plan`. *(ONBOARD §1)*
-- **`Project` / `Repository`** — A logical product or initiative that may span repositories; a forge location with its own branch, CI and toolchain. Neither is a plan. *(ONBOARD §1)*
+- **`WorkBrief` / `Intake` / `PlanProposal`** — The immutable record of one brief document, its stored artifact or a path at a pushed commit, with its digest; the record of one onboarding submission, which carries a new context's proposed configuration; the candidate graph, revised by the intake client, whose acceptance creates the `Plan` or, when it names a plan, accepts a revision of it. *(ONBOARD §1)*
+- **`Project` / `Repository`** — A logical product or initiative that may span repositories; a forge location with its own branch, CI and toolchain. Neither is a plan. A proposed repository is bound only by a plan accept, after an authenticated forge answer verified it. *(ONBOARD §1)*
 - **`Charter` / `ProjectCharter`** — The human-authored statement of what must be true of all work in a `WorkContext`, and in one `Project`, whatever the plan: Identity, Constitution, Rules, Conventions, Vocabulary and the project's Non-goals, in immutable, digested revisions. Every project inherits its context's `Charter`; a `ProjectCharter` may only tighten it. *(ONBOARD §7; KERNEL §5, §10)*
 - **Effective charter** — The union of a project's `ProjectCharter` and the `Charter` it inherits; a conflict between two entries resolves toward the stricter one. *(ONBOARD §7)*
 - **Law / Constitution** — An absolute guardrail of a charter, and the set of them; a law changes only through a new charter revision authored by a human, is never waived and is never `advisory`. *(ONBOARD §7)*
@@ -96,6 +96,18 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 - **Quiescing / supersession / `ResumePlanRevision`** — Fail new acceptances and invalidate permits; settle attempts, record unresolved operations, invalidate evidence, activate the replacement; or resume the same revision with a new generation. *(KERNEL §5)*
 - **`RevisionPending` / `PAUSED`** — A Plan *condition* noting an authenticated revision proposal; a plan-level block on new admission requested by an `Intervention` that never weakens a context hold. *(KERNEL §5)*
 - **`Milestone` / `Task` / `TaskRun` / `AgentRun`** — A versioned outcome; one bounded obligation across attempts; one attempt with pinned inputs and cumulative counters; one agent session within an attempt. *(KERNEL §10; ROLES §4)*
+
+### Onboarding
+
+- **Intake client** — The untrusted proposer a person runs, outside AutoBot, in the working directory of the project to onboard: it understands the directory, interviews the person and submits proposals under the intake-submitter identity; it never accepts, activates or grants anything. *(ONBOARD §1; TRUST)*
+- **Intake-submitter identity** — The dedicated principal of one namespace, the intake namespace or a context's, that an intake client authenticates as: it may create and revise intake kinds in proposal state there and read them, nothing else; admission refuses every accept from it. *(TRUST; ONBOARD §1)*
+- **Intake kinds / proposal state** — The kinds the Intake controller owns: `WorkBrief`, `Intake`, `Project`, `Repository`, `Charter`, `ProjectCharter`, `PlanProposal`; and the states in which the intake client may write them: an `Intake` `CAPTURED` or `PROPOSED`, a `Project` or `Repository` `PROPOSED`, a charter revision `PROPOSED`, a `PlanProposal` `DRAFT` or `REVIEW`, a new `WorkBrief`. *(ONBOARD §1; M0 §1)*
+- **Interview** — The intake client's questioning of the person, one question at a time, for every attribute a required field needs that the directory does not settle, until none is left; ambiguity is a question, never an assumption. *(ONBOARD §1)*
+- **Sourced value / provenance** — An attribute of an intake-kind spec: the value with one or more provenance entries, each a source (a path or URL with a content digest, or an interview question with the digest of question and answer) and a trust label; admission refuses an attribute without one. *(ONBOARD §1; M0 §1)*
+- **Trust label** — What kind of untrusted content a proposal field came from: `UNTRUSTED_REPOSITORY_CONTENT`, `UNTRUSTED_ISSUE_OR_PR_TEXT` or `INTERVIEW_ANSWER`; no label makes a field authority. *(ONBOARD §1; TRUST)*
+- **Proposal acceptance** — The human act, through the command path, that makes a proposal canonical, pinned to what the human was shown and admitted only from the principal ONBOARD §1 step 6 names for it: a new context's configuration, which creates the `WorkContext` and a bound successor of its `Intake` in the context's namespace; a charter revision; a plan proposal, as an accept of the `PROPOSED` `Intake` at its revision and proposal-set digest, which also binds its projects and repositories. *(ONBOARD §1)*
+- **Intake namespace / bootstrap administrator** — The installation's namespace for an `Intake` that proposes a new context, and the human principals the installation names when AutoBot is installed, who hold the acts ONBOARD §1 step 6 gives them. *(ONBOARD §1; ROLES §5)*
+- **`ForgeVerified` / `ContextAccepted`** — Conditions the Intake controller records: on a proposed `Repository`, that the forge adapter's authenticated answer matched it, which a plan accept requires before binding it; on an `Intake`, that it is the bound successor of an accepted `WorkContext` configuration. *(ONBOARD §1)*
 
 ### Scope, identity and fencing
 
@@ -147,7 +159,7 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 - **Typed question / eligible set / `Decision`** — A semantic judgment is a typed question over an eligible set computed deterministically beforehand; the service picks, code decides; the immutable `Decision` records question class, evidence digest, eligible-set digest, selection and policy revision. *(THESIS I-8; KERNEL §1)*
 - **Conservative branch** — What a question class does when the judge is unavailable or abstains: hold, escalate to a human, or take the fixed baseline; never widen a permission. *(ONBOARD §6)*
 - **`Intervention`** — An authenticated request — `HOLD`, `RESUME`, `PAUSE`, `REVIEW`, `QUIESCE`, `SUPERSEDE`, `KILL_SWITCH`, `ADJUDICATE_OPERATION`, `ADJUDICATE_CONFLICT` — submitted by a human principal, or raised by an owning controller under its own principal to summon one (the answer is then a further human `Intervention` referencing it; `RESUME` is the only exit from a hold or a pause). Applied only through commands to the owning controller: a register or `Plan` CAS for the first seven actions, a CAS on the adjudicated `ExternalOperation` or `WorkspaceConflict` for the two adjudications; never by editing status. *(ROLES §5)*
-- **Human roles** — Reviser (`WorkContext.spec.revisionAuthority`), adjudicator, no-test approver, kill-switch operator; never held by an agent identity. *(ROLES §5)*
+- **Human roles** — Reviser (`WorkContext.spec.revisionAuthority`), adjudicator, no-test approver, kill-switch operator, and the installation's bootstrap administrator; never held by an agent identity or the intake-submitter identity. *(ROLES §5)*
 - **Stop condition** — Budget exhausted, human deadline, blocked with no eligible action, unresolved effect, custody uncertain; each lands in a named state. *(ONBOARD §4)*
 - **Degraded mode** — The scoped, named set of actions forbidden while one dependency is unavailable; never widens. *(ONBOARD §6)*
 
@@ -188,7 +200,7 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 ### TypeSafe decision policy — `extensions/typesafe-decision-policy.md`
 
 - **TypeSafe (as used by AutoBot)** — The bounded semantic judge behind typed questions; selects only from the eligible set; grants nothing.
-- **Trust label** — `CANONICAL_AUTOBOT_FACT`, `AUTHENTICATED_PROVIDER_OBSERVATION`, `UNTRUSTED_REPOSITORY_CONTENT`, `UNTRUSTED_ISSUE_OR_PR_TEXT`, `UNTRUSTED_CI_OUTPUT`, `DERIVED_STATISTIC`, `DERIVED_FALLBACK_DECISION`; each question class declares which it accepts.
+- **Question-input trust labels** — The core trust labels and `CANONICAL_AUTOBOT_FACT`, `AUTHENTICATED_PROVIDER_OBSERVATION`, `UNTRUSTED_CI_OUTPUT`, `DERIVED_STATISTIC`, `DERIVED_FALLBACK_DECISION`; each question class declares which it accepts.
 - **`DecisionPolicy` / fallback kind** — The pinned revision of question classes, trust classes, eligibility rules and per-class outage fallback: `ABSTAIN` (default), `DETERMINISTIC_RULE`, `STRONGER_REASONER` (escrowed).
 - **`DriftAssessment`** — The micro-manager's recorded judgment: `ON_TRACK | DRIFT_RISK | DRIFTED | BLOCKED | COMPROMISED | INSUFFICIENT_EVIDENCE`.
 - **Calibration** — Per-class comparison of judge confidence with AutoBot outcomes; fallback decisions excluded.
@@ -211,8 +223,14 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 
 ### CLI — `extensions/cli.md`
 
-- **`autobot` CLI** — A frontend over the Kubernetes API using kubeconfig and RBAC; every command creates or reads resources; a disconnected watch has no lifecycle effect; it mints nothing.
+- **`autobot` CLI** — A frontend over the Kubernetes API using kubeconfig and RBAC; every command creates or reads resources; a disconnected watch has no lifecycle effect; it mints nothing; it carries the human accepts of proposals.
 - **Installation receipt** — A small resumable local record supporting install recovery; authorizes nothing.
+
+### Onboarding MCP server — `extensions/onboarding-mcp.md`
+
+- **`autobot-mcp`** — The local MCP server a coding agent runs to fill the intake-client role: reads the working directory and never writes it, reaches the Kubernetes API only as the intake-submitter identity, and decides nothing.
+- **Onboarding tools** — `inspect_directory` (read-only) and the submit tools for the intake kinds, whose input schemas are generated from the kinds' spec types; none accepts, rejects, activates, grants or deletes.
+- **`onboard` prompt** — The interview as an MCP prompt: settle every required attribute from the directory or by asking the person, one question at a time, then submit and hand the person the CLI accept commands.
 
 ## EXTERNAL
 
@@ -223,6 +241,7 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 - **Forge** — GitHub, Gitea, Bitbucket and the like: repositories, issues, PRs, labels, merges, branch protection; every action `UNQUALIFIED` until conformance. *(`extensions/forge-mirroring.md`)*
 - **CI provider** — External executor of tests and checks; results are observations bound to head, workflow and environment. *(`extensions/forge-mirroring.md`)*
 - **Model provider / agent harness** — Sessions that do the work through runtime adapters; transport failure, rate limits, exhaustion and refusal are separate from model quality. *(ROLES §4)*
+- **Model Context Protocol / coding agent** — The open protocol of tools, resources and prompts between an agent and a server, and the agent a person runs that speaks it; the agent is untrusted and fills no role but through `autobot-mcp`. *(`extensions/onboarding-mcp.md`)*
 - **TypeSafe service** — The external typed-question API (shared weights; AutoBot owns its learned tables). *(`extensions/typesafe-decision-policy.md`)*
 - **Artifact store** — Independent, versioned, encrypted object storage outside the worker-node loss domain. *(TRUST; M0 §2)*
 - **Authority witness service** — The small independently operated control plane (its own replicated API, or an equivalent strongly consistent lease service) filling the CORE witness role. *(TRUST)*
@@ -243,6 +262,7 @@ Names this set does not use and must not acquire, each with what replaces it. Do
 - **`EvaluationAssignment` and cohorts as core accounting** — the core obligation is stated on the `TaskRun`'s expected records; cohorts are an extension.
 - **Health enumeration and operating modes (`Healthy … Fenced`, `Normal … EmergencyStop`) as states** — condition vocabularies, deferred to G-OPS; degraded modes are named by the unavailable dependency.
 - **`SideIssue`** — a `Finding`.
+- **`ANALYZING` and `NEEDS_INPUT` `Intake` states; the Manager's intake analysis** — the intake client understands and interviews before it submits; the Intake controller only validates and verifies.
 - **Observer, Garbage Collector as roles** — reconciler duties of the Context and Custody controllers.
 - **`intervention_refs` control field** — dropped; an `Intervention` is a kind applied by a command to the owning controller of what it changes.
 - **`ModelScore`** — `WorkerCapability`.

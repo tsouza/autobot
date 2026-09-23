@@ -827,12 +827,18 @@ mod tests {
 
     #[test]
     fn both_ways_arrows_and_any_sources() {
+        let both = parse_block("Kind  OPEN → WAITING ↔ OPEN ; OPEN → DONE\n").unwrap();
+        let both = find(&both, "Kind").unwrap().field(None).unwrap();
+        assert_eq!(sources(both, "WAITING"), [st("OPEN")]);
+        assert_eq!(sources(both, "OPEN"), [st("WAITING")]);
+        assert_eq!(sources(both, "DONE"), [st("OPEN")]);
+
         let machines = parse(&kernel()).unwrap();
         let intake = find(&machines, "Intake").unwrap().field(None).unwrap();
-        assert_eq!(sources(intake, "NEEDS_INPUT"), [st("ANALYZING")]);
+        assert_eq!(sources(intake, "CAPTURED"), [st("PROPOSED")]);
         assert_eq!(
-            sources(intake, "ANALYZING"),
-            [st("CAPTURED"), st("NEEDS_INPUT")]
+            sources(intake, "REJECTED"),
+            [st("PROPOSED"), st("CAPTURED")]
         );
         let ws = find(&machines, "Workspace").unwrap().field(None).unwrap();
         assert_eq!(sources(ws, "CONFLICT"), [Source::Any]);

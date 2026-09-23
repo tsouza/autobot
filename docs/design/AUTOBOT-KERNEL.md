@@ -145,7 +145,7 @@ The **dispatch ledger** entry is `(operation_uid, operation_key, permit_uid, acc
 
 `manager_authority[plan_uid]` on the `WorkContext` is the Manager's authority: `(lease_uid, epoch, holder, deadline, phase)`. `ManagerLease` and `Plan` status expose acknowledged copies and authorize nothing.
 
-Before a `Plan` exists there is no Manager authority: `Intake` and `PlanProposal` are ordinary aggregates written under §1 with a fixed expected revision and no Manager reservation. The acceptance commit that creates the `Plan` also creates the first `manager_authority[plan]` entry; the plan-scoped rules of this section start there.
+Before a `Plan` exists there is no Manager authority: the intake kinds are ordinary aggregates, written by the intake client and the Intake controller (ONBOARD §1) under §1 with a fixed expected revision and no Manager reservation. The acceptance commit that creates the `Plan` also creates the first `manager_authority[plan]` entry; the plan-scoped rules of this section start there.
 
 A Manager command pins plan UID and revision, holder, lease UID and epoch, exact target UID and revision, and input digest. The Context controller CASes the `WorkContext` to check holder, epoch, `phase = ACTIVE` and deadline and to reserve the single `active_manager_transaction` slot: `(target_uid, expected_revision, command_uid, phase ∈ {RESERVED, APPLYING, RESOLVED}, target_receipt_uid, cancellation_receipt_uid, terminal_state)`. The slot serializes short control mutations, not reasoning, builds or agent execution; it is released only by a CAS that records a non-empty `terminal_state` together with the receipt that proves it. Only the target's owning controller applies the reserved command, under §1 and with the command's **fixed expected revision**, which is never refreshed to force an old command through.
 
@@ -161,7 +161,7 @@ Lease expiry begins draining; it is never permission to skip it. Draining is per
 
 Accepting a `PlanProposal` creates the `Plan` in `ACCEPTED`: the contract exists, nothing can run. A **plan revision** is one immutable contract version; its graph is an immutable `PlanSnapshot` — members with UID and revision, edges, acceptance and budget policy, digests. Activation is owned by the Plan controller: verify the snapshot digest, create or verify every member against it (`MEMBERS_VERIFIED`), then submit `ActivatePlanRevision`, which the Context controller applies as the register CAS `plan_authority[plan] := (revision, snapshot_digest, activation_receipt_uid, ACTIVE, plan_generation + 1)` — the **activation cut** — and on its receipt CAS `PlanSnapshot` to `ACTIVATED` and `Plan` to `ACTIVE` as acknowledgements, recording the `GraphActivationReceipt`. A partial graph cannot produce ready work: every readiness and admission decision verifies the active revision, snapshot digest and activation receipt in the same decision, and every acceptance verifies the register.
 
-Only an authenticated Manager holder or a human named by `WorkContext.spec.revisionAuthority` may propose a revision; the proposal is the Plan condition `RevisionPending`, not a phase. **Supersession** is: `QuiescePlan` (register `revision_phase := QUIESCING`, `plan_generation + 1`; every new acceptance for the plan fails, every issued permit is invalidated), wait for active attempts to reach a terminal, fenced or unknown/unresolved boundary, record unresolved operations, invalidate acceptance evidence, then `ActivatePlanRevision(R2)` on the same register. That no R1 effect can be accepted after R2 activation is an ordering fact, not a policy. Resuming the same revision is `ResumePlanRevision` (`revision_phase := ACTIVE`, `plan_generation + 1`). `PAUSED` is a plan-level block on new TaskRun admission requested through an `Intervention`; it revokes no accepted effect and never weakens a context hold.
+Only an authenticated Manager holder, a human named by `WorkContext.spec.revisionAuthority`, or an intake client through a `PlanProposal` that names the plan (ONBOARD §1) may propose a revision; the proposal is the Plan condition `RevisionPending`, not a phase, which an intake client's proposal raises only when the reviser accepts it. **Supersession** is: `QuiescePlan` (register `revision_phase := QUIESCING`, `plan_generation + 1`; every new acceptance for the plan fails, every issued permit is invalidated), wait for active attempts to reach a terminal, fenced or unknown/unresolved boundary, record unresolved operations, invalidate acceptance evidence, then `ActivatePlanRevision(R2)` on the same register. That no R1 effect can be accepted after R2 activation is an ordering fact, not a policy. Resuming the same revision is `ResumePlanRevision` (`revision_phase := ACTIVE`, `plan_generation + 1`). `PAUSED` is a plan-level block on new TaskRun admission requested through an `Intervention`; it revokes no accepted effect and never weakens a context hold.
 
 An active attempt keeps the revision and capsule it started with until it is terminal or fenced, except that its capsule is replaced by a fresh capsule at its next continuation after a new or tightened law; the broker and acceptance apply that law to the attempt at once, without waiting for the replacement (below). There is no in-place revision of a task, a capsule or an acceptance contract; any change to what a task must do is a new revision through this section or a new task.
 
@@ -255,10 +255,12 @@ revisions[rev]       PROPOSED | VERIFIED → ABANDONED
 PlanSnapshot         PROPOSED → SNAPSHOT_VERIFIED → MEMBERS_VERIFIED → ACTIVATED
                      PROPOSED | SNAPSHOT_VERIFIED | MEMBERS_VERIFIED → ACTIVATION_FAILED
 
-PlanProposal         DRAFT → REVIEW → ACCEPTED | REJECTED
-Intake               CAPTURED → ANALYZING → NEEDS_INPUT ↔ ANALYZING ; ANALYZING → PROPOSED → ACCEPTED | REJECTED
+PlanProposal         DRAFT → REVIEW → ACCEPTED | REJECTED ; DRAFT → REJECTED
+                     REVIEW → DRAFT                                  (revised by the intake client)
+Intake               CAPTURED → PROPOSED → ACCEPTED | REJECTED ; CAPTURED → REJECTED
+                     PROPOSED → CAPTURED                             (a revision of the Intake or of a proposal it holds)
 WorkBrief            RECORDED  (immutable)
-Project, Repository  PROPOSED → ADOPTED → ACTIVE → RETIRED
+Project, Repository  PROPOSED → ADOPTED → ACTIVE → RETIRED ; PROPOSED → REJECTED
 Charter, ProjectCharter  ACTIVE → RETIRED
                      revisions[rev]:  PROPOSED → ACCEPTED → SUPERSEDED
                      revisions[rev]:  PROPOSED → REJECTED

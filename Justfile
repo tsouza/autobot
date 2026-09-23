@@ -54,6 +54,10 @@ check-design:
 check-retired-terms:
     {{rs}} scripts/retired_terms.rs .
 
+# Write assets/banner.svg, the README banner image, from assets/banner.txt.
+banner-svg:
+    {{rs}} scripts/banner.rs assets/banner.txt assets/banner.svg
+
 # Check the crate dependency rules: layers, test-only crates and thin binaries.
 layering:
     {{rs}} scripts/layering.rs .
@@ -127,8 +131,8 @@ ci-fmt: fmt-check
 ci-clippy: clippy layering
 
 # CI job: tests, the design-set check, the retired-term check, the traceability lint (stages 1
-# to 3, stage 2 for every group with a fixture directory) and its diff rule.
-ci-test: test check-design check-retired-terms trace-lint (trace-lint "--diff")
+# to 3, stage 2 for every group with a fixture directory), its diff rule and the gate states.
+ci-test: test check-design check-retired-terms trace-lint (trace-lint "--diff") gate-status
 
 # CI job: documentation.
 ci-doc: doc
@@ -218,6 +222,16 @@ dag-lint:
 # Render the blocked-by graph as Mermaid; `--critical` prints the longest open chain instead.
 dag *args:
     {{rs}} scripts/dag.rs {{args}}
+
+# Print each gate's state from its record under docs/gates, with a PASSED record whose installation,
+# software, policy or profile digest differs reported as INVALIDATED; edits nothing.
+gate-status:
+    {{rs}} scripts/gate_status.rs
+
+# Verify the record of `gate`: its artifacts' digests and the SSH-signed tag on its record commit.
+[positional-arguments]
+gate-evidence gate:
+    {{rs}} scripts/gate_evidence.rs "$1"
 
 # Scheduled job: issue-graph lint.
 ci-dag-lint: dag-lint
