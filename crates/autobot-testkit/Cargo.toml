@@ -1,0 +1,14 @@
+[package]
+name = "autobot-testkit"
+description = "AutoBot fixture harness, interleaving explorer, trace loader and refinement checks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+autobot-fakes.workspace = true
+
+[lints]
+workspace = true

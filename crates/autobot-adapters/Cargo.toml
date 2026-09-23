@@ -1,6 +1,6 @@
 [package]
-name = "autobot-kernel"
-description = "AutoBot kernel: aggregates, commit lanes, receipts, dispatch registers and lifecycles, without Kubernetes, async or I/O."
+name = "autobot-adapters"
+description = "AutoBot adapter traits, including RuntimeAdapter, and their contract suites."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

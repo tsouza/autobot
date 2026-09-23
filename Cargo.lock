@@ -3,5 +3,43 @@
 version = 4
 
 [[package]]
+name = "autobot-adapters"
+version = "0.0.0"
+
+[[package]]
+name = "autobot-api"
+version = "0.0.0"
+
+[[package]]
+name = "autobot-cli"
+version = "0.0.0"
+
+[[package]]
+name = "autobot-controllers"
+version = "0.0.0"
+
+[[package]]
+name = "autobot-fakes"
+version = "0.0.0"
+
+[[package]]
 name = "autobot-kernel"
 version = "0.0.0"
+
+[[package]]
+name = "autobot-kernel-derive"
+version = "0.0.0"
+
+[[package]]
+name = "autobot-operator"
+version = "0.0.0"
+dependencies = [
+ "autobot-controllers",
+]
+
+[[package]]
+name = "autobot-testkit"
+version = "0.0.0"
+dependencies = [
+ "autobot-fakes",
+]
