@@ -1,0 +1,55 @@
+# Weekly version updates, one grouped pull request per ecosystem. Titles read
+# `chore(deps): …` so they pass the Conventional Commits title check. A release is proposed
+# only after it has been out for seven days. Every pull request merges only through the
+# required checks, including a `review-gate` verdict; the dependabot-automerge workflow only
+# enables auto-merge on it.
+# Only github-actions pull requests carry a label (`human-lane`); `labels: []` keeps Dependabot
+# from adding its default labels to the others.
+version: 2
+
+updates:
+  # The whole workspace from its root, including the `=x.y.z` pins of scripts/devtools.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: []
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  # Actions pinned by commit SHA in .github/workflows; the pull requests touch
+  # .github/workflows/**, so they carry `human-lane`.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: ["human-lane"]
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # The channel in rust-toolchain.toml; the workspace declares no rust-version.
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: []
+    groups:
+      rust-toolchain:
+        patterns: ["*"]

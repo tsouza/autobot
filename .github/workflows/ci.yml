@@ -9,12 +9,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Merges made with the workflow token (auto-merge enabled by a workflow) start no push run,
+  # so main is verified nightly as well.
+  schedule:
+    - cron: "41 3 * * *"
 
 permissions:
   contents: read
 
 # A new push to a pull request cancels its older run, whether pending or in progress. Every
-# push to main gets a group of its own, so no main run is ever cancelled or dropped while pending.
+# push to main and every scheduled run gets a group of its own, so no main run is ever
+# cancelled or dropped while pending.
 concurrency:
   group: ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
   cancel-in-progress: true
