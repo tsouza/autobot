@@ -34,9 +34,13 @@
 //!   names, remote identities, heads, event identifiers) are opaque, non-empty text: the
 //!   provider assigns them and AutoBot only compares them.
 //! - A time an adapter exchanges is whole seconds since the Unix epoch, as a `u64`.
+//! - A rate-limit answer states its back-off as a duration, whole seconds after the answer
+//!   ([`BackOff`](backoff::BackOff)), as a provider states it relative to its answer; the caller
+//!   that waits on it knows when the answer arrived.
 #![warn(missing_docs)]
 
 pub mod artifact;
+pub mod backoff;
 pub mod contract;
 pub mod judge;
 pub mod observation;

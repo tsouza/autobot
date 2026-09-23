@@ -1,4 +1,5 @@
 use super::*;
+use autobot_adapters::backoff::BackOff;
 use autobot_adapters::provider::{ProviderRule, run};
 use autobot_adapters::text::{Head, TargetIdentity};
 use autobot_kernel::types::Digest;
@@ -20,6 +21,17 @@ fn request(operation: &str, key: OperationKey) -> SendRequest {
         target_identity: TargetIdentity::new("target").unwrap(),
         source_head: Some(Head::new("source").unwrap()),
         base_head: Some(Head::new("base").unwrap()),
+    }
+}
+
+/// The back-off the scripted rate limits of these tests state.
+const BACK_OFF: BackOff = BackOff { seconds: 30 };
+
+/// A rate-limit window of `calls` calls stating [`BACK_OFF`].
+fn throttled(calls: u32) -> Fault {
+    Fault::RateLimited {
+        calls,
+        back_off: BACK_OFF,
     }
 }
 
@@ -74,10 +86,7 @@ fn every_semantics_with_and_without_heads_and_dry_run_passes_the_contract_suite(
 fn the_suite_sees_a_fixture_script_that_throttles_every_send() {
     let fixture = ProviderFixture::forge()
         .unwrap()
-        .with_script(Script::new().then(
-            Trigger::any(Call::Send),
-            Fault::RateLimited { calls: u32::MAX },
-        ));
+        .with_script(Script::new().then(Trigger::any(Call::Send), throttled(u32::MAX)));
     let broken = run(&mut FakeProviderHarness::new(fixture)).unwrap_err();
     assert!(broken.iter().any(|v| v.rule == ProviderRule::SendApplies));
 }
@@ -115,14 +124,14 @@ fn a_lost_acknowledgement_applies_and_answers_a_transport_fault() {
 
 #[test]
 fn a_rate_limit_throttles_its_window_and_then_lets_calls_through() {
-    let mut p =
-        forge(Script::new().then(Trigger::any(Call::Send), Fault::RateLimited { calls: 2 }));
+    let mut p = forge(Script::new().then(Trigger::any(Call::Send), throttled(2)));
     let req = request("label", key(3));
     for _ in 0..2 {
         assert_eq!(
             p.send(&req),
             Err(SendError::RateLimited {
-                proves_non_application: false
+                proves_non_application: false,
+                back_off: Some(BACK_OFF),
             })
         );
         assert_eq!(p.applications(&req.operation, &req.operation_key), 0);
@@ -134,7 +143,7 @@ fn a_rate_limit_throttles_its_window_and_then_lets_calls_through() {
 
 #[test]
 fn a_rate_limit_answer_claims_non_application_only_under_an_authoritative_capability() {
-    let script = Script::new().then(Trigger::any(Call::Send), Fault::RateLimited { calls: 2 });
+    let script = Script::new().then(Trigger::any(Call::Send), throttled(2));
     let mut ci = ProviderFixture::ci().unwrap().with_script(script).build();
     for (operation, authoritative) in [("run", true), ("status", false)] {
         let cap = ci
@@ -147,7 +156,8 @@ fn a_rate_limit_answer_claims_non_application_only_under_an_authoritative_capabi
         assert_eq!(
             ci.send(&req),
             Err(SendError::RateLimited {
-                proves_non_application: authoritative
+                proves_non_application: authoritative,
+                back_off: Some(BACK_OFF),
             })
         );
         assert_eq!(ci.applications(&req.operation, &req.operation_key), 0);
@@ -158,7 +168,7 @@ fn a_rate_limit_answer_claims_non_application_only_under_an_authoritative_capabi
 fn an_empty_rate_limit_window_throttles_nothing_and_passes_to_the_next_entry() {
     let mut p = forge(
         Script::new()
-            .then(Trigger::any(Call::Send), Fault::RateLimited { calls: 0 })
+            .then(Trigger::any(Call::Send), throttled(0))
             .then(
                 Trigger::any(Call::Send),
                 Fault::Dropped(TransportFault::Disconnect),
@@ -251,7 +261,7 @@ fn observe_lookup_and_dry_run_faults_answer_transport_faults_and_change_nothing(
                 Trigger::any(Call::Lookup),
                 Fault::LostAcknowledgement(TransportFault::Timeout),
             )
-            .then(Trigger::any(Call::DryRun), Fault::RateLimited { calls: 1 }),
+            .then(Trigger::any(Call::DryRun), throttled(1)),
     );
     let req = request("comment", key(9));
     let Ok(SendAck::Accepted(remote)) = p.send(&req) else {
@@ -344,4 +354,36 @@ fn a_build_is_fresh_and_does_not_share_state_with_another() {
     let second = fixture.build();
     assert_eq!(first.applications(&req.operation, &req.operation_key), 1);
     assert_eq!(second.applications(&req.operation, &req.operation_key), 0);
+}
+
+#[test]
+fn each_rate_limit_answer_states_the_back_off_its_window_was_scripted_with() {
+    let short = BackOff { seconds: 5 };
+    let long = BackOff { seconds: 600 };
+    let script = Script::new()
+        .then(
+            Trigger::any(Call::Send),
+            Fault::RateLimited {
+                calls: 2,
+                back_off: short,
+            },
+        )
+        .then(
+            Trigger::any(Call::Send),
+            Fault::RateLimited {
+                calls: 1,
+                back_off: long,
+            },
+        );
+    let mut ci = ProviderFixture::ci().unwrap().with_script(script).build();
+    let req = request("run", key(15));
+    let answers: Vec<_> = (0..3).map(|_| ci.send(&req)).collect();
+    let expected = [short, short, long].map(|b| {
+        Err(SendError::RateLimited {
+            proves_non_application: true,
+            back_off: Some(b),
+        })
+    });
+    assert_eq!(answers, expected);
+    assert_eq!(ci.applications(&req.operation, &req.operation_key), 0);
 }

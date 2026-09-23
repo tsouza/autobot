@@ -113,3 +113,19 @@ fn a_late_result_for_an_old_head_keeps_the_head_it_tested() {
         .collect();
     assert_eq!(for_current, vec![CiConclusion::Failure]);
 }
+
+#[test]
+fn a_throttled_ci_answers_rate_limited_with_its_back_off_and_loses_nothing() {
+    let mut ci = FakeCi::new(PROMPT).unwrap();
+    let object = ci.start(head("h1"), digest(0x71), digest(0x72)).unwrap();
+    let back_off = autobot_adapters::backoff::BackOff { seconds: 90 };
+    ci.feed().throttle(2, back_off);
+    let throttled = Err(SourceError::RateLimited {
+        back_off: Some(back_off),
+    });
+    assert_eq!(ci.poll(), throttled);
+    assert_eq!(ci.relist(), throttled);
+    let got = ci.poll().unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].object, object);
+}

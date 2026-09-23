@@ -4,6 +4,7 @@ use super::{
     Lookup, OperationKey, ProviderAdapter, ProviderCapability, ProviderError, RemoteOutcome,
     SendAck, SendError, SendRequest,
 };
+use crate::backoff::BackOff;
 use crate::contract::{Checker, SuiteResult};
 use crate::text::{Head, OperationName, TargetIdentity};
 use autobot_kernel::types::Digest;
@@ -16,8 +17,8 @@ pub enum ProviderFault {
     /// The provider applies the operation and its acknowledgement is lost.
     LostAcknowledgement,
     /// The provider refuses the request because it is rate limiting the caller: nothing is
-    /// applied and the provider says so.
-    RateLimited,
+    /// applied and the provider says so, stating this back-off.
+    RateLimited(BackOff),
 }
 
 /// What the provider suite needs to drive an adapter.
@@ -91,6 +92,10 @@ pub enum ProviderRule {
     /// A rate-limit answer claims non-application exactly when the operation's capability
     /// declares `rate_limit_authoritative`.
     RateLimitAuthority,
+    /// A rate-limit answer states no back-off but the provider's, and states the provider's
+    /// whenever the operation's capability declares `rate_limit_authoritative`: a re-request
+    /// after the proven non-application waits for it.
+    RateLimitBackOff,
 }
 
 /// Runs the provider suite against the adapters `harness` makes.
@@ -151,7 +156,7 @@ pub fn run<H: ProviderHarness>(harness: &mut H) -> SuiteResult<ProviderRule> {
             for fault in [
                 ProviderFault::LostAcknowledgement,
                 ProviderFault::DroppedRequest,
-                ProviderFault::RateLimited,
+                ProviderFault::RateLimited(reqs.back_off()),
             ] {
                 faulted(harness, &mut c, cap, fault, &mut reqs);
             }
@@ -177,6 +182,13 @@ impl Requests {
         let mut bytes = [0xa5; 32];
         bytes[..8].copy_from_slice(&self.next.to_be_bytes());
         OperationKey(Digest::from_bytes(bytes))
+    }
+
+    /// A back-off that differs from the one of every other rate limit the suite injects.
+    fn back_off(&self) -> BackOff {
+        BackOff {
+            seconds: 60 + self.next,
+        }
     }
 
     /// A well-formed request for `operation`, with heads when `with_heads`.
@@ -432,21 +444,36 @@ fn faulted<H: ProviderHarness>(
     let req = reqs.request(op, key, cap.requires_head_base);
     harness.fault_next_send(&mut adapter, fault);
     let sent = adapter.send(&req);
-    if fault == ProviderFault::RateLimited {
+    if let ProviderFault::RateLimited(stated) = fault {
         match sent {
             Err(SendError::RateLimited {
                 proves_non_application,
-            }) => c.check(
-                proves_non_application == cap.rate_limit_authoritative,
-                ProviderRule::RateLimitAuthority,
-                || {
+                back_off,
+            }) => {
+                c.check(
+                    proves_non_application == cap.rate_limit_authoritative,
+                    ProviderRule::RateLimitAuthority,
+                    || {
+                        format!(
+                            "a rate-limited send of {op} claimed non-application \
+                             {proves_non_application} with rate_limit_authoritative {}",
+                            cap.rate_limit_authoritative
+                        )
+                    },
+                );
+                let holds = if cap.rate_limit_authoritative {
+                    back_off == Some(stated)
+                } else {
+                    back_off.is_none_or(|b| b == stated)
+                };
+                c.check(holds, ProviderRule::RateLimitBackOff, || {
                     format!(
-                        "a rate-limited send of {op} claimed non-application {proves_non_application} \
-                         with rate_limit_authoritative {}",
+                        "a rate-limited send of {op} with rate_limit_authoritative {} answered \
+                         back-off {back_off:?} where the provider stated {stated:?}",
                         cap.rate_limit_authoritative
                     )
-                },
-            ),
+                });
+            }
             other => c.fail(
                 ProviderRule::RateLimitReported,
                 format!("a rate-limited send of {op} answered {other:?}"),
@@ -465,7 +492,7 @@ fn faulted<H: ProviderHarness>(
     }
     let found = adapter.lookup(op, &key);
     match fault {
-        ProviderFault::RateLimited => {
+        ProviderFault::RateLimited(_) => {
             check_not_applied(c, cap, &found, "after a rate-limited send");
         }
         ProviderFault::DroppedRequest => {

@@ -1,5 +1,6 @@
 //! The delivery channel between a fake provider and the observation source that polls it.
 
+use autobot_adapters::backoff::BackOff;
 use autobot_adapters::observation::{
     CiConclusion, Delivery, Fact, Observation, ObservationHarness, ObservationSource, SourceError,
 };
@@ -61,6 +62,8 @@ pub struct Feed {
     delivery: Delivery,
     available: bool,
     throttled: u32,
+    /// The back-off the throttled calls state; read only while `throttled` is not zero.
+    back_off: BackOff,
     polls: u32,
     emitted: u64,
     /// Undelivered answers and the poll count at which each is due.
@@ -79,6 +82,7 @@ impl Feed {
             delivery,
             available: true,
             throttled: 0,
+            back_off: BackOff { seconds: 0 },
             polls: 0,
             emitted: 0,
             pending: Vec::new(),
@@ -177,10 +181,12 @@ impl Feed {
     }
 
     /// Rate-limits the next `calls` calls that reach the provider, polls, relists and the
-    /// provider's own queries alike: each answers [`SourceError::Unavailable`], delivers
-    /// nothing and is not a counted poll.
-    pub fn throttle(&mut self, calls: u32) {
+    /// provider's own queries alike: each answers [`SourceError::RateLimited`] stating
+    /// `back_off`, delivers nothing and is not a counted poll. A throttle while calls are still
+    /// throttled extends the window, and every call left in it states the new `back_off`.
+    pub fn throttle(&mut self, calls: u32, back_off: BackOff) {
         self.throttled = self.throttled.saturating_add(calls);
+        self.back_off = back_off;
     }
 
     /// How many emitted deliveries, duplicates included, no poll has delivered yet.
@@ -193,14 +199,17 @@ impl Feed {
     ///
     /// # Errors
     ///
-    /// [`SourceError::Unavailable`] while the provider is unreachable or rate-limited.
+    /// [`SourceError::Unavailable`] while the provider is unreachable and
+    /// [`SourceError::RateLimited`] while it is rate-limited.
     pub fn reach(&mut self) -> Result<(), SourceError> {
         if !self.available {
             return Err(SourceError::Unavailable);
         }
         if self.throttled > 0 {
             self.throttled -= 1;
-            return Err(SourceError::Unavailable);
+            return Err(SourceError::RateLimited {
+                back_off: Some(self.back_off),
+            });
         }
         Ok(())
     }

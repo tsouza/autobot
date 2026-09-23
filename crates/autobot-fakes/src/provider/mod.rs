@@ -16,7 +16,8 @@
 //! - Provider names are `fake-forge` and `fake-ci`, and every capability is the fake's own
 //!   declaration, not a claim about any real provider.
 //! - A rate-limited send is reported as [`SendError::RateLimited`], claiming non-application
-//!   exactly when the operation's capability declares `rate_limit_authoritative`. A
+//!   exactly when the operation's capability declares `rate_limit_authoritative`, and stating
+//!   the back-off its script's fault gives, whatever the capability declares. A
 //!   rate-limited observation, lookup or dry run is reported as [`TransportFault::Timeout`]:
 //!   [`ProviderError`] has no throttled answer, and an unknown outcome is the answer that never
 //!   claims anything (KERNEL §3.3).
@@ -254,8 +255,9 @@ impl ProviderAdapter for FakeProvider {
         let fault = self.fixture.script.take(Call::Send, &request.operation);
         match fault {
             Some(Fault::Dropped(t)) => Err(SendError::Transport(t)),
-            Some(Fault::RateLimited { .. }) => Err(SendError::RateLimited {
+            Some(Fault::RateLimited { back_off, .. }) => Err(SendError::RateLimited {
                 proves_non_application,
+                back_off: Some(back_off),
             }),
             // The acknowledgement is lost whatever it was. A remote identity is never empty,
             // so `apply` never fails; if it did, it applied nothing and the unknown outcome
