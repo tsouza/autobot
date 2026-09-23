@@ -19,7 +19,8 @@ pub enum ControlReceiptState {
 /// The receipt of one control commit, the FORMAL §2 `ControlReceipt` record.
 ///
 /// The control commit appends it to the ring in the same write, so the receipt is durable
-/// without a second write and its audit event can be rebuilt from it.
+/// without a second write. With its [`AuditEnvelope`] it holds every field of its audit event;
+/// the envelope's untyped text fields are open in #329.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ControlReceipt {
     /// The UID of the control command.

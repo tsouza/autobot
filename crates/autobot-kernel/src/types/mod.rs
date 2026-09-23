@@ -38,8 +38,9 @@
 //! Open design clarifications this module depends on: the `CANCELLED` and `REPLAY_EXPIRED`
 //! observations follow the KERNEL §10 `CommandReceipt` machine as printed, which the lifecycle
 //! clarification #71 may refine; and KERNEL §2 states a proof only for a rejection about a
-//! revision, so a rejection with other grounds, such as a replay key bound to another payload,
-//! has no [`RejectionProof`] shape until the design gives it one.
+//! revision, so a rejection with other grounds, such as a replay key bound to another payload
+//! or principal, or a create command, which pins no expected revision, has no
+//! [`RejectionProof`] shape until the design gives it one (#328).
 
 mod digest;
 mod identity;

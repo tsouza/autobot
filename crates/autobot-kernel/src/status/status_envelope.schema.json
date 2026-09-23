@@ -180,7 +180,7 @@
       ]
     },
     "ControlReceipt": {
-      "description": "The receipt of one control commit, the FORMAL §2 `ControlReceipt` record.\n\nThe control commit appends it to the ring in the same write, so the receipt is durable\nwithout a second write and its audit event can be rebuilt from it.",
+      "description": "The receipt of one control commit, the FORMAL §2 `ControlReceipt` record.\n\nThe control commit appends it to the ring in the same write, so the receipt is durable\nwithout a second write. With its [`AuditEnvelope`] it holds every field of its audit event;\nthe envelope's untyped text fields are open in #329.",
       "type": "object",
       "properties": {
         "after_control_digest": {
@@ -295,7 +295,7 @@
       ]
     },
     "PendingCommit": {
-      "description": "The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.\n\nThe slot names its command's receipt, prepared before the commit, and the digest of its\naudit event; with the effect intents it holds, that lets a new process finish the receipt\nand rebuild the event from the slot alone.",
+      "description": "The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.\n\nThe slot names its command's receipt, prepared before the commit, by `receipt_uid`, binds\nits audit event by `audit_digest`, and holds its effect intents. KERNEL §1 has the slot hold\nthe exact receipt and audit envelope so that a new process can rebuild both from it;\nwhether these fields suffice to rebuild a domain event is open in #329.",
       "type": "object",
       "properties": {
         "after_digest": {

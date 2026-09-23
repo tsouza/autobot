@@ -19,9 +19,10 @@ pub enum PendingCommitState {
 
 /// The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.
 ///
-/// The slot names its command's receipt, prepared before the commit, and the digest of its
-/// audit event; with the effect intents it holds, that lets a new process finish the receipt
-/// and rebuild the event from the slot alone.
+/// The slot names its command's receipt, prepared before the commit, by `receipt_uid`, binds
+/// its audit event by `audit_digest`, and holds its effect intents. KERNEL §1 has the slot hold
+/// the exact receipt and audit envelope so that a new process can rebuild both from it;
+/// whether these fields suffice to rebuild a domain event is open in #329.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PendingCommit {
     /// The UID of the committed command.

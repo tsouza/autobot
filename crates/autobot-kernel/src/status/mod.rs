@@ -21,7 +21,8 @@
 //!   machine. A cleared slot keeps its body until the next domain commit replaces it.
 //! - [`PendingCommit`] holds the FORMAL §2 fields and no others: the command's receipt, which
 //!   is prepared before the commit, is named by `receipt_uid`, and the audit event is bound by
-//!   `audit_digest`. Each effect intent is a [`SlotEffectIntent`] with the FORMAL §2
+//!   `audit_digest`; whether that suffices to rebuild a domain event, as KERNEL §1 requires of
+//!   the slot, is open in #329. Each effect intent is a [`SlotEffectIntent`] with the FORMAL §2
 //!   `EffectIntent` fields the commit decides; `provider_binding`, `desired_outcome`,
 //!   `target_identity`, `contract_revision` and `installation_lineage` are opaque text here.
 //! - A [`ControlReceipt`]'s `control_revision` is the revision its commit produced. Its
@@ -41,8 +42,9 @@
 //!
 //! Open design points these records depend on: KERNEL §1 gives every aggregate a
 //! `control_revision` while M0 §1 lists it only for aggregates with a control lane, and these
-//! records follow KERNEL §1; and the design does not type the provider-facing fields of an
-//! effect intent, which stay opaque text until it does.
+//! records follow KERNEL §1 (#327); and the design does not type the provider-facing fields of
+//! an effect intent or the text fields of an audit envelope, which stay opaque text until it
+//! does (#329).
 //!
 //! The envelope's schema is snapshotted in `status_envelope.schema.json` beside this module;
 //! the snapshot test rewrites it when `AUTOBOT_UPDATE_SNAPSHOTS` is set.
