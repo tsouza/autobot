@@ -5,13 +5,19 @@
 /// A fence opens with three or more backticks or tildes (at most three spaces of indent) and
 /// closes with a line of the same character, at least as long, and nothing else.
 #[derive(Debug, Default)]
-struct Fence {
+pub struct Fence {
     open: Option<(u8, usize)>,
 }
 
 impl Fence {
+    /// Whether a fenced code block is open after the lines fed so far.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
+
     /// Feeds one line; returns `true` if the line is fence markup or fenced content.
-    fn step(&mut self, line: &str) -> bool {
+    pub fn step(&mut self, line: &str) -> bool {
         let body = line.trim_end();
         let indent = body.len() - body.trim_start_matches(' ').len();
         let body = body.trim_start_matches(' ');
@@ -157,4 +163,46 @@ fn split_row(line: &str) -> Vec<String> {
         cells.push(cell.trim().to_owned());
     }
     cells
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fenced(doc: &str) -> Vec<bool> {
+        let mut fence = Fence::default();
+        doc.lines().map(|l| fence.step(l)).collect()
+    }
+
+    #[test]
+    fn fence_closes_only_on_a_run_of_the_same_character_at_least_as_long() {
+        let doc = "a\n````md\n```\nx\n```\n~~~\n````\nb\n~~~\ny\n```\n~~~~\nc\n";
+        assert_eq!(
+            fenced(doc),
+            [
+                false, true, true, true, true, true, true, false, true, true, true, true, false
+            ]
+        );
+    }
+
+    #[test]
+    fn fence_ignores_deep_indent_and_backtick_info_strings() {
+        let doc = "    ```\na\n```x`y\nb\n   ```\nc\n   ```\nd\n";
+        assert_eq!(
+            fenced(doc),
+            [false, false, false, false, true, true, true, false]
+        );
+    }
+
+    #[test]
+    fn fence_reports_whether_a_block_is_open() {
+        let mut fence = Fence::default();
+        assert!(!fence.is_open());
+        fence.step("~~~");
+        assert!(fence.is_open());
+        fence.step("~~");
+        assert!(fence.is_open());
+        fence.step("~~~~");
+        assert!(!fence.is_open());
+    }
 }
