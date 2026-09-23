@@ -4,7 +4,7 @@ Why `AUTOBOT-KERNEL.md` is shaped the way it is. Sections follow its § numbers.
 
 ## Preamble
 
-Kubernetes gives atomicity on one resource and nothing wider. Every rule is built from that primitive. A lease token checked outside the committing write, a controller-local mutex, or a journal replayed into state would each put authority somewhere a crash or a stale process can leave it wrong. Each section names the invariants it serves so the thesis admission rule stays checkable: a mechanism with no invariant behind it does not enter the core.
+Kubernetes gives atomicity on one resource and nothing wider. Every rule is built from that primitive. A lease token checked outside the committing write, a controller-local mutex, or a journal replayed into state would each put authority somewhere a crash or a stale process can leave it wrong. Each rule names the invariant it serves so the thesis admission rule stays checkable: a mechanism with no invariant behind it does not enter the core.
 
 ## 1. Aggregates and commit lanes
 

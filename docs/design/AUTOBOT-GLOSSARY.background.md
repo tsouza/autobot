@@ -78,4 +78,4 @@ Temporal and PostgreSQL are adopted only on a measured need and never as authori
 
 ## Retired terms
 
-Each retired name was replaced by a mechanism the core already has: a reservation plus the target's receipt, a pin on the `TaskRun`, the `WorkContext` registers, the broker as sole sender, the write-ahead `send_attempt`, conditions and per-plan phases, the `TaskRun`'s expected records, and reconciler duties of existing controllers. Keeping a retired name alongside its replacement would give one concept two names.
+Each retired name was replaced by an existing mechanism or moved out of the core. Core replacements: a reservation plus the target's receipt, a pin on the `TaskRun`, the `WorkContext` registers, the broker as sole sender, the write-ahead `send_attempt`, conditions and per-plan phases, the `TaskRun`'s expected records, and reconciler duties of existing controllers. Names that left the core went to an extension term, an extension file or the DEFERRED list, or were dropped without a replacement. Keeping a retired name alongside its replacement would give one concept two names.
