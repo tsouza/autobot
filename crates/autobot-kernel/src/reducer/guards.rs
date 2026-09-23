@@ -93,6 +93,11 @@ guards! {
     HumanCharterAcceptance => "charter revision accepted by an agent principal", "F-41";
     /// A `judged` "complies" never satisfies the `review` backstop.
     JudgedNotReviewBackstop => "a `judged` \"complies\" satisfying the `review` backstop", "F-42";
+    /// No accept is admitted from the intake-submitter identity.
+    IntakeSubmitterCannotAccept => "an accept admitted from the intake-submitter identity", "F-43";
+    /// An `Intake` reaches `PROPOSED` only with every repository forge-verified.
+    ForgeVerifiedBeforeProposed =>
+        "an `Intake` reaching `PROPOSED` with a repository lacking a forge-adapter answer", "F-44";
 }
 
 impl GuardId {

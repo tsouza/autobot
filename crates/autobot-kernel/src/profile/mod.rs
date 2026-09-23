@@ -34,7 +34,7 @@
 mod digest;
 mod values;
 
-pub use digest::{DigestParseError, ProfileDigest};
+pub use digest::ProfileDigest;
 pub use values::{
     ApiBudget, Artifacts, Checkpoint, ControlRing, ControlWork, DefectMaturity, DispatchLedger,
     Evidence, Objects, ProfileValues, Recovery, Registers, Replay, Sandbox, SandboxEgress,
