@@ -79,12 +79,14 @@ pub fn heading_of(line: &str) -> Option<(usize, &str)> {
     }
 }
 
-/// Every table outside fenced code in `text`, following GitHub Flavored Markdown: a table is a
-/// header row followed by a delimiter row with the same number of cells, and runs until a blank
-/// line or a line without `|`. It is returned as rows of trimmed cells, without the delimiter row.
+/// Every pipe table outside fenced code in `text`, as rows of trimmed cells without the delimiter
+/// row.
 ///
-/// Outer pipes are optional. Cells split on every `|` not escaped as `\\|`, including inside
-/// code spans, and `\\|` yields a literal `|`, as GitHub renders them.
+/// This is the subset of GitHub Flavored Markdown tables that the design documents use, not a
+/// full implementation: a table is a line containing `|` followed by a delimiter row with the
+/// same number of cells, and it runs until a blank line or a line without `|`. Outer pipes are
+/// optional. Cells split on every `|` not escaped as `\\|` (including inside code spans), and
+/// `\\|` yields a literal `|`. Rows are returned as written, without padding or truncation.
 #[must_use]
 pub fn tables(text: &str) -> Vec<Vec<Vec<String>>> {
     let mut out = Vec::new();
