@@ -84,6 +84,14 @@ ci-deny: deny
 # CI job: unused dependencies.
 ci-machete: machete
 
+# CI: the environment in sccache's key, its counters, and each compilation's result by crate
+# from the server log that SCCACHE_ERROR_LOG names, when there is one.
+sccache-stats:
+    echo "RUSTFLAGS=${RUSTFLAGS-}"
+    env | grep '^CARGO_' | sort || true
+    sccache --show-adv-stats
+    if [[ -f "${SCCACHE_ERROR_LOG-}" ]]; then grep -F 'compile result' "$SCCACHE_ERROR_LOG" || true; fi
+
 # Worktree per pull request: `just wt new <issue#>`, `just wt list`, `just wt rm <issue#>`.
 [positional-arguments]
 wt *args:
