@@ -1,6 +1,6 @@
 //! What a reader observes about the fate of one command.
 
-use super::{CommitSequence, LaneRevision, Uid};
+use super::{CommitSequence, Digest, LaneRevision, Uid};
 use crate::error::ValueError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,24 +42,57 @@ impl CommitObservation {
     }
 }
 
-/// The proof that a command can never commit.
+/// The proof a `REJECTED` receipt records, one shape per rejection ground of KERNEL §2: the
+/// FORMAL §2 `RejectionProof` record, tagged by `ground`.
 ///
-/// It holds the two facts a rejection needs: the target's revision in the command's lane was
+/// Every rejection has one of these grounds, and a rejection without its proof is none.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "ground", rename_all = "snake_case")]
+pub enum RejectionProof {
+    /// The exact expected revision can no longer commit and no matching slot or receipt exists.
+    PassedRevision(PassedRevision),
+    /// The replay key is already bound to a different payload or principal.
+    ReplayConflict {
+        /// The receipt the key is bound to.
+        existing_receipt_uid: Uid,
+        /// The input digest bound to that receipt.
+        bound_digest: Digest,
+    },
+    /// The create's name is held by another object.
+    CreateConflict {
+        /// The UID of the object that holds the name.
+        observed_uid: Uid,
+        /// The commit sequence of the read that observed it.
+        observed_commit_sequence: CommitSequence,
+    },
+    /// The owning controller refused a guard before any compare-and-swap.
+    GuardRefusal {
+        /// The identifier of the refused guard.
+        guard_id: String,
+        /// The target revision the guard read.
+        read_revision: LaneRevision,
+    },
+}
+
+/// The proof of the passed-revision ground: a command can never commit at the revision it
+/// pinned.
+///
+/// It holds the two facts that ground needs: the target's revision in the command's lane was
 /// read past the revision the command pinned, so that exact revision can no longer commit; and
 /// in the same read neither the target's pending slot nor any receipt matched the command. A
 /// compare-and-swap conflict alone proves neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(try_from = "RejectionProofWire", into = "RejectionProofWire")]
-pub struct RejectionProof {
+#[serde(try_from = "PassedRevisionWire", into = "PassedRevisionWire")]
+pub struct PassedRevision {
     expected_revision: LaneRevision,
     observed_revision: LaneRevision,
-    unmatched_at: CommitSequence,
+    observed_commit_sequence: CommitSequence,
 }
 
-impl RejectionProof {
+impl PassedRevision {
     /// The proof that a command pinning `expected_revision` can never commit, from a read of
-    /// its target at commit sequence `unmatched_at` that showed `observed_revision` and no
-    /// pending slot or receipt matching the command.
+    /// its target at commit sequence `observed_commit_sequence` that showed `observed_revision`
+    /// and no pending slot or receipt matching the command.
     ///
     /// # Errors
     ///
@@ -68,7 +101,7 @@ impl RejectionProof {
     pub fn new(
         expected_revision: LaneRevision,
         observed_revision: LaneRevision,
-        unmatched_at: CommitSequence,
+        observed_commit_sequence: CommitSequence,
     ) -> Result<Self, ValueError> {
         let (expected, observed) = (expected_revision, observed_revision);
         if expected.lane() != observed.lane() {
@@ -80,7 +113,7 @@ impl RejectionProof {
         Ok(Self {
             expected_revision,
             observed_revision,
-            unmatched_at,
+            observed_commit_sequence,
         })
     }
 
@@ -98,37 +131,41 @@ impl RejectionProof {
 
     /// The target's commit sequence in the read that found no matching slot or receipt.
     #[must_use]
-    pub fn unmatched_at(&self) -> CommitSequence {
-        self.unmatched_at
+    pub fn observed_commit_sequence(&self) -> CommitSequence {
+        self.observed_commit_sequence
     }
 }
 
-/// The serde form of a [`RejectionProof`].
+/// The serde form of a [`PassedRevision`].
 #[derive(Clone, Copy, Serialize, Deserialize, JsonSchema)]
-#[schemars(rename = "RejectionProof")]
-struct RejectionProofWire {
+#[schemars(rename = "PassedRevision")]
+struct PassedRevisionWire {
     /// The revision the command pinned.
     expected_revision: LaneRevision,
     /// The target's revision in the same lane, read past the expected one.
     observed_revision: LaneRevision,
     /// The target's commit sequence in the read that found no matching slot or receipt.
-    unmatched_at: CommitSequence,
+    observed_commit_sequence: CommitSequence,
 }
 
-impl TryFrom<RejectionProofWire> for RejectionProof {
+impl TryFrom<PassedRevisionWire> for PassedRevision {
     type Error = ValueError;
 
-    fn try_from(w: RejectionProofWire) -> Result<Self, Self::Error> {
-        Self::new(w.expected_revision, w.observed_revision, w.unmatched_at)
+    fn try_from(w: PassedRevisionWire) -> Result<Self, Self::Error> {
+        Self::new(
+            w.expected_revision,
+            w.observed_revision,
+            w.observed_commit_sequence,
+        )
     }
 }
 
-impl From<RejectionProof> for RejectionProofWire {
-    fn from(p: RejectionProof) -> Self {
+impl From<PassedRevision> for PassedRevisionWire {
+    fn from(p: PassedRevision) -> Self {
         Self {
             expected_revision: p.expected_revision,
             observed_revision: p.observed_revision,
-            unmatched_at: p.unmatched_at,
+            observed_commit_sequence: p.observed_commit_sequence,
         }
     }
 }

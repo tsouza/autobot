@@ -73,7 +73,7 @@ record_classes! {
         expected_revision: Structural,
         proposed_revision: Structural,
         control_revision_at_commit: Structural,
-        audit_digest: Structural,
+        audit_envelope: Structural,
         effect_intents: Structural,
         state: Reconciliation,
     }

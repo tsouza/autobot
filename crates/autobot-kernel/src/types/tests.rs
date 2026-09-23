@@ -157,33 +157,33 @@ fn digests_use_the_sha256_text_form() {
 }
 
 #[test]
-fn a_rejection_proof_needs_a_passed_revision_on_the_same_lane() {
+fn a_passed_revision_proof_needs_a_passed_revision_on_the_same_lane() {
     let at = CommitSequence::new(9).expect("in range");
-    let proof = RejectionProof::new(state(3), state(4), at).expect("valid proof");
+    let proof = PassedRevision::new(state(3), state(4), at).expect("valid proof");
     assert_eq!(
         (
             proof.expected_revision(),
             proof.observed_revision(),
-            proof.unmatched_at()
+            proof.observed_commit_sequence()
         ),
         (state(3), state(4), at)
     );
     assert_eq!(
-        RejectionProof::new(state(3), state(3), at),
+        PassedRevision::new(state(3), state(3), at),
         Err(ValueError::ProofNotPassed {
             expected: state(3),
             observed: state(3)
         })
     );
     assert_eq!(
-        RejectionProof::new(state(3), state(2), at),
+        PassedRevision::new(state(3), state(2), at),
         Err(ValueError::ProofNotPassed {
             expected: state(3),
             observed: state(2)
         })
     );
     assert_eq!(
-        RejectionProof::new(state(3), control(5), at),
+        PassedRevision::new(state(3), control(5), at),
         Err(ValueError::ProofLanes {
             expected: state(3),
             observed: control(5)
@@ -192,8 +192,8 @@ fn a_rejection_proof_needs_a_passed_revision_on_the_same_lane() {
 }
 
 #[test]
-fn a_rejection_proof_is_checked_when_read() {
-    let proof = RejectionProof::new(
+fn a_passed_revision_proof_is_checked_when_read() {
+    let proof = PassedRevision::new(
         control(1),
         control(2),
         CommitSequence::new(7).expect("in range"),
@@ -204,24 +204,87 @@ fn a_rejection_proof_is_checked_when_read() {
         json!({
             "expected_revision": {"lane": "CONTROL", "revision": 1},
             "observed_revision": {"lane": "CONTROL", "revision": 2},
-            "unmatched_at": 7,
+            "observed_commit_sequence": 7,
         }),
     );
-    assert!(refused::<RejectionProof>(json!({
+    assert!(refused::<PassedRevision>(json!({
         "expected_revision": {"lane": "CONTROL", "revision": 2},
         "observed_revision": {"lane": "CONTROL", "revision": 2},
-        "unmatched_at": 7,
+        "observed_commit_sequence": 7,
     })));
-    assert!(refused::<RejectionProof>(json!({
+    assert!(refused::<PassedRevision>(json!({
         "expected_revision": {"lane": "DOMAIN", "revision": 1},
         "observed_revision": {"lane": "CONTROL", "revision": 2},
-        "unmatched_at": 7,
+        "observed_commit_sequence": 7,
     })));
 }
 
 #[test]
+fn a_rejection_proof_is_tagged_by_its_ground() {
+    let passed = PassedRevision::new(
+        state(1),
+        state(2),
+        CommitSequence::new(4).expect("in range"),
+    )
+    .expect("valid proof");
+    round_trips(
+        &RejectionProof::PassedRevision(passed),
+        json!({
+            "ground": "passed_revision",
+            "expected_revision": {"lane": "DOMAIN", "revision": 1},
+            "observed_revision": {"lane": "DOMAIN", "revision": 2},
+            "observed_commit_sequence": 4,
+        }),
+    );
+    let digest = format!("sha256:{}", "0b".repeat(32));
+    round_trips(
+        &RejectionProof::ReplayConflict {
+            existing_receipt_uid: "rcpt-1".parse().expect("non-empty"),
+            bound_digest: digest.parse().expect("valid digest"),
+        },
+        json!({
+            "ground": "replay_conflict",
+            "existing_receipt_uid": "rcpt-1",
+            "bound_digest": digest,
+        }),
+    );
+    round_trips(
+        &RejectionProof::CreateConflict {
+            observed_uid: "obj-1".parse().expect("non-empty"),
+            observed_commit_sequence: CommitSequence::new(9).expect("in range"),
+        },
+        json!({
+            "ground": "create_conflict",
+            "observed_uid": "obj-1",
+            "observed_commit_sequence": 9,
+        }),
+    );
+    round_trips(
+        &RejectionProof::GuardRefusal {
+            guard_id: "phase-active".to_owned(),
+            read_revision: control(3),
+        },
+        json!({
+            "ground": "guard_refusal",
+            "guard_id": "phase-active",
+            "read_revision": {"lane": "CONTROL", "revision": 3},
+        }),
+    );
+    assert!(refused::<RejectionProof>(json!({
+        "ground": "passed_revision",
+        "expected_revision": {"lane": "DOMAIN", "revision": 2},
+        "observed_revision": {"lane": "DOMAIN", "revision": 2},
+        "observed_commit_sequence": 4,
+    })));
+    assert!(refused::<RejectionProof>(json!({"ground": "timeout"})));
+    assert!(refused::<RejectionProof>(
+        json!({"ground": "replay_conflict", "existing_receipt_uid": "rcpt-1"})
+    ));
+}
+
+#[test]
 fn only_an_uncertain_observation_is_not_final() {
-    let proof = RejectionProof::new(
+    let proof = PassedRevision::new(
         state(1),
         state(2),
         CommitSequence::new(2).expect("in range"),
@@ -232,7 +295,7 @@ fn only_an_uncertain_observation_is_not_final() {
             revision: state(2),
             commit_sequence: CommitSequence::new(2).expect("in range"),
         },
-        CommitObservation::Rejected(proof),
+        CommitObservation::Rejected(RejectionProof::PassedRevision(proof)),
         CommitObservation::Cancelled {
             cancellation_receipt_uid: "c".parse().expect("non-empty"),
         },

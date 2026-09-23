@@ -20,15 +20,17 @@
 //!   ([`StatusEnvelope::pending_commit_state`]), the initial state of the KERNEL §10 slot
 //!   machine. A cleared slot keeps its body until the next domain commit replaces it.
 //! - [`PendingCommit`] holds the FORMAL §2 fields and no others: the command's receipt, which
-//!   is prepared before the commit, is named by `receipt_uid`, and the audit event is bound by
-//!   `audit_digest`; whether that suffices to rebuild a domain event, as KERNEL §1 requires of
-//!   the slot, is open in #329. Each effect intent is a [`SlotEffectIntent`] with the FORMAL §2
-//!   `EffectIntent` fields the commit decides; `provider_binding`, `desired_outcome`,
-//!   `target_identity`, `contract_revision` and `installation_lineage` are opaque text here.
-//! - A [`ControlReceipt`]'s `control_revision` is the revision its commit produced. Its
-//!   `audit_envelope` is an [`AuditEnvelope`]: the `AutoBotEvent` fields neither the receipt nor
-//!   the aggregate holds, including the `state_revision` at the commit, which a later domain
-//!   commit may have moved by the time the event is published.
+//!   is prepared before the commit, is named by `receipt_uid`, and the full [`AuditEnvelope`]
+//!   of the commit rebuilds its audit event.
+//! - Each effect intent is a [`SlotEffectIntent`]: the FORMAL §2 `EffectIntentRecord` without
+//!   its `operation_key`, which is derived, and with the `installation_lineage` it is derived
+//!   from. `provider_binding`, `desired_outcome`, `target_identity`, `contract_revision` and
+//!   `installation_lineage` are opaque text here; `provider_binding` is text rather than the
+//!   provider and operation pair FORMAL §2 names, and the slot holds `installation_lineage`
+//!   where FORMAL §2 holds `operation_key` (#384).
+//! - A [`ControlReceipt`]'s `control_revision` is the revision its commit produced, and its
+//!   `audit_envelope` is the same [`AuditEnvelope`] a pending commit holds; the envelope repeats
+//!   the receipt's commit sequence and control revision, as FORMAL §2 does.
 //! - The ring's bound is the profile's [`ControlRing::entries`](crate::profile::ControlRing):
 //!   the ring is full when that many receipts are unpublished, and a published receipt gives
 //!   way, oldest first, when a new one needs its place. The per-entry size limit,
@@ -42,19 +44,19 @@
 //!
 //! Open design points these records depend on: KERNEL §1 gives every aggregate a
 //! `control_revision` while M0 §1 lists it only for aggregates with a control lane, and these
-//! records follow KERNEL §1 (#327); and the design does not type the provider-facing fields of
-//! an effect intent or the text fields of an audit envelope, which stay opaque text until it
-//! does (#329).
+//! records follow KERNEL §1 (#327).
 //!
 //! The envelope's schema is snapshotted in `status_envelope.schema.json` beside this module;
 //! the snapshot test rewrites it when `AUTOBOT_UPDATE_SNAPSHOTS` is set.
 
+mod audit;
 mod envelope;
 mod ring;
 mod slot;
 
+pub use audit::AuditEnvelope;
 pub use envelope::{Condition, ConditionStatus, StatusEnvelope};
-pub use ring::{AuditEnvelope, ControlReceipt, ControlReceiptRing, ControlReceiptState};
+pub use ring::{ControlReceipt, ControlReceiptRing, ControlReceiptState};
 pub use slot::{PendingCommit, PendingCommitState, SlotEffectIntent};
 
 #[cfg(test)]

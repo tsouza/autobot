@@ -5,7 +5,7 @@ use crate::status::{
     AuditEnvelope, Condition, ConditionStatus, ControlReceipt, ControlReceiptState, PendingCommit,
     PendingCommitState, StatusEnvelope,
 };
-use crate::types::{CommitSequence, ControlRevision, Digest, StateRevision};
+use crate::types::{CommitSequence, ControlRevision, Digest, Lane, StateRevision};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -55,6 +55,8 @@ struct WorkContextStatus {
     hold_state: Hold,
     #[field(control)]
     hold_generation: u64,
+    #[field(control)]
+    hold_causes: Vec<String>,
     #[field(domain)]
     admission_sequence: u64,
     #[field(nested)]
@@ -112,6 +114,24 @@ fn m0_ring() -> ControlRing {
         .control_ring
 }
 
+/// The audit envelope of a commit at `sequence` on `lane`.
+fn audit(lane: Lane, sequence: u64) -> AuditEnvelope {
+    AuditEnvelope {
+        aggregate_uid: "ctx".parse().expect("uid"),
+        commit_sequence: seq(sequence),
+        lane,
+        state_revision: srev(1),
+        control_revision: crev(0),
+        source_uid: "src".parse().expect("uid"),
+        event_type: "HoldRequested".to_owned(),
+        state_digest: digest(3),
+        actor: "context-controller".parse().expect("principal"),
+        causation_id: "cause".to_owned(),
+        correlation_id: "corr".to_owned(),
+        schema_version: 1,
+    }
+}
+
 fn slot(sequence: u64) -> PendingCommit {
     PendingCommit {
         command_uid: format!("cmd-{sequence}").parse().expect("uid"),
@@ -122,7 +142,7 @@ fn slot(sequence: u64) -> PendingCommit {
         expected_revision: srev(0),
         proposed_revision: srev(1),
         control_revision_at_commit: crev(0),
-        audit_digest: digest(3),
+        audit_envelope: audit(Lane::Domain, sequence),
         effect_intents: Vec::new(),
         state: PendingCommitState::Occupied,
     }
@@ -135,14 +155,7 @@ fn receipt(sequence: u64, revision: u64) -> ControlReceipt {
         commit_sequence: seq(sequence),
         before_control_digest: digest(4),
         after_control_digest: digest(5),
-        audit_envelope: AuditEnvelope {
-            state_revision: srev(1),
-            source_uid: "src".parse().expect("uid"),
-            event_type: "HoldRequested".to_owned(),
-            causation_id: "cause".to_owned(),
-            correlation_id: "corr".to_owned(),
-            schema_version: 1,
-        },
+        audit_envelope: audit(Lane::Control, sequence),
         principal: "context-controller".parse().expect("principal"),
         state: ControlReceiptState::Unpublished,
     }
@@ -166,6 +179,7 @@ fn work_context() -> WorkContextStatus {
         envelope,
         hold_state: Hold::Running,
         hold_generation: 1,
+        hold_causes: vec!["hold-1".to_owned()],
         admission_sequence: 1,
         manager_authority: BTreeMap::from([(
             "plan-a".to_owned(),
@@ -224,11 +238,19 @@ struct KernelClause {
     reconciliation: Vec<String>,
 }
 
+/// The clause of KERNEL §1 "Field classes in the core" that classes the two revisions of every
+/// aggregate; the per-kind clauses follow it.
+const REVISION_CLAUSE: &str =
+    "on every aggregate, `state_revision` is domain and `control_revision` is control; ";
+
 fn kernel_clauses() -> Vec<KernelClause> {
     let start = KERNEL
         .find("Field classes in the core: ")
         .expect("KERNEL §1 prints the field classes");
     let rest = &KERNEL[start + "Field classes in the core: ".len()..];
+    let rest = rest
+        .strip_prefix(REVISION_CLAUSE)
+        .expect("KERNEL §1 classes the revisions first");
     let end = rest.find(". Everything else").expect("the list ends");
     rest[..end]
         .split("; ")
@@ -256,7 +278,8 @@ fn clause_for(kind: &str) -> KernelClause {
     clauses.swap_remove(i)
 }
 
-/// KERNEL §1's control fields for `kind`, after `control_revision` (module rustdoc).
+/// KERNEL §1's control fields for `kind`, after `control_revision`, which its revision clause
+/// makes control on every aggregate.
 fn kernel_control(kind: &str) -> Vec<String> {
     let mut control = vec!["control_revision".to_owned()];
     control.extend(clause_for(kind).control);
@@ -340,7 +363,7 @@ fn bookkeeping_slot_body_and_ring_entries_are_structural() {
             "pending_commit.expected_revision",
             "pending_commit.proposed_revision",
             "pending_commit.control_revision_at_commit",
-            "pending_commit.audit_digest",
+            "pending_commit.audit_envelope",
             "pending_commit.effect_intents",
             "control_receipt_ring",
             "control_receipt_ring[*]",
@@ -361,9 +384,14 @@ type Change = fn(&mut WorkContextStatus);
 #[test]
 fn every_single_field_change_touches_its_declared_class() {
     let before = work_context();
-    let cases: [(&str, Change, FieldClass); 8] = [
+    let cases: [(&str, Change, FieldClass); 9] = [
         ("hold_state", |s| s.hold_state = Hold::Held, Control),
         ("hold_generation", |s| s.hold_generation += 1, Control),
+        (
+            "hold_causes",
+            |s| s.hold_causes.push("kill-1".to_owned()),
+            Control,
+        ),
         (
             "manager_authority[*].phase",
             |s| {
@@ -546,7 +574,7 @@ fn structural_changes_without_a_lane_are_rejected() {
 
     let mut body = before.clone();
     if let Some(slot) = body.envelope.pending_commit.as_mut() {
-        slot.audit_digest = digest(9);
+        slot.audit_envelope.state_digest = digest(9);
     }
     let mut sequence = before.clone();
     if let Some(slot) = sequence.envelope.pending_commit.as_mut() {

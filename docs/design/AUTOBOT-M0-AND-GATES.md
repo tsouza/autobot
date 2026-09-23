@@ -52,7 +52,7 @@ These values are stated once, here. Any other document that needs one refers to 
 | RPO / RTO | at most the uncheckpointed 60 s plus one bounded in-flight operation, with `last_verified_checkpoint_age` and `at_risk_interval` exposed; restore of a 100 MiB fixture within 10 minutes with healthy dependencies — measured before claimed |
 | Artifact fixture | independent S3-compatible store outside the worker-node loss domain, versioned, encrypted, separate restore process; ≤ 1 GiB per workspace; no automatic deletion of an original during M0 |
 | Evidence | TTL 24 h, shortened by repository policy; no-test exception expiry 7 days; defect maturity 14 days (30 for `SECURITY_OR_DATA_INTEGRITY` and `COMPATIBILITY_RISK`) |
-| Liveness bounds | `provider_reconcile_bound`, `continuation_deadline`, `record_deadline`, `usage_settlement_deadline`, `human_decision_deadline` and the rest of FORMAL §6 are fixture constants chosen per fixture |
+| Liveness bounds | the Manager lease duration, `provider_reconcile_bound`, `continuation_deadline`, `record_deadline`, `usage_settlement_deadline`, `human_decision_deadline` and the rest of FORMAL §6 are fixture constants chosen per fixture |
 | Sandbox | Linux, pinned OCI image, default-deny network, broker-only egress, one writable mount, no host mount, privileged container or device; optional live model API only through a metered proxy that cannot reach production endpoints |
 
 Loss of both workspace and store, zone-wide loss and hostile cluster administrators are outside the M0 custody profile (TRUST).

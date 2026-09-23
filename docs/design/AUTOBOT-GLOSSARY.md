@@ -35,11 +35,14 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 - **Field partition** — The fixed, admission-enforced split of a status into domain and control fields; a CAS touching both is rejected. *(KERNEL §1)*
 - **Control receipt / ring** — The receipt of a control commit, appended in the CAS to a bounded ring in status; a full ring refuses the transition. *(KERNEL §1)*
 - **Reconciliation field / reconciliation-only CAS** — A declared status field outside both digests that records only the progress of an already-committed intent (slot clearing, ring publication, and the dispatch ledger entries, which a reconciliation-only CAS may advance or remove but never append); a reconciliation-only CAS writes nothing else, increments no revision and installs no receipt, and can make nothing canonical. *(KERNEL §1)*
-- **`state_revision` / `control_revision` / `commit_sequence`** — Per-lane preconditions, and the counter both lanes increment that totally orders every commit on one aggregate. *(KERNEL §1)*
+- **`state_revision` / `control_revision` / `commit_sequence`** — Per-lane preconditions, a domain and a control field respectively, and the structural counter both lanes increment that totally orders every commit on one aggregate. *(KERNEL §1)*
+- **Structural field** — A status field in neither lane's class and outside both digests: `commit_sequence`, `last_receipt_ref`, `observedGeneration` and `conditions`, which either lane's commit may write, and the pending slot body and control-receipt ring entries. *(KERNEL §1)*
 - **`AutoBotCommand`** — An authenticated, immutable, single-target mutation request; the only way canonical state changes. *(KERNEL §2)*
 - **Reconciliation request** — The broker's request for a ledger update: names the entry by `(operation_uid, permit_uid)` and the expected `send_state`, pins no revision, produces no receipt, and is a no-op when the entry is absent or already past that state. Not a command. *(KERNEL §3.1)*
 - **Replay identity** — `(idempotency_key, principal, input_digest)`; the same identity within the replay window returns the original receipt; a changed payload or principal is rejected; after the window, `REPLAY_EXPIRED`. *(KERNEL §2)*
 - **`CommandReceipt`** — The deterministically named, durable per-command record with immutable prepared input and a controller-owned terminal result. *(KERNEL §2, §10)*
+- **Rejection proof** — What a `REJECTED` receipt records for its ground: the revision and `commit_sequence` read for a passed revision; the existing receipt and its bound digest for a replay conflict; the observed object or UID at the read's `commit_sequence` for a create conflict; the guard identifier and the revision read for a guard refusal. *(KERNEL §2)*
+- **Tombstone** — The terminal `CommandReceipt` of a delete, retained with the target's create receipt and origin metadata, proving the name existed and was deleted, so a replayed create never recreates it; owned by the target kind's controller. *(KERNEL §2)*
 - **Create identity / origin metadata** — A create's deterministic reserved name and the immutable `(create_receipt_uid, input_digest, context_uid)` written with the object; lost acknowledgement is resolved by GET, never by a generated name. *(KERNEL §2)*
 - **`AutoBotEvent`** — The immutable audit event published after a commit and repairable from the slot or ring; never an authority. *(KERNEL §1)*
 - **Projection** — A rebuildable read model applied in `(aggregate_uid, commit_sequence)` order with visible gaps and quarantined digest conflicts. *(KERNEL §1)*
@@ -74,8 +77,9 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 ### Manager serialization
 
 - **Manager** — The semantic planning role for one plan; its authority is the register entry `manager_authority[plan]`, not a process. *(ROLES §1; KERNEL §4)*
-- **`manager_authority[plan]`** — `(lease_uid, epoch, holder, deadline, phase ∈ {ACTIVE, DRAINING})`; `ManagerLease` is its acknowledgement and authorizes nothing. *(KERNEL §4)*
-- **`active_manager_transaction` (reservation)** — The one-slot reservation of a short control mutation, released only with a recorded terminal receipt. *(KERNEL §4)*
+- **`manager_authority[plan]`** — `(lease_uid, epoch, holder, deadline, phase ∈ {ACTIVE, DRAINING})`, created `ACTIVE` by `InstallManagerAuthority` after the `Plan` create and removed by `RetirePlanAuthority`; `ManagerLease` is its acknowledgement and authorizes nothing. *(KERNEL §3.1, §4)*
+- **Manager lease renewal** — `RenewManagerAuthority`, the holder's domain CAS that moves `deadline` to the Manager lease duration (M0 §2) from now while holder, lease, epoch and `ACTIVE` match; once the deadline passes, the Context controller drains. *(KERNEL §4)*
+- **`active_manager_transaction` (reservation)** — The one-slot reservation of a short control mutation: reserved, claimed by the target's owning controller before it writes the target (`ClaimManagerTransaction`), and released only with a recorded terminal receipt. *(KERNEL §4)*
 - **Drain before epoch advance** — `DrainManager` (control) → resolve or cancel the reservation → `AdvanceManagerEpoch` (domain) → `ResumeManager` (control); never merged, never reordered. *(KERNEL §4)*
 - **Fixed expected revision** — A Manager command's target revision is never refreshed to force an old command through. *(KERNEL §4)*
 

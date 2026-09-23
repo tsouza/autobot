@@ -1,8 +1,9 @@
 //! The control receipt and the bounded ring that holds them.
 
+use super::AuditEnvelope;
 use crate::error::RingError;
 use crate::profile::ControlRing;
-use crate::types::{CommitSequence, ControlRevision, Digest, Principal, StateRevision, Uid};
+use crate::types::{CommitSequence, ControlRevision, Digest, Principal, Uid};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -19,8 +20,8 @@ pub enum ControlReceiptState {
 /// The receipt of one control commit, the FORMAL §2 `ControlReceipt` record.
 ///
 /// The control commit appends it to the ring in the same write, so the receipt is durable
-/// without a second write. With its [`AuditEnvelope`] it holds every field of its audit event;
-/// the envelope's untyped text fields are open in #329.
+/// without a second write. Its [`AuditEnvelope`] holds every field of its audit event but the
+/// digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ControlReceipt {
     /// The UID of the control command.
@@ -33,35 +34,12 @@ pub struct ControlReceipt {
     pub before_control_digest: Digest,
     /// The aggregate's control digest after the commit.
     pub after_control_digest: Digest,
-    /// The parts of the audit event the rest of the receipt does not hold.
+    /// The envelope of the commit's audit event.
     pub audit_envelope: AuditEnvelope,
     /// The authenticated writer of the control command.
     pub principal: Principal,
     /// The receipt's publication state.
     pub state: ControlReceiptState,
-}
-
-/// The parts of a control commit's `AutoBotEvent` that neither its receipt nor its aggregate
-/// holds.
-///
-/// With the receipt they give every field of the event: `aggregate_uid` is the aggregate's
-/// UID, `lane` is `CONTROL`, `commit_sequence` and `control_revision` are the receipt's, `actor`
-/// is its principal, `state_digest` is its after-control digest, and `event_digest` is computed
-/// over the event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct AuditEnvelope {
-    /// The aggregate's `state_revision` when the commit landed.
-    pub state_revision: StateRevision,
-    /// The UID of the event's source.
-    pub source_uid: Uid,
-    /// The event's type.
-    pub event_type: String,
-    /// The identifier of what caused the event.
-    pub causation_id: String,
-    /// The identifier that correlates the event with others.
-    pub correlation_id: String,
-    /// The schema version of the event.
-    pub schema_version: u32,
 }
 
 /// The bounded ring of control receipts of an aggregate with a control lane.
