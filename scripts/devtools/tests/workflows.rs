@@ -1,11 +1,13 @@
 //! Every `run:` step of every workflow is a `just` recipe (GHA -> just -> scripts).
 //!
 //! The check is strict rather than a YAML parse: a step passes only when its `run` key is
-//! written plainly as `run: just …` on one line. Any other spelling of a `run` key (inside a
-//! flow mapping, after a tag or anchor, or as an explicit `?` key) is reported, and so is a
-//! `run` value that continues onto a more indented line. Every quoted key and every alias key
-//! is reported whatever it spells, because an escape (`"\x72un"`) or an alias can spell `run`
-//! without containing that text.
+//! written plainly as `run: just …` on one line. Anywhere else on a line, the text `run`
+//! followed by a `:` key indicator is reported unless a plain-scalar character (a letter, a
+//! digit, `-`, `_`, `.` or `/`) comes right before it. That covers a `run` key inside a flow
+//! mapping or a flow sequence, after a tag or an anchor, and after any other delimiter. An
+//! explicit `?` key is reported, and so is a `run` value that continues onto a more indented
+//! line. Every quoted key and every alias key is reported whatever it spells, because an
+//! escape (`"\x72un"`) or an alias can spell `run` without containing that text.
 
 use std::path::Path;
 
@@ -59,9 +61,15 @@ fn quoted_or_alias_key(line: &str) -> bool {
     quoted || alias
 }
 
+/// Whether `c` can sit inside a plain scalar next to `run` without ending it, so that the
+/// `run` it touches is part of a longer key such as `dry-run`.
+fn plain_scalar_char(c: char) -> bool {
+    c.is_alphanumeric() || "-_./".contains(c)
+}
+
 /// Whether the line holds a key that is or may be `run` in any spelling other than the plain
-/// one: quoted, an alias, inside a flow mapping, after a tag or anchor, or after an explicit
-/// `?` key indicator.
+/// one: quoted, an alias, after an explicit `?` key indicator, or a `run` key after any
+/// character that ends a plain scalar (whitespace, `{`, `[`, `,`, a tag or an anchor).
 fn other_run_key(line: &str) -> bool {
     if line
         .trim_start()
@@ -73,7 +81,7 @@ fn other_run_key(line: &str) -> bool {
     }
     line.match_indices("run").any(|(at, _)| {
         let before = line[..at].chars().next_back();
-        before.is_none_or(|c| c.is_whitespace() || "{,".contains(c)) && key_follows(line, at + 3)
+        before.is_none_or(|c| !plain_scalar_char(c)) && key_follows(line, at + 3)
     })
 }
 
@@ -177,11 +185,14 @@ fn run_keys_in_other_spellings_are_found() {
         "      - !!str run: cargo test",
         "      - &k run: cargo test",
         "      - *k : cargo test",
+        "    steps: [run: cargo test]",
+        "    steps: [name: x, run: cargo test]",
+        "      - [run: cargo test]",
     ];
     for line in spelled {
         assert_eq!(offending_steps(&format!("{line}\n")).len(), 1, "{line}");
     }
-    let unrelated = "  dry-run:\n    runs-on: x\n      run-url:\n# a push or scheduled run\n";
+    let unrelated = "  dry-run:\n    runs-on: x\n      run-url:\n      pre_run: x\n      a.run: x\n      a/run: x\n# a push or scheduled run\n";
     assert!(offending_steps(unrelated).is_empty());
     let quoted_values = "      - run: just label-gate \"$PR\"\n        if: github.ref == 'main'\n";
     assert!(offending_steps(quoted_values).is_empty());
