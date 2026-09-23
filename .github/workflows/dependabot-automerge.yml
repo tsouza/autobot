@@ -24,10 +24,10 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - run: rustup toolchain install
       - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
         with:
           tool: just,rust-script
+      - run: just toolchain
       - run: just dependabot-automerge "$PR_NODE_ID"
         env:
           PR_NODE_ID: ${{ github.event.pull_request.node_id }}
