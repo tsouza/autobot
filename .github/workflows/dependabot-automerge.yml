@@ -15,7 +15,7 @@ permissions: {}
 jobs:
   enable-auto-merge:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
-    runs-on: [self-hosted, autobot]
+    runs-on: [self-hosted, autobot-light]
     permissions:
       contents: write
       pull-requests: write
