@@ -203,6 +203,16 @@
           "const": "reviewer-independence"
         },
         {
+          "description": "A `correlated` review never satisfies the required review of `COMPATIBILITY_RISK` work.",
+          "type": "string",
+          "const": "correlated-review-not-compatibility"
+        },
+        {
+          "description": "A required security review comes only from a configuration in `securityReviewers`.",
+          "type": "string",
+          "const": "security-reviewer-pool"
+        },
+        {
           "description": "Admission compares the routing pin's tier with the floor.",
           "type": "string",
           "const": "admission-floor"

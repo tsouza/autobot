@@ -17,7 +17,7 @@ The model represents bounded abstract values, hashes and finite sets; it does no
 
 ## 2. Typed correspondence
 
-The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine. Kinds without a record are abstracted, each as what the model keeps instead: an `Intervention` enters only as the register or adjudication action it becomes (§3); `Plan.phase` is outside the model, which admits against `plan_authority` and the verified `ACTIVATED` snapshot (F-13); a `Finding` enters only as opened by `AskJudgedQuestion` (F-42) and as linked by `LinkFindingHistorically`, which changes no other record (F-24); a `VerificationRun` enters only as the `EvidenceBundle` it records; a `RestoreRequest` is `RestoreLineage`; `PlanProposal`, `Project` and `WorkBrief` enter only as the `IntakeWrite` and `ProposalAcceptance` records that name them; the `Charter` and `ProjectCharter` kind states enter only as their `CharterRevision`s; a `CustodyPolicy` enters only as the cadence at which `CustodyCheckpoint`s occur; and an `Artifact` enters only as the digests its `CustodyCheckpoint` verifies.
+The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine. Kinds without a record are abstracted, each as what the model keeps instead: an `Intervention` enters only as the §3 interventions block states: as the register or adjudication action it becomes, an `EXCEPTION` as an `EvidenceBundle.exceptions` entry, and a `PAUSE` not at all; `Plan.phase` is outside the model, which admits against `plan_authority` and the verified `ACTIVATED` snapshot (F-13); a `Finding` enters only as opened by `AskJudgedQuestion` (F-42), as classified by `ClassifyFinding` and as linked by `LinkFindingHistorically`, which changes no other record (F-24); a `VerificationRun` enters only as the `EvidenceBundle` it records; a `RestoreRequest` is `RestoreLineage`; `PlanProposal`, `Project` and `WorkBrief` enter only as the `IntakeWrite` and `ProposalAcceptance` records that name them; the `Charter` and `ProjectCharter` kind states enter only as their `CharterRevision`s; a `CustodyPolicy` enters only as the cadence at which `CustodyCheckpoint`s occur; and an `Artifact` enters only as the digests its `CustodyCheckpoint` verifies.
 
 ```text
 \* commit, receipt, audit                                         KERNEL §1–§2
@@ -115,14 +115,20 @@ PlanRevisionState    = [plan_uid, revision, state]
 EvidenceBundle       = [uid, candidate_digest, base_head, head, plan_revision, scope_digest,
                         charter_digest, criteria_digest, environment_digest,
                         provider_runs, ci_attestations, review_attestations, reviewer_identity,
+                        correlated,              \* the reviewer ran on the worker's model (ROLES §3); set by the recording controller from the reviewer configuration and the TaskRun's routing pin, never from a claim
+                        exceptions,              \* uid of every APPLIED EXCEPTION Intervention the bundle relies on
                         remote_generation, expiry, state]
 IntegrationBasis     = [uid, plan_uid, basis_generation, source_heads, base_head, overlap_set,
                         merge_order, integrated_candidate, verification_uid, state]
 
 \* scope, identity, fencing, continuation                         KERNEL §6, §9; ROLES §2
-ScopeCapsule         = [uid, task_run_uid, repository_uids, path_globs, tools, effect_kinds,
-                        non_goals, consequence_class, charter_digest, charter_entries,
-                        digest, state]
+ScopeCapsule         = [uid, task_run_uid, objective, expected_outcome, repository_uids, path_globs,
+                        branches, tools, effect_kinds, non_goals, acceptance_evidence,
+                        consequence_class, budget_limit, deadline, attempt_limit, repair_limit,
+                        plan_uid, plan_revision, milestone_revision, task_revision,
+                        charter_digest, charter_entries,
+                        digest,                  \* over every field above: the capsule digest
+                        state]
 ScopeCheck           = [capsule_uid, requested_path, canonical_path, inode, link_target,
                         verdict ∈ {ALLOW, DENY, DETECTED_AT_CHECKPOINT}]
 ExecutionIdentity    = [uid, task_run_uid, workspace_uid, agent_run_uid, execution_epoch,
@@ -271,8 +277,11 @@ ProveNonApplication         RECONCILING → REQUESTED, same operation_key, attem
 BlockUnsupportedOperation   Broker; REQUESTED | PERMITTED → BLOCKED_UNSUPPORTED; precondition the capability lacks a required semantic ∧ send_attempt = NONE
 
 \* plans and evidence
-VerifyPlanSnapshot · VerifyGraphMembers · RecordGraphActivationReceipt · FailGraphActivation
-AdmitGraphMember · RecordEvidenceBundle (refuses a reviewer below the review tier of the class) · InvalidateEvidence · RecordAcceptanceAdjudication
+VerifyPlanSnapshot · VerifyGraphMembers · RecordGraphActivationReceipt · AdmitGraphMember · InvalidateEvidence
+FailGraphActivation         precondition no activation command submitted, or its receipt REJECTED; never while it is UNCERTAIN
+RecordEvidenceBundle        refuses a reviewer below reviewTier of the class, a reviewer in the worker's session, a correlated review as the required review of a class other than REVERSIBLE, and a required SECURITY_OR_DATA_INTEGRITY review from a configuration outside securityReviewers; a missing required check is covered only by an APPLIED, unexpired EXCEPTION answered by the no-test approver for that check and candidate, listed in exceptions
+AcceptPlanRevision          Plan controller; a revision proposed on the Plan (RevisionPending), pinned to that revision and its snapshot digest; refuses every principal but WorkContext.spec.revisionAuthority
+RecordAcceptanceAdjudication   Task controller; precondition every bundle it references RECORDED, unexpired and at the current remote generation; records the uid and digest of each
 
 \* charter
 AcceptCharterRevision       human principal only, every entry accepted; refuses a law marked advisory and a project entry that relaxes an inherited one
@@ -308,7 +317,23 @@ ExpireOldGrant · MapRestoredIdentity · EnableRestoreDispatch
 WriteOutbox · DrainOutbox · RecordCanonicalRecord · CreateGapForMissingRecord · CensorUsage · SettleUsage
 
 \* judgment
-ComputeEligibleSet · RecordDecision · AbstainDecision
+ComputeEligibleSet · AbstainDecision
+RecordDecision              Decision controller only; commits RECORDED only; precondition selected ∈ the eligible set whose digest it records, computed before the question
+ClassifyFinding             a RecordDecision of the finding-severity question class (ROLES §2) over the eligible set computed from the finding's fields; an absent judge selects the highest eligible severity; the Finding's CLASSIFIED and the Manager's disposition are outside the model (§2)
+
+\* interventions: no actions of their own (§2); each becomes the kernel action listed
+HOLD, KILL_SWITCH           RequestHold
+RESUME of a hold            ReleaseHold, then CompleteHoldRelease once hold_causes is empty
+RESUME of a QUIESCE or SUPERSEDE   ResumePlanRevision, only while Plan.phase is QUIESCING and no budget-exhausted pause is in force (ROLES §5)
+QUIESCE                     QuiescePlan
+SUPERSEDE                   QuiescePlan, then SupersedePlanRevision; under a budget-exhausted pause only for a replacement whose budget policy raises the ceiling
+QUIESCE, FAIL under a budget-exhausted pause   none: REJECTED (ROLES §5)
+FAIL, CANCEL                QuiescePlan if the register holds the revision ACTIVE, then RetirePlanAuthority once the Plan is terminal, if it holds entries
+ADJUDICATE_OPERATION        AdjudicateUnresolvedOperation
+ADJUDICATE_CONFLICT         AdjudicateConflict
+EXCEPTION                   none of its own: an APPLIED one enters only as an EvidenceBundle.exceptions entry (RecordEvidenceBundle)
+PAUSE, RESUME of a PAUSE    none: they change only Plan.phase, which gates TaskRun admission, revokes no accepted effect and weakens no hold (KERNEL §5), so no invariant of §4 depends on them
+                            (the role a principal needs for each action, ROLES §5, is admission's and the owning controller's check, assumed by KERNEL §11 and not modelled)
 
 \* environment
 DetectFault · CrashProcess · PartitionAPI · ProviderTimeout · DuplicateDelivery · ReorderDelivery · Tick
@@ -359,8 +384,8 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 
 **I-6 Evidence**
 - F-27 *Fresh evidence.* Acceptance binds candidate, base and head, contract, environment, provider run, reviewer identity and current remote generation; any change invalidates; a delayed result for an old basis satisfies nothing.
-- F-28 *Independence.* The reviewer identity of an accepted bundle differs from the worker's session; `WorkerFinished` never implies `TaskAccepted`.
-- F-29 *Integration.* Overlapping changes have one current basis and merge order; milestone acceptance references the integrated candidate.
+- F-28 *Independence.* The reviewer identity of an accepted bundle differs from the worker's session; a `correlated` review is required-review evidence only for `REVERSIBLE`; the required review of `SECURITY_OR_DATA_INTEGRITY` work comes only from a configuration in `securityReviewers`; `WorkerFinished` never implies `TaskAccepted`.
+- F-29 *Integration.* Every milestone's change sets have one current basis and merge order; milestone acceptance references the integrated candidate of its final basis.
 
 **I-7 Projection** — F-30 No external observation changes an aggregate without a controller CAS; forge text never becomes a command without actor validation.
 
@@ -397,6 +422,8 @@ A check is vacuous unless removing a guard produces a counterexample. Each varia
 | lexical glob check on the requested string | F-23 |
 | no gap created at `record_deadline` | F-32 |
 | reviewer identity equal to worker session | F-28 |
+| a `correlated` review accepted as the required review of `COMPATIBILITY_RISK` work | F-28 |
+| a required `SECURITY_OR_DATA_INTEGRITY` review accepted from a configuration outside `securityReviewers` | F-28 |
 | admission without the floor comparison | F-37 |
 | plan acceptance without a pinned charter revision | F-38 |
 | a project entry that weakens an inherited law | F-39 |
