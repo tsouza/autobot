@@ -80,27 +80,36 @@ pub fn heading_of(line: &str) -> Option<(usize, &str)> {
 }
 
 /// Every pipe table outside fenced code in `text`, each as rows of trimmed cells, without the
-/// separator row.
+/// delimiter row (the second row of a table, made of dashes and colons).
 ///
-/// Cells are split on unescaped `|` outside code spans; `\|` yields a literal `|`.
+/// Cells are split on unescaped `|` outside code spans; `\\|` yields a literal `|`. A code span
+/// is a backtick run closed by a later run of the same length; an unmatched run is literal text.
 #[must_use]
 pub fn tables(text: &str) -> Vec<Vec<Vec<String>>> {
     let mut out = Vec::new();
     let mut current: Vec<Vec<String>> = Vec::new();
+    let mut delimiter_seen = false;
     let mut fence = Fence::default();
     for line in text.lines() {
         let fenced = fence.step(line);
         let line = line.trim();
         if !fenced && line.starts_with('|') && line.ends_with('|') && line.len() > 1 {
             let cells = split_cells(&line[1..line.len() - 1]);
-            let separator = cells
-                .iter()
-                .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':')));
-            if !separator {
+            let delimiter = current.len() == 1
+                && !delimiter_seen
+                && cells
+                    .iter()
+                    .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':')));
+            if delimiter {
+                delimiter_seen = true;
+            } else {
                 current.push(cells);
             }
-        } else if !current.is_empty() {
-            out.push(std::mem::take(&mut current));
+        } else {
+            delimiter_seen = false;
+            if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+            }
         }
     }
     if !current.is_empty() {
@@ -111,22 +120,47 @@ pub fn tables(text: &str) -> Vec<Vec<Vec<String>>> {
 
 /// Splits the inside of a table row into trimmed cells.
 fn split_cells(row: &str) -> Vec<String> {
+    let bytes = row.as_bytes();
+    let run_at = |i: usize| bytes[i..].iter().take_while(|&&b| b == b'`').count();
     let mut cells = Vec::new();
     let mut cell = String::new();
-    let mut in_code = false;
-    let mut chars = row.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' if chars.peek() == Some(&'|') => {
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if bytes.get(i + 1) == Some(&b'|') => {
                 cell.push('|');
-                chars.next();
+                i += 2;
             }
-            '`' => {
-                in_code = !in_code;
+            b'`' => {
+                let len = run_at(i);
+                // Find a closing run of exactly the same length.
+                let mut j = i + len;
+                let mut close = None;
+                while j < bytes.len() {
+                    if bytes[j] == b'`' {
+                        let l = run_at(j);
+                        if l == len {
+                            close = Some(j);
+                            break;
+                        }
+                        j += l;
+                    } else {
+                        j += 1;
+                    }
+                }
+                let end = close.map_or(i + len, |c| c + len);
+                cell.push_str(&row[i..end]);
+                i = end;
+            }
+            b'|' => {
+                cells.push(std::mem::take(&mut cell).trim().to_owned());
+                i += 1;
+            }
+            _ => {
+                let ch = row[i..].chars().next().unwrap_or_default();
                 cell.push(ch);
+                i += ch.len_utf8();
             }
-            '|' if !in_code => cells.push(std::mem::take(&mut cell).trim().to_owned()),
-            _ => cell.push(ch),
         }
     }
     cells.push(cell.trim().to_owned());

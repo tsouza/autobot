@@ -52,3 +52,21 @@ fn tables_skip_fenced_blocks_and_respect_escapes_and_code() {
     assert_eq!(t.len(), 1);
     assert_eq!(t[0][1], vec!["`a|b`".to_owned(), "c | d".to_owned()]);
 }
+
+#[test]
+fn code_spans_need_a_matching_closing_run() {
+    let t = tables("| a | b |\n|---|---|\n| it`s | ``x|y`` |\n");
+    assert_eq!(t[0][1], vec!["it`s".to_owned(), "``x|y``".to_owned()]);
+}
+
+#[test]
+fn only_the_second_row_is_a_delimiter() {
+    let t = tables("| a | b |\n|---|---|\n| - | - |\n");
+    assert_eq!(
+        t[0],
+        vec![
+            vec!["a".to_owned(), "b".to_owned()],
+            vec!["-".to_owned(), "-".to_owned()]
+        ]
+    );
+}

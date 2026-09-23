@@ -30,6 +30,16 @@ fn output_captures_stdout_and_failure_carries_command() {
 }
 
 #[test]
+fn run_logs_the_command_line() {
+    let mut log = Vec::new();
+    Cmd::new("true")
+        .args(["x", "y"])
+        .run_logged(&mut log)
+        .unwrap();
+    assert_eq!(String::from_utf8(log).unwrap(), "+ true x y\n");
+}
+
+#[test]
 fn run_reports_success_and_failure() {
     assert!(Cmd::new("true").run().is_ok());
     let err = Cmd::new("sh")

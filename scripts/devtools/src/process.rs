@@ -64,7 +64,16 @@ impl Cmd {
     /// # Errors
     /// Fails if the command cannot start or exits unsuccessfully.
     pub fn run(&self) -> Result<()> {
-        eprintln!("+ {}", self.display());
+        self.run_logged(&mut std::io::stderr())
+    }
+
+    /// Runs the command like [`Cmd::run`], writing the `+ <command>` log line to `log`.
+    ///
+    /// # Errors
+    /// Fails if the command cannot start or exits unsuccessfully.
+    pub fn run_logged(&self, log: &mut impl std::io::Write) -> Result<()> {
+        // A lost log line is not a reason to skip the command.
+        let _ = writeln!(log, "+ {}", self.display());
         let status = self
             .command()
             .status()
