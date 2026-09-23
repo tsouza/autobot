@@ -10,18 +10,19 @@ Trust is granted to exactly these, and each is trusted for exactly the stated th
 | Trusted party | Trusted for | Not trusted for |
 |---|---|---|
 | **Kubernetes API server** | Single-resource atomic writes with optimistic concurrency (`resourceVersion`); the durability of committed status. | Cross-resource transactions (there are none); watch delivery (a watch is a trigger, relist is the truth). |
-| **Admission and RBAC** | Rejecting direct writes to protected status; rejecting a CAS that touches both commit lanes (KERNEL §1); rejecting cross-context references. | Side effects of any kind. Admission validates, it never acts. |
+| **Admission and RBAC** | Rejecting direct writes to protected status; rejecting a CAS that touches both commit lanes (KERNEL §1); rejecting cross-context references; confining the intake-submitter identity to intake kinds in proposal state; refusing every accept command from a principal that is not human. | Side effects of any kind. Admission validates, it never acts. |
 | **Owning controllers** | Committing the protected status of exactly the kinds they own, and repairing receipts and audit events for commands that target those kinds (KERNEL §1). | Writing any other kind's status. The Context controller is the sole writer of `WorkContext` status; every other controller's register change is a command it applies. |
 | **EffectBroker** | Being the only path for privileged filesystem, forge, CI, deployment and credential effects; validating grant, scope and capability before every such call. | Deciding what is accepted — acceptance is the Context controller's CAS (KERNEL §3). |
 | **Authority witness** | Holding dispatch authority in a separate failure domain and signing restore receipts. AutoBot cannot self-assert that an old installation is fenced. | Anything else; it is an external control plane (KERNEL §7). |
 | **Artifact store** | Independent, versioned, restorable custody outside the worker-node loss domain. | Being the source of truth for anything but the bytes it stores. |
-| **Authenticated human principals** | Requesting holds, pauses, reviews, plan revisions, adjudications and kill switches through commands and Interventions, under the roles `WorkContext.spec` names. | Editing protected status. A human acts through the same command path as everything else. |
+| **Authenticated human principals** | Requesting holds, pauses, reviews, plan revisions, adjudications and kill switches through commands and Interventions, under the roles `WorkContext.spec` names; accepting proposals through the CLI — a new context's configuration by a bootstrap administrator the installation names, charter revisions and plan proposals by the context's reviser (ONBOARD §1). | Editing protected status. A human acts through the same command path as everything else. |
 
 ## Not trusted
 
 Every input below is data. It can inform a decision; it can never carry authority.
 
 - **Agents, in every role.** Worker, reviewer, tester, integrator, micro-manager and Manager sessions are untrusted processes. The Manager's *authority* is a bounded register entry on the WorkContext (KERNEL §4), not the process that holds it. An agent-supplied actor string is never the principal; the principal is the authenticated writer.
+- **The intake client.** The process a person runs to onboard a project (ONBOARD §1) is an untrusted proposer, whatever agent drives it. It authenticates as the **intake-submitter identity**: a dedicated principal that may create and revise intake kinds in proposal state, in the installation's intake namespace and in the namespaces of the contexts it serves, and read their status, and nothing else. Every submission records its authenticated principal and the client name it claims. What it relays — repository content, issue and pull-request text, the person's interview answers — is untrusted content with provenance, never authority, and a person's answer relayed by it is no act of that person.
 - **Repository content**, including build scripts, configuration and anything an agent may have written.
 - **Forge text**: issue bodies, PR descriptions, comments, labels written by humans or bots. A remote object is a projection (I-7); its text cannot change an accepted contract, and human commands in it are validated against actor permissions before they become commands.
 - **CI output.** A CI result is an observation bound to head, workflow and environment digests; it becomes evidence only inside an evidence bundle (I-6).
@@ -29,7 +30,7 @@ Every input below is data. It can inform a decision; it can never carry authorit
 - **Telemetry, projections and read models.** Rebuildable, explanatory, never authoritative (I-9 concerns the canonical ledger, which is not telemetry).
 - **Kubernetes Leases and heartbeats.** They carry liveness, never authority.
 
-Every fact entering a decision carries one of three trust classes: a **canonical fact** (a committed aggregate status or receipt), an **authenticated observation** (a fact from a forge, CI, user or infrastructure that was authenticated, deduplicated and persisted before acknowledgement), or **untrusted content** (everything else). Deterministic code decides which classes a given decision may consume.
+Every fact entering a decision carries one of three trust classes: a **canonical fact** (a committed aggregate status or receipt), an **authenticated observation** (a fact from a forge, CI, user or infrastructure that was authenticated, deduplicated and persisted before acknowledgement), or **untrusted content** (everything else). Deterministic code decides which classes a given decision may consume. A trust label on a proposal field (ONBOARD §1) names which kind of untrusted content it is; no label raises it to another class.
 
 ## What a compromised agent can reach
 
@@ -50,6 +51,8 @@ It cannot:
 - hide an out-of-scope mutation: any route — symlink, hardlink, rename, subprocess, ignored path — is caught on canonical identity at the next checkpoint, before evidence, and quarantines the workspace (I-5).
 
 A compromised **Manager session** additionally can propose decompositions, assignments and plan revisions within policy, but every command it issues needs a reservation under the current epoch and a fixed target revision (KERNEL §4), and it can neither merge nor waive evidence. Takeover drains it.
+
+A compromised **intake client** can propose anything the intake schemas admit, under provenance it may have forged. It cannot accept, activate or grant anything; write any kind other than an intake kind, or an intake kind outside proposal state; bind a repository the forge adapter does not verify; or read anything but intake kinds. What it proposes reaches work only through the human acceptance of ONBOARD §1, which shows every attribute with its provenance.
 
 ## Failing closed
 

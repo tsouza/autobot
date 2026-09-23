@@ -1419,9 +1419,9 @@ mod tests {
         let d = imported();
         assert_eq!(stage1(&d), []);
         assert_eq!(d.invariants.len(), 10);
-        assert_eq!(d.properties.len(), 42);
+        assert_eq!(d.properties.len(), 44);
         assert_eq!(d.groups.len(), 9);
-        assert_eq!(d.variants.len(), 20);
+        assert_eq!(d.variants.len(), 22);
         let f37 = d.properties.iter().find(|p| p.id == 37).unwrap();
         assert_eq!(f37.invariant, Some(10));
         let f33 = d.properties.iter().find(|p| p.id == 33).unwrap();

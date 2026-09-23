@@ -89,7 +89,9 @@ pub const VOCABULARY: &[&str] = &[
     "CRD",
     "FIFO",
     "GET",
+    "JSON",
     "KMS",
+    "MCP",
     "OCI",
     "RBAC",
     "RPO",
@@ -135,11 +137,13 @@ pub const VOCABULARY: &[&str] = &[
     "PLANNED_ARTIFACT",
     "IMPLEMENTATION_FAIL",
     "OUT_OF_SCOPE",
-    // Trust labels and fallback kinds of the decision-policy extension.
-    "CANONICAL_AUTOBOT_FACT",
-    "AUTHENTICATED_PROVIDER_OBSERVATION",
+    // Trust labels of proposal fields (ONBOARD §1).
     "UNTRUSTED_REPOSITORY_CONTENT",
     "UNTRUSTED_ISSUE_OR_PR_TEXT",
+    "INTERVIEW_ANSWER",
+    // Further trust labels and fallback kinds of the decision-policy extension.
+    "CANONICAL_AUTOBOT_FACT",
+    "AUTHENTICATED_PROVIDER_OBSERVATION",
     "UNTRUSTED_CI_OUTPUT",
     "DERIVED_STATISTIC",
     "DERIVED_FALLBACK_DECISION",
@@ -157,6 +161,8 @@ pub const VOCABULARY: &[&str] = &[
     // Retired names, listed in the glossary so they are not reintroduced.
     "REMOTE_SENT",
     "REVISION_PENDING",
+    "ANALYZING",
+    "NEEDS_INPUT",
 ];
 
 /// The rule a violation breaks.
