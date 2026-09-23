@@ -1,19 +1,19 @@
 //! The reducer-driven domain commit.
 
-use crate::profile::ControlRing;
+use crate::digest::{control_digest, domain_digest};
 use crate::reducer::{
     self, CommandPins, Counters, Guards, Reducer, ReducerError, ReducerState, Refusal,
-    TransitionReceipt, Versioned,
+    StateDigests, TransitionReceipt, Versioned,
 };
 use crate::store::{
-    Change, Commit, CommitOutcome, CommitRequest, DomainChange, EventFields, GuardRefusal, Object,
-    ObjectKey, OpKind, Pin, Protocol, ProtocolError, Status, Step, StoreResult, Transition,
+    Change, Commit, CommitOutcome, DomainChange, DomainCommitRequest, EventFields, GuardRefusal,
+    Object, ObjectKey, Protocol, ProtocolError, Status, Step, StoreResult, Transition,
+    domain_successor,
 };
 use crate::types::{CommitSequence, Digest, LaneRevision, ObjectRef, StateRevision, Uid};
 use std::cell::Cell;
 use std::fmt;
 use std::marker::PhantomData;
-use std::num::NonZeroU32;
 use std::rc::Rc;
 
 /// A reducer state held in an aggregate's status as its encoded fields.
@@ -95,7 +95,8 @@ pub enum DomainOutcome {
     Refused(Refusal),
     /// A write of this protocol timed out, and the read after it found the lane past the
     /// pinned revision without the command's slot: the command may or may not have committed,
-    /// and only its receipt resolves it (KERNEL §1).
+    /// and only its receipt resolves it (KERNEL §1), through the command receipt protocol of
+    /// #83.
     Uncertain {
         /// The `state_revision` read.
         observed: StateRevision,
@@ -104,7 +105,7 @@ pub enum DomainOutcome {
     },
     /// No write of this protocol timed out, and the read found the lane past the pinned
     /// revision without the command's slot. This is not a rejection: only the command's
-    /// receipt decides (KERNEL §2).
+    /// receipt decides (KERNEL §2), through the command receipt protocol of #83.
     Passed {
         /// The `state_revision` read.
         observed: StateRevision,
@@ -133,6 +134,7 @@ enum Decided {
     Refusal(Refusal),
     Undecodable(FieldsError),
     Defect(ReducerError),
+    Failed(CommitOutcome),
 }
 
 /// The decisions of every read, in read order, shared between a [`DomainCommit`] and the
@@ -180,23 +182,49 @@ where
         };
         match reducer::step::<R>(&aggregate, &pins, &self.command, &self.guards) {
             Ok(reducer::Step::Committed { aggregate, receipt }) => {
-                match aggregate.state.domain_fields() {
-                    Ok(fields) => {
-                        let change = Change::Domain(DomainChange {
-                            fields,
-                            receipt: self.receipt.clone(),
-                            event: self.event.clone(),
-                            effect_intents: receipt.fields().effect_intents.clone(),
-                        });
-                        (Decided::Receipt(receipt), Some(change))
-                    }
-                    Err(e) => (Decided::Undecodable(e), None),
-                }
+                let fields = match aggregate.state.domain_fields() {
+                    Ok(fields) => fields,
+                    Err(e) => return (Decided::Undecodable(e), None),
+                };
+                let receipt = match with_store_digests(receipt, status, &fields) {
+                    Ok(receipt) => receipt,
+                    Err(decided) => return (decided, None),
+                };
+                let change = Change::Domain(DomainChange {
+                    fields,
+                    receipt: self.receipt.clone(),
+                    event: self.event.clone(),
+                    effect_intents: receipt.fields().effect_intents.clone(),
+                });
+                (Decided::Receipt(receipt), Some(change))
             }
             Ok(reducer::Step::Refused(refusal)) => (Decided::Refusal(refusal), None),
             Err(e) => (Decided::Defect(e), None),
         }
     }
+}
+
+/// The store's digests of `status`, which a pending slot records.
+fn store_digests(status: &Status) -> Result<StateDigests, CommitOutcome> {
+    Ok(StateDigests {
+        domain: domain_digest(status).map_err(CommitOutcome::Unencodable)?,
+        control: control_digest(status).map_err(CommitOutcome::Unencodable)?,
+    })
+}
+
+/// `receipt` reporting the store's digests of `status` and of the status that the domain
+/// commit writing `fields` makes of it: the digests the commit's pending slot records.
+fn with_store_digests(
+    receipt: TransitionReceipt,
+    status: &Status,
+    fields: &str,
+) -> Result<TransitionReceipt, Decided> {
+    let after = domain_successor(status, fields.to_owned()).map_err(Decided::Failed)?;
+    let before = store_digests(status).map_err(Decided::Failed)?;
+    let after = store_digests(&after).map_err(Decided::Failed)?;
+    receipt
+        .with_digests(before, after)
+        .map_err(|e| Decided::Defect(ReducerError::Receipt(e)))
 }
 
 impl<R: Reducer> Transition for ReducerTransition<R>
@@ -223,7 +251,6 @@ where
 {
     commit: Commit<ReducerTransition<R>>,
     log: Log,
-    waiting: Option<OpKind>,
     timed_out: bool,
     done: Option<DomainOutcome>,
 }
@@ -247,22 +274,16 @@ where
             log: Rc::clone(&log),
             reducer: PhantomData,
         };
-        let commit = Commit::new(CommitRequest {
+        let commit = Commit::domain(DomainCommitRequest {
             target: request.target,
             uid: request.uid,
             command_uid: request.command_uid,
-            pin: Pin::Revision(LaneRevision::State(request.expected_revision)),
-            // A domain commit never appends to the control-receipt ring.
-            ring: ControlRing {
-                entries: NonZeroU32::MIN,
-                entry_max_kib: NonZeroU32::MIN,
-            },
+            expected_revision: Some(request.expected_revision),
             transition,
         });
         Self {
             commit,
             log,
-            waiting: None,
             timed_out: false,
             done: None,
         }
@@ -301,6 +322,7 @@ where
                 Some(Decided::Refusal(refusal)) => DomainOutcome::Refused(refusal),
                 Some(Decided::Undecodable(e)) => DomainOutcome::Undecodable(e),
                 Some(Decided::Defect(e)) => DomainOutcome::Defect(e),
+                Some(Decided::Failed(failed)) => DomainOutcome::Failed(failed),
                 Some(Decided::Receipt(_)) | None => DomainOutcome::Failed(outcome),
             },
             other => DomainOutcome::Failed(other),
@@ -319,24 +341,20 @@ where
             return Step::Done(done.clone());
         }
         match self.commit.step() {
-            Step::Op(op) => {
-                self.waiting = Some(op.kind());
-                Step::Op(op)
-            }
             Step::Done(outcome) => {
                 let done = self.outcome(outcome);
                 self.done = Some(done.clone());
                 Step::Done(done)
             }
+            Step::Op(op) => Step::Op(op),
         }
     }
 
     fn resume(&mut self, result: StoreResult) -> Result<(), ProtocolError> {
-        let timed_out =
-            self.waiting == Some(OpKind::UpdateStatus) && matches!(result, StoreResult::Uncertain);
+        // The store's commit accepts `UNCERTAIN` only as the answer to a status write.
+        let timed_out = matches!(result, StoreResult::Uncertain);
         self.commit.resume(result)?;
         self.timed_out |= timed_out;
-        self.waiting = None;
         Ok(())
     }
 }
@@ -344,11 +362,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::digest::{digest, domain_digest};
+    use crate::digest::digest;
+    use crate::profile::ControlRing;
     use crate::reducer::{Decision, RefusalGround, StateDigests};
     use crate::status::{PendingCommitState, StatusEnvelope};
-    use crate::store::{ClearOutcome, ClearSlot, ControlChange, Origin, ResourceVersion, StoreOp};
+    use crate::store::{
+        ClearOutcome, ClearSlot, CommitRequest, ControlChange, OpKind, Origin, Pin,
+        ResourceVersion, StoreOp,
+    };
     use crate::types::{ControlRevision, Lane};
+    use std::num::NonZeroU32;
 
     /// A counter with a hold: the domain fields are the count, the control fields the hold.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -559,6 +582,36 @@ mod tests {
             }
         }
 
+        /// Commits the control command `command` pinned at control revision `revision`,
+        /// writing empty control fields, and returns its commit sequence.
+        fn control(&mut self, command: &str, revision: u64) -> CommitSequence {
+            let clear = |_: &Object, _: &Status| {
+                Ok::<_, GuardRefusal>(Change::Control(ControlChange {
+                    fields: String::new(),
+                    event: event(),
+                }))
+            };
+            let (control, _) = self.run(&mut Commit::new(CommitRequest {
+                target: key(),
+                uid: uid("uid-a"),
+                command_uid: uid(command),
+                pin: Pin::Revision(LaneRevision::Control(
+                    ControlRevision::new(revision).expect("revision"),
+                )),
+                ring: ControlRing {
+                    entries: NonZeroU32::new(8).expect("non-zero"),
+                    entry_max_kib: NonZeroU32::new(8).expect("non-zero"),
+                },
+                transition: clear,
+            }));
+            match control {
+                CommitOutcome::Committed {
+                    commit_sequence, ..
+                } => commit_sequence,
+                other => panic!("expected a control commit, got {other:?}"),
+            }
+        }
+
         /// Runs `protocol` to its outcome, counting the status writes it sends.
         fn run<P: Protocol>(&mut self, protocol: &mut P) -> (P::Outcome, usize) {
             let mut sent = 0;
@@ -705,31 +758,7 @@ mod tests {
             assert_eq!(transition.fields().after.commit_sequence, commit_sequence);
             last = commit_sequence;
 
-            let hold = |_: &Object, _: &Status| {
-                Ok::<_, GuardRefusal>(Change::Control(ControlChange {
-                    fields: String::new(),
-                    event: event(),
-                }))
-            };
-            let (control, _) = store.run(&mut Commit::new(CommitRequest {
-                target: key(),
-                uid: uid("uid-a"),
-                command_uid: uid(&format!("hold-{revision}")),
-                pin: Pin::Revision(LaneRevision::Control(
-                    ControlRevision::new(revision).expect("revision"),
-                )),
-                ring: ControlRing {
-                    entries: NonZeroU32::new(8).expect("non-zero"),
-                    entry_max_kib: NonZeroU32::new(8).expect("non-zero"),
-                },
-                transition: hold,
-            }));
-            let CommitOutcome::Committed {
-                commit_sequence, ..
-            } = control
-            else {
-                panic!("expected a control commit, got {control:?}");
-            };
+            let commit_sequence = store.control(&format!("hold-{revision}"), revision);
             assert!(commit_sequence > last, "{commit_sequence:?} after {last:?}");
             last = commit_sequence;
 
@@ -845,5 +874,115 @@ mod tests {
         assert!(matches!(undecodable, DomainOutcome::Undecodable(_)));
         assert_eq!(writes, 0);
         assert_eq!(store.status(), garbled);
+    }
+    /// The store's digests of `status`, which its pending slot records.
+    fn slot_digests(status: &Status) -> StateDigests {
+        StateDigests {
+            domain: domain_digest(status).expect("domain digest"),
+            control: control_digest(status).expect("control digest"),
+        }
+    }
+
+    #[test]
+    fn a_committed_receipt_reports_the_digests_its_slot_records() {
+        let mut store = OneObject::new();
+        let before = store.status();
+        let (outcome, _) = store.run(&mut commit("c1", CounterCommand::Add(5), 0));
+        let DomainOutcome::Committed {
+            receipt: Some(transition),
+            ..
+        } = outcome
+        else {
+            panic!("expected a commit with its receipt, got {outcome:?}");
+        };
+        let after = store.status();
+        let slot = after.envelope.pending_commit.clone().expect("a slot");
+        let fields = transition.fields();
+        assert_eq!(fields.before_digests.domain, slot.before_digest);
+        assert_eq!(fields.after_digests.domain, slot.after_digest);
+        assert_eq!(fields.before_digests, slot_digests(&before));
+        assert_eq!(fields.after_digests, slot_digests(&after));
+        assert_eq!(
+            fields.after_digests.domain,
+            slot.audit_envelope.state_digest
+        );
+    }
+
+    #[test]
+    fn a_conflict_decides_again_and_returns_the_receipt_of_the_write_that_landed() {
+        let mut store = OneObject::new();
+        let mut p = commit("c1", CounterCommand::Add(2), 0);
+        let read = expect_op(&mut p);
+        let result = store.answer(read);
+        p.resume(result).expect("read");
+        let first = expect_op(&mut p);
+        // A control commit lands between the read and the write, so the write conflicts.
+        assert_eq!(store.control("hold-0", 0), seq(1));
+        let result = store.answer(first);
+        assert_eq!(result, StoreResult::Conflict);
+        p.resume(result).expect("conflict");
+        let (outcome, writes) = store.run(&mut p);
+        assert_eq!(writes, 1);
+        let DomainOutcome::Committed {
+            revision,
+            commit_sequence,
+            receipt: Some(transition),
+        } = outcome
+        else {
+            panic!("expected a commit with its receipt, got {outcome:?}");
+        };
+        assert_eq!((revision, commit_sequence), (state(1), seq(2)));
+        let fields = transition.fields();
+        assert_eq!(fields.before.commit_sequence, seq(1));
+        assert_eq!(
+            fields.before.control_revision,
+            ControlRevision::new(1).expect("revision")
+        );
+        assert_eq!(fields.after.commit_sequence, seq(2));
+        let after = store.status();
+        let slot = after.envelope.pending_commit.clone().expect("a slot");
+        assert_eq!(fields.before_digests.domain, slot.before_digest);
+        assert_eq!(fields.after_digests, slot_digests(&after));
+        assert_eq!(after.domain, "2");
+    }
+
+    #[test]
+    fn a_fresh_protocol_that_finds_its_own_slot_is_committed_without_a_receipt() {
+        let mut store = OneObject::new();
+        let (first, _) = store.run(&mut commit("c1", CounterCommand::Add(5), 0));
+        assert!(matches!(
+            first,
+            DomainOutcome::Committed {
+                receipt: Some(_),
+                ..
+            }
+        ));
+        let landed = store.status();
+        let (again, writes) = store.run(&mut commit("c1", CounterCommand::Add(5), 0));
+        assert_eq!(
+            again,
+            DomainOutcome::Committed {
+                revision: state(1),
+                commit_sequence: seq(1),
+                receipt: None,
+            }
+        );
+        assert_eq!(writes, 0);
+        assert_eq!(store.status(), landed);
+    }
+
+    #[test]
+    fn an_uncertain_answer_to_a_read_is_refused_and_leaves_the_commit_certain() {
+        let mut p = commit("c1", CounterCommand::Add(1), 0);
+        expect_op(&mut p);
+        assert!(p.resume(StoreResult::Uncertain).is_err());
+        p.resume(StoreResult::Object(moved_on())).expect("read");
+        assert_eq!(
+            expect_done(&mut p),
+            DomainOutcome::Passed {
+                observed: state(1),
+                at: seq(1)
+            }
+        );
     }
 }

@@ -589,6 +589,36 @@ fn parsing_refuses_a_domain_receipt_whose_control_digest_moved() {
 }
 
 #[test]
+fn with_digests_replaces_only_the_digests_and_checks_the_receipt_again() {
+    let (receipt, _) = receipt_json();
+    let before = StateDigests {
+        domain: sha(&[b"store-before"]),
+        control: sha(&[b"store-control"]),
+    };
+    let after = StateDigests {
+        domain: sha(&[b"store-after"]),
+        ..before
+    };
+    let replaced = receipt
+        .clone()
+        .with_digests(before, after)
+        .expect("replaces");
+    let mut expected = receipt.fields().clone();
+    expected.before_digests = before;
+    expected.after_digests = after;
+    assert_eq!(replaced.fields(), &expected);
+
+    let moved = StateDigests {
+        control: sha(&[b"moved"]),
+        ..after
+    };
+    assert_eq!(
+        receipt.with_digests(before, moved),
+        Err(ReceiptError::LanePartition(Lane::Domain))
+    );
+}
+
+#[test]
 fn parsing_refuses_a_control_receipt_whose_domain_digest_moved_unless_its_guard_was_off() {
     let (_, receipt) = commit(&initial(), &ToyCommand::Hold, &Guards::all());
     let mut value = serde_json::to_value(&receipt).expect("serializes");

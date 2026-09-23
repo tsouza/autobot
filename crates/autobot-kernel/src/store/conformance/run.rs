@@ -5,9 +5,9 @@ use crate::profile::ControlRing;
 use crate::status::{PendingCommitState, StatusEnvelope};
 use crate::store::{
     Change, ClearOutcome, ClearSlot, Commit, CommitOutcome, CommitRequest, ControlChange, Create,
-    CreateOutcome, Delete, DeleteOutcome, DeleteRequest, DomainChange, EventFields, GuardRefusal,
-    Initialize, InitializeOutcome, Kind, Missing, Object, ObjectKey, Origin, Pin, Protocol,
-    ProtocolError, Status, Step, StoreOp, StoreResult, Transition, Triggers,
+    CreateOutcome, Delete, DeleteOutcome, DeleteRequest, DomainChange, DomainCommitRequest,
+    EventFields, GuardRefusal, Initialize, InitializeOutcome, Kind, Missing, Object, ObjectKey,
+    Origin, Pin, Protocol, ProtocolError, Status, Step, StoreOp, StoreResult, Transition, Triggers,
 };
 use crate::types::{
     ControlRevision, Lane, LaneRevision, Namespace, ObjectName, ObjectRef, Principal,
@@ -77,7 +77,7 @@ enum Machine {
         expect: String,
     },
     Initialize {
-        protocol: Initialize,
+        protocol: Box<Initialize>,
         expect: String,
     },
     Commit {
@@ -293,7 +293,7 @@ impl<'s> ScriptRun<'s> {
                 mut protocol,
                 expect,
             } => {
-                let outcome = done(&mut protocol)?;
+                let outcome = done(&mut *protocol)?;
                 compare(&expect, initialize_name(&outcome), &outcome)
             }
             Machine::Commit {
@@ -402,7 +402,11 @@ impl<'s> ScriptRun<'s> {
                     control: s.control.clone(),
                 };
                 Machine::Initialize {
-                    protocol: Initialize::new(key(&s.object)?, self.uid(&s.object)?, status),
+                    protocol: Box::new(Initialize::new(
+                        key(&s.object)?,
+                        self.uid(&s.object)?,
+                        status,
+                    )),
                     expect: s.expect.clone(),
                 }
             }
@@ -519,30 +523,37 @@ impl<'s> ScriptRun<'s> {
         })
     }
 
-    /// The machine of a commit step.
+    /// The machine of a commit step: a domain commit carries no ring limits, a control commit
+    /// appends within the suite's.
     fn commit(&self, s: &CommitStep) -> Result<Machine, String> {
-        let pin = match s.pin {
-            None if s.lane == Lane::Domain => Pin::Current,
-            None => return Err("a control commit pins its revision".to_owned()),
-            Some(value) => Pin::Revision(match s.lane {
-                Lane::Domain => {
-                    LaneRevision::State(StateRevision::new(value).map_err(|e| e.to_string())?)
-                }
-                Lane::Control => {
-                    LaneRevision::Control(ControlRevision::new(value).map_err(|e| e.to_string())?)
-                }
+        let (target, uid, command_uid) =
+            (key(&s.object)?, self.uid(&s.object)?, parse(&s.command)?);
+        let transition = ScriptTransition::new(s)?;
+        let protocol = match (s.lane, s.pin) {
+            (Lane::Domain, pin) => Commit::domain(DomainCommitRequest {
+                target,
+                uid,
+                command_uid,
+                expected_revision: pin
+                    .map(StateRevision::new)
+                    .transpose()
+                    .map_err(|e| e.to_string())?,
+                transition,
+            }),
+            (Lane::Control, None) => return Err("a control commit pins its revision".to_owned()),
+            (Lane::Control, Some(value)) => Commit::new(CommitRequest {
+                target,
+                uid,
+                command_uid,
+                pin: Pin::Revision(LaneRevision::Control(
+                    ControlRevision::new(value).map_err(|e| e.to_string())?,
+                )),
+                ring: self.ring,
+                transition,
             }),
         };
-        let request = CommitRequest {
-            target: key(&s.object)?,
-            uid: self.uid(&s.object)?,
-            command_uid: parse(&s.command)?,
-            pin,
-            ring: self.ring,
-            transition: ScriptTransition::new(s)?,
-        };
         Ok(Machine::Commit {
-            protocol: Commit::new(request),
+            protocol,
             expect: s.expect.clone(),
         })
     }
@@ -561,7 +572,7 @@ impl Machine {
     fn step(&mut self, triggers: &mut Option<Triggers>) -> Option<StoreOp> {
         match self {
             Self::Create { protocol, .. } => op(protocol),
-            Self::Initialize { protocol, .. } => op(protocol),
+            Self::Initialize { protocol, .. } => op(&mut **protocol),
             Self::Commit { protocol, .. } => op(protocol),
             Self::Clear { protocol, .. } => op(protocol),
             Self::Delete { protocol, .. } => op(protocol),
