@@ -21,7 +21,7 @@
 //!
 //! | Kind | Control | Reconciliation |
 //! |---|---|---|
-//! | `WorkContext` | `hold_state`, `hold_generation`, `manager_authority[*].phase`, `dispatch_authority_generation` | `pending_commit.state`, `control_receipt_ring[*].state`, `dispatch_ledger` |
+//! | `WorkContext` | `hold_state`, `hold_generation`, `hold_causes`, `manager_authority[*].phase`, `dispatch_authority_generation` | `pending_commit.state`, `control_receipt_ring[*].state`, `dispatch_ledger` |
 //! | `TaskRun`, `AgentRun` | `fence_state`, `execution_epoch`, `revocation_generation` | `pending_commit.state`, `control_receipt_ring[*].state` |
 //! | every other kind | none | `pending_commit.state`, `control_receipt_ring[*].state` where a ring exists |
 //!

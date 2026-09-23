@@ -20,7 +20,7 @@ pub enum PendingCommitState {
 
 /// The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.
 ///
-/// The slot names its command.s receipt, prepared before the commit, by `receipt_uid`, holds
+/// The slot names its command's receipt, prepared before the commit, by `receipt_uid`, holds
 /// the full [`AuditEnvelope`] of the commit, so a new process rebuilds the audit event from the
 /// slot alone, and holds its effect intents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -2,12 +2,12 @@
 
 use super::{CheckStep, CommitStep, Fault, KIND, NAMESPACE, Script, ScriptStep};
 use crate::profile::ControlRing;
-use crate::status::{AuditEnvelope, PendingCommitState, StatusEnvelope};
+use crate::status::{PendingCommitState, StatusEnvelope};
 use crate::store::{
     Change, ClearOutcome, ClearSlot, Commit, CommitOutcome, CommitRequest, ControlChange, Create,
-    CreateOutcome, DomainChange, GuardRefusal, Initialize, InitializeOutcome, Kind, Missing,
-    Object, ObjectKey, Origin, Pin, Protocol, ProtocolError, Status, Step, StoreOp, StoreResult,
-    Transition, Triggers, fields_digest,
+    CreateOutcome, DomainChange, EventFields, GuardRefusal, Initialize, InitializeOutcome, Kind,
+    Missing, Object, ObjectKey, Origin, Pin, Protocol, ProtocolError, Status, Step, StoreOp,
+    StoreResult, Transition, Triggers, fields_digest,
 };
 use crate::types::{
     ControlRevision, Lane, LaneRevision, Namespace, ObjectName, ObjectRef, Principal,
@@ -707,6 +707,19 @@ where
     text.parse().map_err(|e: T::Err| format!("`{text}`: {e}"))
 }
 
+/// The caller's audit-event fields of the script command `command` (text `text`) of type
+/// `event_type`.
+fn event(command: &Uid, text: &str, event_type: &str) -> Result<EventFields, String> {
+    Ok(EventFields {
+        source_uid: command.clone(),
+        event_type: event_type.to_owned(),
+        actor: parse::<Principal>("conformance")?,
+        causation_id: text.to_owned(),
+        correlation_id: text.to_owned(),
+        schema_version: 1,
+    })
+}
+
 /// The transition of a script commit: set the lane's fields, guarded by `require_control`.
 struct ScriptTransition {
     change: Change,
@@ -727,21 +740,13 @@ impl ScriptTransition {
                         name: parse(&receipt)?,
                         uid: parse(&receipt)?,
                     },
-                    audit_digest: fields_digest(&s.command),
+                    event: event(&command, &s.command, "ConformanceDomain")?,
                     effect_intents: Vec::new(),
                 })
             }
             Lane::Control => Change::Control(ControlChange {
                 fields: s.fields.clone(),
-                principal: parse::<Principal>("conformance")?,
-                audit: AuditEnvelope {
-                    state_revision: StateRevision::ZERO,
-                    source_uid: command.clone(),
-                    event_type: "ConformanceControl".to_owned(),
-                    causation_id: s.command.clone(),
-                    correlation_id: s.command.clone(),
-                    schema_version: 1,
-                },
+                event: event(&command, &s.command, "ConformanceControl")?,
             }),
         };
         Ok(Self {

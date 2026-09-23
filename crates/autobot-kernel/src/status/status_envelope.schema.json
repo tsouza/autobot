@@ -340,7 +340,7 @@
       ]
     },
     "PendingCommit": {
-      "description": "The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.\n\nThe slot names its command.s receipt, prepared before the commit, by `receipt_uid`, holds\nthe full [`AuditEnvelope`] of the commit, so a new process rebuilds the audit event from the\nslot alone, and holds its effect intents.",
+      "description": "The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.\n\nThe slot names its command's receipt, prepared before the commit, by `receipt_uid`, holds\nthe full [`AuditEnvelope`] of the commit, so a new process rebuilds the audit event from the\nslot alone, and holds its effect intents.",
       "type": "object",
       "properties": {
         "after_digest": {

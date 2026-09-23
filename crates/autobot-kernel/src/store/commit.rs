@@ -10,7 +10,10 @@ use crate::status::{
     AuditEnvelope, ControlReceipt, ControlReceiptState, PendingCommit, PendingCommitState,
     SlotEffectIntent,
 };
-use crate::types::{CommitSequence, Digest, Lane, LaneRevision, ObjectRef, Principal, Uid};
+use crate::types::{
+    CommitSequence, ControlRevision, Digest, Lane, LaneRevision, ObjectRef, Principal,
+    StateRevision, Uid,
+};
 
 /// What a lane commit is conditioned on, besides the resource version of the object it read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +49,55 @@ pub struct GuardRefusal {
     pub guard: String,
 }
 
+/// The audit-event fields a commit's caller supplies. The store fills the rest of the
+/// [`AuditEnvelope`] from the commit it computes: the aggregate UID, the commit sequence, the
+/// lane, both revisions after the commit and the state digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventFields {
+    /// The UID of the event's source.
+    pub source_uid: Uid,
+    /// The event's type.
+    pub event_type: String,
+    /// The authenticated writer of the command; a control receipt's principal.
+    pub actor: Principal,
+    /// The identifier of what caused the event.
+    pub causation_id: String,
+    /// The identifier that correlates the event with others.
+    pub correlation_id: String,
+    /// The schema version of the event.
+    pub schema_version: u32,
+}
+
+/// The commit-computed facts an [`AuditEnvelope`] records.
+struct CommitFacts<'a> {
+    aggregate_uid: &'a Uid,
+    commit_sequence: CommitSequence,
+    lane: Lane,
+    state_revision: StateRevision,
+    control_revision: ControlRevision,
+    state_digest: Digest,
+}
+
+impl EventFields {
+    /// The full audit envelope of the commit `facts` describes.
+    fn envelope(self, facts: CommitFacts<'_>) -> AuditEnvelope {
+        AuditEnvelope {
+            aggregate_uid: facts.aggregate_uid.clone(),
+            commit_sequence: facts.commit_sequence,
+            lane: facts.lane,
+            state_revision: facts.state_revision,
+            control_revision: facts.control_revision,
+            source_uid: self.source_uid,
+            event_type: self.event_type,
+            state_digest: facts.state_digest,
+            actor: self.actor,
+            causation_id: self.causation_id,
+            correlation_id: self.correlation_id,
+            schema_version: self.schema_version,
+        }
+    }
+}
+
 /// The change a domain commit makes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainChange {
@@ -53,8 +105,8 @@ pub struct DomainChange {
     pub fields: String,
     /// The command's receipt, prepared before the commit.
     pub receipt: ObjectRef,
-    /// The digest of the commit's audit event.
-    pub audit_digest: Digest,
+    /// The caller's fields of the commit's audit event.
+    pub event: EventFields,
     /// The commit's effect intents, in effect-index order.
     pub effect_intents: Vec<SlotEffectIntent>,
 }
@@ -64,11 +116,8 @@ pub struct DomainChange {
 pub struct ControlChange {
     /// The new encoded control fields.
     pub fields: String,
-    /// The authenticated writer of the control command.
-    pub principal: Principal,
-    /// The audit envelope of the control receipt. Its `state_revision` is replaced by the
-    /// aggregate's `state_revision` at the commit.
-    pub audit: AuditEnvelope,
+    /// The caller's fields of the commit's audit event; its actor is the receipt's principal.
+    pub event: EventFields,
 }
 
 /// The change of one lane commit.
@@ -263,11 +312,15 @@ impl<T: Transition> Decide for LaneCommit<T> {
         };
         let written = match change {
             Change::Domain(change) if lane == Lane::Domain => {
-                domain_commit(status, &request.command_uid, change)
+                domain_commit(status, &request.uid, &request.command_uid, change)
             }
-            Change::Control(change) if lane == Lane::Control => {
-                control_commit(status, &request.command_uid, change, &request.ring)
-            }
+            Change::Control(change) if lane == Lane::Control => control_commit(
+                status,
+                &request.uid,
+                &request.command_uid,
+                change,
+                &request.ring,
+            ),
             _ => Err(CommitOutcome::LaneMismatch),
         };
         match written {
@@ -311,6 +364,7 @@ fn committed(status: &Status, lane: Lane, command: &Uid) -> Option<CommitOutcome
 /// The status after the domain commit of `command` applies `change` to `status`.
 fn domain_commit(
     status: &Status,
+    aggregate: &Uid,
     command: &Uid,
     change: DomainChange,
 ) -> Result<Status, CommitOutcome> {
@@ -323,16 +377,25 @@ fn domain_commit(
         .state_revision
         .next()
         .map_err(|_| CommitOutcome::Overflow)?;
+    let after_digest = fields_digest(&change.fields);
+    let audit_envelope = change.event.envelope(CommitFacts {
+        aggregate_uid: aggregate,
+        commit_sequence,
+        lane: Lane::Domain,
+        state_revision: proposed_revision,
+        control_revision: envelope.control_revision,
+        state_digest: after_digest,
+    });
     let slot = PendingCommit {
         command_uid: command.clone(),
         receipt_uid: change.receipt.uid.clone(),
         commit_sequence,
         before_digest: fields_digest(&status.domain),
-        after_digest: fields_digest(&change.fields),
+        after_digest,
         expected_revision: envelope.state_revision,
         proposed_revision,
         control_revision_at_commit: envelope.control_revision,
-        audit_digest: change.audit_digest,
+        audit_envelope,
         effect_intents: change.effect_intents,
         state: PendingCommitState::Occupied,
     };
@@ -348,6 +411,7 @@ fn domain_commit(
 /// The status after the control commit of `command` applies `change` to `status`.
 fn control_commit(
     status: &Status,
+    aggregate: &Uid,
     command: &Uid,
     change: ControlChange,
     limits: &ControlRing,
@@ -361,17 +425,24 @@ fn control_commit(
         .control_revision
         .next()
         .map_err(|_| CommitOutcome::Overflow)?;
+    let after_control_digest = fields_digest(&change.fields);
+    let principal = change.event.actor.clone();
+    let audit_envelope = change.event.envelope(CommitFacts {
+        aggregate_uid: aggregate,
+        commit_sequence,
+        lane: Lane::Control,
+        state_revision: envelope.state_revision,
+        control_revision,
+        state_digest: after_control_digest,
+    });
     let receipt = ControlReceipt {
         control_uid: command.clone(),
         control_revision,
         commit_sequence,
         before_control_digest: fields_digest(&status.control),
-        after_control_digest: fields_digest(&change.fields),
-        audit_envelope: AuditEnvelope {
-            state_revision: envelope.state_revision,
-            ..change.audit
-        },
-        principal: change.principal,
+        after_control_digest,
+        audit_envelope,
+        principal,
         state: ControlReceiptState::Unpublished,
     };
     let mut next = status.clone();

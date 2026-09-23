@@ -26,7 +26,8 @@
 //!   its `operation_key`, which is derived, and with the `installation_lineage` it is derived
 //!   from. `provider_binding`, `desired_outcome`, `target_identity`, `contract_revision` and
 //!   `installation_lineage` are opaque text here; `provider_binding` is text rather than the
-//!   provider and operation pair FORMAL §2 names.
+//!   provider and operation pair FORMAL §2 names, and the slot holds `installation_lineage`
+//!   where FORMAL §2 holds `operation_key` (#384).
 //! - A [`ControlReceipt`]'s `control_revision` is the revision its commit produced, and its
 //!   `audit_envelope` is the same [`AuditEnvelope`] a pending commit holds; the envelope repeats
 //!   the receipt's commit sequence and control revision, as FORMAL §2 does.

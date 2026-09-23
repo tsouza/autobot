@@ -309,6 +309,35 @@ fn a_slot_effect_intent_is_the_formal_record_without_its_derived_key() {
     assert_eq!(props, formal);
 }
 
+/// The fields of FORMAL §2 `RejectionProof` by ground, as the comment beside each line of the
+/// record names the grounds its fields belong to (`passed revision` is `passed_revision`).
+fn formal_ground_fields() -> std::collections::BTreeMap<String, BTreeSet<String>> {
+    let mut grounds = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    let start = FORMAL
+        .lines()
+        .position(|l| l.starts_with("RejectionProof "))
+        .expect("FORMAL §2 has RejectionProof");
+    for line in FORMAL.lines().skip(start + 1) {
+        let Some((fields, comment)) = line.split_once("\\*") else {
+            break;
+        };
+        let fields = fields.trim().trim_end_matches(']');
+        for ground in comment.split(',').map(|g| g.trim().replace(' ', "_")) {
+            grounds.entry(ground).or_default().extend(
+                fields
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|f| !f.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+        if line.contains(']') {
+            break;
+        }
+    }
+    grounds
+}
+
 #[test]
 fn the_rejection_proof_grounds_cover_the_formal_record() {
     let passed = PassedRevision::new(
@@ -332,9 +361,21 @@ fn the_rejection_proof_grounds_cover_the_formal_record() {
             read_revision: crate::types::LaneRevision::Control(crev(1)),
         },
     ];
+    let grounds = formal_ground_fields();
+    assert_eq!(grounds.len(), proofs.len());
     let mut fields = BTreeSet::new();
     for proof in &proofs {
         let json = serde_json::to_value(proof).expect("serializes");
+        let mut keys: BTreeSet<String> = json
+            .as_object()
+            .expect("an object")
+            .keys()
+            .cloned()
+            .collect();
+        let ground = json["ground"].as_str().expect("a ground").to_owned();
+        keys.remove("ground");
+        keys.remove("expected_revision");
+        assert_eq!(Some(&keys), grounds.get(&ground), "{ground}");
         fields.extend(json.as_object().expect("an object").keys().cloned());
     }
     // FORMAL §2 holds the expected revision on the receipt; the passed-revision proof keeps it
