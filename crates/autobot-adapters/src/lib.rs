@@ -34,10 +34,6 @@
 //!   names, remote identities, heads, event identifiers) are opaque, non-empty text: the
 //!   provider assigns them and AutoBot only compares them.
 //! - A time an adapter exchanges is whole seconds since the Unix epoch, as a `u64`.
-//!
-//! Open design clarifications this crate depends on are named on the modules they affect:
-//! the meaning of `Decision` (#310) on [`judge`], and the replacement re-issue of an ambiguous
-//! tool call (#300) on [`runtime`].
 #![warn(missing_docs)]
 
 pub mod artifact;

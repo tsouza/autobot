@@ -15,15 +15,15 @@
 //! - [`WitnessMode::Late`] answers a set number of requests [`WitnessError::Unavailable`] and
 //!   then signs, as [`WitnessMode::Present`].
 //!
+//! The receipt carries and signs only `ambiguous_operation_set_digest`, never the set itself,
+//! as KERNEL §7 and FORMAL §2 state.
+//!
 //! Choices this module makes where the design is open:
 //!
-//! - The receipt carries and signs only `ambiguous_operation_set_digest`, never the set
-//!   itself (the decision recorded on #361); the signed bytes are
-//!   [`RestoreWitnessReceipt::signed_bytes`].
-//! - The signature is HMAC-SHA256 (RFC 2104) over those bytes under a 32-byte test key. A
-//!   keyed hash needs no dependency beyond `sha2`, and a fake has no separate failure domain
-//!   whose public key would need protecting: here the verifying key is the signing key, held
-//!   only by the fake. A real witness, with an asymmetric scheme, arrives with the witness
+//! - The signature is HMAC-SHA256 (RFC 2104) over [`RestoreWitnessReceipt::signed_bytes`]
+//!   under a 32-byte test key. A keyed hash needs no dependency beyond `sha2`, and a fake has no
+//!   separate failure domain whose public key would need protecting: here the verifying key is
+//!   the signing key, held only by the fake. A real witness, with an asymmetric scheme, arrives with the witness
 //!   control plane at G-FENCE-CUSTODY (M0 §5).
 //! - A late witness is late in answering, not in delivering: the trait is synchronous, so a
 //!   late reply is modelled as the witness being unreachable for its first requests. A

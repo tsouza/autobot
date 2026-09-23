@@ -186,7 +186,9 @@ ExpectedRecords      = [task_run_uid, outcome ∈ {PENDING, RECORDED, GAP},
 OutcomeRecord        = [task_run_uid, candidate_digest, acceptance_revision, outcome, state]
 UsageReceipt         = [task_run_uid, producer,   \* the producer of ExpectedRecords.usage whose entry it records
                         provider, usage_digest, amount, censored_bound, state]
-TelemetryGap         = [uid, gap_kind ∈ {OUTCOME_MISSING, USAGE_MISSING}, task_run_uid, interval, state]
+TelemetryGap         = [uid, gap_kind ∈ {OUTCOME_MISSING, USAGE_MISSING}, task_run_uid, interval,
+                        closing_record_uid,      \* NONE unless CLOSED; the late OutcomeRecord or UsageReceipt CloseGap links it to
+                        state]
 
 \* charter                                                        KERNEL §5
 CharterRevision      = [uid, charter_uid, charter_kind ∈ {Charter, ProjectCharter}, owner_uid,
@@ -349,7 +351,7 @@ ExpectUsage                 TaskRun domain; usage[producer] := PENDING; the prod
 WriteOutbox · DrainOutbox
 RecordCanonicalRecord       entry PENDING → RECORDED on its own record's COMMITTED create receipt (outcome: the OutcomeRecord; usage[producer]: that producer's UsageReceipt)
 CreateGapForMissingRecord   precondition now ≥ record_deadline ∧ the entry PENDING, the TaskRun terminal or not; creates a TelemetryGap linked to the TaskRun, entry := GAP(uid)
-CloseGap                    TelemetryGap OPEN → CLOSED, linked to the entry's record committed after it; the entry stays GAP
+CloseGap                    TelemetryGap OPEN → CLOSED, closing_record_uid := the entry's record committed after it; the entry stays GAP
 CensorUsage · SettleUsage
 
 \* judgment
@@ -392,7 +394,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 - F-8 *Hold.* Only permits accepted before `RequestHold` complete; every permit issued under a previous `RUNNING` generation fails after `ReleaseHold` and `CompleteHoldRelease`.
 - F-9 *Plan generation.* No permit pinning `(revision R, generation g)` is accepted unless the register holds `(R, ACTIVE, g)`; every `ActivatePlanRevision`, `QuiescePlan`, `ResumePlanRevision` and `SupersedePlanRevision` changes the generation, so no permit issued before any of them is accepted after it — including a permit issued before a quiesce and presented after a resume of the same revision; and no permit is issued while the register phase is not `ACTIVE`.
 - F-10 *Basis.* A merge permit pinning generation g is not accepted after `InvalidateIntegrationBasis` advanced it.
-- F-11 *Manager epoch.* A target commits a Manager command only against the reservation held for that command, taken and claimed while `phase = ACTIVE` at the epoch the command pins, not yet resolved or cancelled, and only while that epoch is still the register's epoch; a reservation is taken and claimed only while `phase = ACTIVE`; no permit is accepted between `AdvanceManagerEpoch` and `ResumeManager`; after `ResumeManager` no permit pinning the old epoch is accepted; a reservation is released only with a recorded terminal receipt.
+- F-11 *Manager epoch.* A target commits a Manager command only against the reservation held for that command, taken and claimed while `phase = ACTIVE` at the epoch the command pins, not yet resolved or cancelled, and only while that epoch is still the register's epoch; a reservation is taken and claimed only while `phase = ACTIVE`; no permit is accepted between `AdvanceManagerEpoch` and `ResumeManager`; after `ResumeManager` no permit pinning the old epoch is accepted; a reservation is released only with a recorded terminal receipt: the target's receipt, the cancel's receipt, or, for a `RESERVED` reservation cancelled during a takeover, the control receipt of the `DrainManager` that drained its entry.
 - F-12 *Register acknowledgement.* No `Plan`, `IntegrationBasis` or `ManagerLease` status claims a revision, generation or epoch the register does not hold; only the Context controller writes `WorkContext` status.
 - F-13 *Graph activation.* No member is ready or admitted before a verified `ACTIVATED` snapshot and matching register.
 - F-14 *Routing pin.* A `TaskRun`'s routing pin, consequence class and floor never change; a permit's pin equals its `TaskRun`'s.
@@ -412,7 +414,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 **I-5 Scope**
 - F-23 *Canonical scope.* A verdict is computed on canonical path and inode; a mutation outside the capsule by symlink, hardlink, rename, mount or subprocess is denied before effect or detected at the next checkpoint before any evidence, and the workspace is quarantined.
 - F-24 *Finding isolation.* Linking a finding to a task changes no capsule, contract or evidence requirement.
-- F-25 *Real fencing.* A fenced process cannot write its workspace, use a revoked grant, invoke a privileged tool or produce current evidence; `FenceConfirmed` requires every ledger entry of the fenced run refused or reconciled; uncertainty blocks replacement.
+- F-25 *Real fencing.* A fenced process cannot write its workspace, use a revoked grant, invoke a privileged tool or produce current evidence; `FenceConfirmed` requires that no ledger entry names an operation of the fenced run and that none of its operations, inherited ones included, is `OUTCOME_UNKNOWN` or `RECONCILING`; uncertainty blocks replacement.
 - F-26 *Continuation.* A continuation has the same `AgentRun`, identity, grant lineage, capsule digest and reservation, except that a law added or tightened since its capsule was issued gives it a fresh capsule differing only in charter digest and entries; cumulative counters are non-decreasing; an open invocation is resumed, never re-issued.
 - F-38 *Charter pin.* No plan revision is accepted without an accepted charter revision; it pins the accepted `ProjectCharter` revision and the `Charter` revision it inherits, with their digests; an accepted revision never changes; every capsule carries the charter digest of the charter in force at its issue and the entries relevant to its task.
 - F-39 *Tighten-only.* The effective charter is the union of the context and project entries, a conflict resolved toward the stricter entry; no project entry relaxes an inherited one; no law is `advisory`; a relaxed law or a changed rule reaches no plan revision pinned before the change.
@@ -432,7 +434,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 - F-43 *Proposal authority.* An accept of a context configuration or a plan proposal, and an `intake reject`, commits only from the principal ONBOARD §1 step 6 names for it, never from the intake-submitter identity; each commits only at the `Intake` revision and proposal-set digest it pins, and a plan accept only from `PROPOSED`; the intake-submitter identity commits nothing but intake kinds in proposal state, and nothing it writes is canonical before an accept.
 - F-44 *Provenance and binding.* Every attribute the intake-submitter identity writes carries at least one provenance entry with a source, a content digest and a trust label, and every provenance entry of a `Charter` entry it writes is `INTERVIEW_ANSWER`; an `Intake` is `PROPOSED` only while every repository it names is `ForgeVerified` and every brief digest is verified; a `Repository` is `ADOPTED` only by a plan accept of an `Intake` that was `PROPOSED` with it `ForgeVerified`.
 
-**I-9 Ledger** — F-32 A terminal `TaskRun` whose `record_deadline` has passed has `expected_records.outcome` and `.usage` each `RECORDED` or `GAP`, and no `TaskRun` is counted by any outcome or cost computation while either is `PENDING`; a `CENSORED` receipt carries `min(reservation ceiling, rate-card bound)` and counts at it; an `UNKNOWN` reservation stays held.
+**I-9 Ledger** — F-32 A `TaskRun`, terminal or not, whose `record_deadline` has passed has `expected_records.outcome` and every entry of `expected_records.usage`, one per usage producer, each `RECORDED` or `GAP`, and no `TaskRun` is counted by any outcome or cost computation while any of its entries is `PENDING`; a `CENSORED` receipt carries `min(reservation ceiling, rate-card bound)` and counts at it; an `UNKNOWN` reservation stays held.
 
 **I-10 Economics** — F-37 *Floor.* No `TaskRun` is admitted whose routing pin names a worker tier below its pinned floor; no accepted `EvidenceBundle` carries a reviewer below the review tier fixed for the consequence class; a judgment or policy change raises a floor and never lowers it.
 

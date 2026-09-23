@@ -11,7 +11,11 @@
 //!
 //! A session ends in a [`SessionEnd`], a semantic outcome whose quality review judges later, or
 //! in a [`RuntimeFailure`], a transport or process category that KERNEL §9 answers with a
-//! continuation. A refusal is a semantic outcome, [`SessionEnd::Refused`], never a failure.
+//! continuation. A refusal is a semantic outcome, [`SessionEnd::Refused`], never a failure. An
+//! adapter whose outbox write is refused reports no [`SessionEnd`] but
+//! [`RuntimeFailure::OutboxRefused`], the category ROLES §4 names for it: a continuation writes
+//! the records again from the checkpoint, and the session is never fenced and preserved for it
+//! as after a [`RuntimeFailure::Crash`].
 //!
 //! Choices this module makes where the design is open:
 //!
@@ -21,13 +25,10 @@
 //!   repository and forge text are [`TrustClass::UntrustedContent`](crate::trust::TrustClass).
 //!   An adapter may add framing of its own, only as untrusted content.
 //! - A tool's output reaches the session as untrusted content.
-//! - An adapter whose outbox write is refused reports no [`SessionEnd`] but
-//!   [`RuntimeFailure::OutboxRefused`], a category of its own: ROLES §4 lists no category for
-//!   it (#389), and reporting it as [`RuntimeFailure::Crash`] would have a live session fenced and
-//!   preserved as after a crash (ROLES §4) when a continuation that writes the records again
-//!   is enough.
 //! - A checkpoint lists the request digests of the tool invocations still open. A continuation
-//!   resumes them (KERNEL §9); how a replacement attempt inherits them is open (#300).
+//!   resumes them under their original identities; a later attempt inherits them as its own
+//!   operations, with their identities, and issues no invocation with an inherited one's request
+//!   digest while that one is non-terminal (KERNEL §9).
 
 mod contract;
 

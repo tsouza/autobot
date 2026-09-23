@@ -37,7 +37,8 @@
 //!   rejection.
 //! - A [`Refusal`] records its ground and the revision of the command's lane that the decision
 //!   read, as the owner's ruling on rejection proofs states for a guard refusal (#328). It
-//!   carries no serde form: how a `CommandReceipt` records a rejection is open in #328.
+//!   carries no serde form: a controller records the rejection as the `CommandReceipt`'s
+//!   FORMAL §2 `rejection_proof`.
 //! - The [`TransitionReceipt`] is the reducer's record of one commit, from which a controller
 //!   fills the FORMAL §2 `CommandReceipt` and `PendingCommit` or `ControlReceipt`. It holds the
 //!   fields those records share with a transition and the refinement mapping reads:
@@ -49,8 +50,10 @@
 //!   constructs a [`Guards`] with a guard disabled.
 //! - A receipt names its action by its FORMAL §3 name; whether the transition is an allowed
 //!   model transition is the refinement check of G-FORMAL, not the receipt's.
-//! - The effect intents are [`SlotEffectIntent`]s, whose provider-facing fields stay opaque
-//!   text until the design types them (#329).
+//! - The effect intents are [`SlotEffectIntent`]s, as the [`status`](crate::status) module
+//!   defines them: `provider_binding` is a typed
+//!   [`ProviderBinding`](crate::status::ProviderBinding), and the other provider-facing fields
+//!   are opaque text.
 //! - The pending slot, its receipt barrier and the control-receipt ring are written by the
 //!   commit that installs them and are not part of a decision; [`step`] performs no write.
 //!
