@@ -16,7 +16,8 @@
 //!   `~/.config/autobot/local.toml` names as `require_mount_uuid`, when it names one (see
 //!   [`crate::worktree::Settings`]);
 //! - the Justfile exports no `CARGO_*` variable, read from `just --dump --dump-format json`:
-//!   no exported assignment or recipe parameter of that name, and no dotenv loading.
+//!   no exported assignment or recipe parameter of that name, and no dotenv loading (by
+//!   `dotenv-load`, `dotenv-required`, `dotenv-override`, `dotenv-filename` or `dotenv-path`).
 //!
 //! [`measure`] reports how many Rust compilations sccache served from its cache and how many
 //! it missed, separately for the dependencies and for the workspace. It builds into
@@ -277,7 +278,10 @@ pub fn cargo_exports(dump: &serde_json::Value) -> Vec<String> {
     let mut out = Vec::new();
     let settings = &dump["settings"];
     let export_all = settings["export"].as_bool() == Some(true);
-    let dotenv = settings["dotenv_load"].as_bool() == Some(true)
+    // `just` loads a dotenv file under any of these settings, not only `dotenv-load`.
+    let dotenv = ["dotenv_load", "dotenv_required", "dotenv_override"]
+        .iter()
+        .any(|k| settings[*k].as_bool() == Some(true))
         || !settings["dotenv_filename"].is_null()
         || !settings["dotenv_path"].is_null();
     if dotenv {
@@ -843,8 +847,16 @@ mod tests {
         let clean = serde_json::json!({"settings": {"export": false}, "assignments": {
             "CARGO_LOCAL": {"name": "CARGO_LOCAL", "export": false}}});
         assert!(cargo_exports(&clean).is_empty());
-        let dotenv = serde_json::json!({"settings": {"dotenv_load": true}});
-        assert_eq!(cargo_exports(&dotenv).len(), 1);
+        for key in ["dotenv_load", "dotenv_required", "dotenv_override"] {
+            let dotenv = serde_json::json!({"settings": {
+                "dotenv_load": false, "dotenv_required": false, "dotenv_override": false,
+                "dotenv_filename": null, "dotenv_path": null, key: true}});
+            assert_eq!(cargo_exports(&dotenv).len(), 1, "{key}");
+        }
+        for (key, value) in [("dotenv_filename", ".env.local"), ("dotenv_path", "x/.env")] {
+            let dotenv = serde_json::json!({"settings": {key: value}});
+            assert_eq!(cargo_exports(&dotenv).len(), 1, "{key}");
+        }
     }
 
     #[test]
