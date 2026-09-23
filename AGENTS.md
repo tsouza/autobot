@@ -1,6 +1,6 @@
 # Agent instructions
 
-`CONTRIBUTING.md` is the rulebook and applies in full; this file does not restate it. It adds what is specific to agent sessions.
+`CONTRIBUTING.md` is the rulebook and applies in full. This file applies it to agent sessions and carries the reviewer checklist; where the two differ, `CONTRIBUTING.md` wins.
 
 ## Before starting
 
