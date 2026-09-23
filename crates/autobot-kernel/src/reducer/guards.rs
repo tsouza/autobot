@@ -41,6 +41,12 @@ guards! {
     GapAtRecordDeadline => "no gap created at `record_deadline`", "F-32";
     /// A reviewer's identity differs from the worker session's.
     ReviewerIndependence => "reviewer identity equal to worker session", "F-28";
+    /// A `correlated` review never satisfies the required review of `COMPATIBILITY_RISK` work.
+    CorrelatedReviewNotCompatibility =>
+        "a `correlated` review accepted as the required review of `COMPATIBILITY_RISK` work", "F-28";
+    /// A required security review comes only from a configuration in `securityReviewers`.
+    SecurityReviewerPool =>
+        "a required `SECURITY_OR_DATA_INTEGRITY` review accepted from a configuration outside `securityReviewers`", "F-28";
     /// Admission compares the routing pin's tier with the floor.
     AdmissionFloor => "admission without the floor comparison", "F-37";
     /// Plan acceptance pins a charter revision.
