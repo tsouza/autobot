@@ -2,3 +2,4 @@
 
 pub mod scripted;
 pub mod store;
+pub mod witness;
