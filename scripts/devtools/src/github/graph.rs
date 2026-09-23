@@ -28,6 +28,7 @@
 //! for open gate epics, since closed issues keep no blocked-by edges of interest.
 
 use crate::github::Client;
+use crate::github::settings::repo_from_remote;
 use crate::process::Cmd;
 use crate::{Error, Result, git, markdown};
 use serde_json::Value;
@@ -805,32 +806,13 @@ pub fn critical_path(graph: &Graph) -> Result<Vec<u64>> {
     Ok(chain)
 }
 
-/// `owner/name` from `GITHUB_REPOSITORY`, or else from the `origin` remote of `dir`.
-fn repository(dir: &str) -> Result<String> {
-    if let Ok(repo) = std::env::var("GITHUB_REPOSITORY")
-        && !repo.is_empty()
-    {
-        return Ok(repo);
+/// `owner/name` from `GITHUB_REPOSITORY` when it is set and non-empty, or else parsed
+/// by [`repo_from_remote`] from the URL `remote` returns (the `origin` remote).
+fn repository(env: Option<String>, remote: impl FnOnce() -> Result<String>) -> Result<String> {
+    match env {
+        Some(repo) if !repo.is_empty() => Ok(repo),
+        _ => repo_from_remote(&remote()?),
     }
-    let url = Cmd::new("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(dir)
-        .output()?;
-    repository_from_url(url.trim()).ok_or_else(|| {
-        Error::Parse(format!(
-            "cannot read owner/name from remote `{}`",
-            url.trim()
-        ))
-    })
-}
-
-fn repository_from_url(url: &str) -> Option<String> {
-    let path = url.strip_suffix(".git").unwrap_or(url);
-    let path = path.rsplit_once(':').map_or(path, |(_, p)| p);
-    let mut parts = path.rsplit('/').filter(|p| !p.is_empty());
-    let name = parts.next()?;
-    let owner = parts.next()?;
-    Some(format!("{owner}/{name}"))
 }
 
 /// Loads the repository's graph and the gate table from the checkout containing the
@@ -841,7 +823,13 @@ fn load() -> Result<(Graph, BTreeMap<String, Vec<String>>)> {
     let design = std::fs::read_to_string(&design_path)
         .map_err(|e| Error::Parse(format!("{}: {e}", design_path.display())))?;
     let gates = gate_table(&design)?;
-    let graph = Graph::fetch(&Client::new(repository(&top)?)?)?;
+    let repo = repository(std::env::var("GITHUB_REPOSITORY").ok(), || {
+        Cmd::new("git")
+            .args(["remote", "get-url", "origin"])
+            .current_dir(&top)
+            .output()
+    })?;
+    let graph = Graph::fetch(&Client::new(repo)?)?;
     Ok((graph, gates))
 }
 
@@ -1364,15 +1352,14 @@ mod tests {
     }
 
     #[test]
-    fn repository_from_remote_url() {
-        assert_eq!(
-            repository_from_url("git@github.com-alias:o/r.git").as_deref(),
-            Some("o/r")
-        );
-        assert_eq!(
-            repository_from_url("https://github.com/o/r").as_deref(),
-            Some("o/r")
-        );
-        assert_eq!(repository_from_url("r"), None);
+    fn repository_prefers_the_environment_then_parses_the_remote() {
+        let remote = || Ok("git@github.com-alias:o/r.git".to_string());
+        assert_eq!(repository(Some("a/b".into()), remote).unwrap(), "a/b");
+        assert_eq!(repository(Some(String::new()), remote).unwrap(), "o/r");
+        assert_eq!(repository(None, remote).unwrap(), "o/r");
+        assert!(repository(None, || Ok("r".to_string())).is_err());
+        // The remote parser is the shared one, which rejects an owner containing `@`.
+        assert!(repository(None, || Ok("ssh://git@host/r".to_string())).is_err());
+        assert!(repository(None, || Err(Error::Parse("no remote".into()))).is_err());
     }
 }
