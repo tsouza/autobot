@@ -329,7 +329,8 @@ pub enum Rule {
     Redundant,
     /// A blocker in a later milestone.
     LaterMilestone,
-    /// A gate-epic edge missing from, or absent in, the M0 §4 Depends-on column.
+    /// A gate-epic edge that is not in the M0 §4 Depends-on column, an M0 §4 edge missing
+    /// between gate epics, or a second gate epic for the same gate.
     GateEdges,
     /// An epic blocked by an issue that is not an epic.
     EpicBlocker,
@@ -403,10 +404,20 @@ fn is_priority_label(label: &str) -> bool {
             && chars.next().is_none())
 }
 
+/// Whether the first exact `## Acceptance` heading in `body` has a non-empty section.
+///
+/// The section is read from that heading onwards, so an earlier heading that only starts
+/// with `Acceptance` (such as `## Acceptance evidence`) is neither checked nor counted.
 fn has_acceptance(body: &str) -> bool {
-    body.lines()
-        .any(|l| markdown::heading_of(l.trim_end()) == Some((2, "Acceptance")))
-        && markdown::section(body, "Acceptance").is_some_and(|s| !s.trim().is_empty())
+    let mut offset = 0;
+    for line in body.split_inclusive('\n') {
+        if markdown::heading_of(line.trim_end()) == Some((2, "Acceptance")) {
+            return markdown::section(&body[offset..], "Acceptance")
+                .is_some_and(|s| !s.trim().is_empty());
+        }
+        offset += line.len();
+    }
+    false
 }
 
 /// Checks `graph` against every rule in the module docs, with the gate edges taken from
@@ -1054,6 +1065,21 @@ mod tests {
             rules(&fx.lint()),
             vec![(5, Rule::Acceptance), (23, Rule::Acceptance)]
         );
+    }
+
+    #[test]
+    fn acceptance_is_read_from_the_exact_heading() {
+        let mut fx = Fixture::recorded();
+        // An empty section whose heading only starts with `Acceptance` comes first: the
+        // epic is valid because its `## Acceptance` section is not empty.
+        fx.issue(23)["body"] = json!(
+            "Turns the M1 epics into tasks.\n\n## Acceptance evidence\n\n## Acceptance\nDone."
+        );
+        // A non-empty `### Acceptance notes` comes first: the epic is invalid because its
+        // `## Acceptance` section is empty.
+        fx.issue(5)["body"] =
+            json!("Owns the rulings.\n\n### Acceptance notes\nfoo\n\n## Acceptance\n\n");
+        assert_eq!(rules(&fx.lint()), vec![(5, Rule::Acceptance)]);
     }
 
     #[test]
