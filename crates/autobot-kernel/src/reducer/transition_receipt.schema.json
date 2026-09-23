@@ -1,0 +1,330 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TransitionReceipt",
+  "description": "The durable record of one committed transition.\n\nA receipt that exists satisfies the checks of [`TransitionReceipt::new`], which\ndeserialization applies too. Its serde form is [`TransitionReceiptFields`].",
+  "type": "object",
+  "properties": {
+    "action": {
+      "description": "The FORMAL §3 action the transition refines.",
+      "$ref": "#/$defs/ActionName"
+    },
+    "after": {
+      "description": "The aggregate's counters after the commit.",
+      "$ref": "#/$defs/Counters"
+    },
+    "after_digests": {
+      "description": "The aggregate's state digests after the commit.",
+      "$ref": "#/$defs/StateDigests"
+    },
+    "aggregate_uid": {
+      "description": "The UID of the aggregate the transition committed on.",
+      "$ref": "#/$defs/Uid"
+    },
+    "before": {
+      "description": "The aggregate's counters before the commit; the lane's revision is the command's\nexpected revision.",
+      "$ref": "#/$defs/Counters"
+    },
+    "before_digests": {
+      "description": "The aggregate's state digests before the commit.",
+      "$ref": "#/$defs/StateDigests"
+    },
+    "command_uid": {
+      "description": "The UID of the command that the transition decided.",
+      "$ref": "#/$defs/Uid"
+    },
+    "disabled_guards": {
+      "description": "The guards disabled when the transition was decided, in FORMAL §5 table order; empty\nfor every transition decided under [`Guards::all`](super::Guards::all).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GuardId"
+      }
+    },
+    "effect_intents": {
+      "description": "The effect intents of a domain commit, in effect-index order; empty for a control\ncommit.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SlotEffectIntent"
+      }
+    },
+    "input_digest": {
+      "description": "The digest of the command's input.",
+      "$ref": "#/$defs/Digest"
+    },
+    "lane": {
+      "description": "The commit lane.",
+      "$ref": "#/$defs/Lane"
+    },
+    "principal": {
+      "description": "The authenticated writer of the command.",
+      "$ref": "#/$defs/Principal"
+    },
+    "reducer_version": {
+      "description": "The version of the reducer that decided the transition.",
+      "type": "string"
+    },
+    "schema_version": {
+      "description": "The receipt schema version; [`RECEIPT_SCHEMA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "reducer_version",
+    "action",
+    "aggregate_uid",
+    "command_uid",
+    "principal",
+    "input_digest",
+    "lane",
+    "before",
+    "after",
+    "before_digests",
+    "after_digests",
+    "effect_intents",
+    "disabled_guards"
+  ],
+  "$defs": {
+    "ActionName": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]*$"
+    },
+    "CommitSequence": {
+      "type": "integer",
+      "format": "int64",
+      "maximum": 9223372036854775807,
+      "minimum": 0
+    },
+    "ControlRevision": {
+      "type": "integer",
+      "format": "int64",
+      "maximum": 9223372036854775807,
+      "minimum": 0
+    },
+    "Counters": {
+      "description": "The three per-aggregate counters of KERNEL §1 at one point.",
+      "type": "object",
+      "properties": {
+        "commit_sequence": {
+          "description": "`commit_sequence`.",
+          "$ref": "#/$defs/CommitSequence"
+        },
+        "control_revision": {
+          "description": "`control_revision`.",
+          "$ref": "#/$defs/ControlRevision"
+        },
+        "state_revision": {
+          "description": "`state_revision`.",
+          "$ref": "#/$defs/StateRevision"
+        }
+      },
+      "required": [
+        "state_revision",
+        "control_revision",
+        "commit_sequence"
+      ]
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "GuardId": {
+      "description": "One guard of `docs/design/AUTOBOT-FORMAL-SURFACE.md` §5, one variant per row of its\nnegative-variant table, in table order.\n\nSerde and the JSON schema use the variant name in kebab case.",
+      "oneOf": [
+        {
+          "description": "Acceptance reads the registers and records the acceptance in one CAS on one object.",
+          "type": "string",
+          "const": "acceptance-in-one-cas"
+        },
+        {
+          "description": "`QuiescePlan` and `ResumePlanRevision` each advance `plan_generation`.",
+          "type": "string",
+          "const": "plan-generation-advance"
+        },
+        {
+          "description": "A Manager takeover is a sequence of CASes, and `ResumeManager` follows\n`AdvanceManagerEpoch`.",
+          "type": "string",
+          "const": "manager-takeover-sequence"
+        },
+        {
+          "description": "A send is preceded by its `send_attempt` marker.",
+          "type": "string",
+          "const": "send-attempt-marker"
+        },
+        {
+          "description": "`RecordSendAttempt` writes 2a before 2b.",
+          "type": "string",
+          "const": "send-attempt-order"
+        },
+        {
+          "description": "A control commit writes control fields only.",
+          "type": "string",
+          "const": "control-fields-only"
+        },
+        {
+          "description": "A pending slot is cleared only after its receipt and audit event are verified.",
+          "type": "string",
+          "const": "slot-cleared-on-verification"
+        },
+        {
+          "description": "A projection applies events in commit-sequence order.",
+          "type": "string",
+          "const": "projection-in-order"
+        },
+        {
+          "description": "A continuation keeps its execution identity.",
+          "type": "string",
+          "const": "continuation-identity"
+        },
+        {
+          "description": "A workspace retires on a completion marker only after restore verification.",
+          "type": "string",
+          "const": "retire-after-restore-verification"
+        },
+        {
+          "description": "A restored installation dispatches only after a witness receipt.",
+          "type": "string",
+          "const": "restore-witness-receipt"
+        },
+        {
+          "description": "A scope check compares the canonical path, not the requested string.",
+          "type": "string",
+          "const": "canonical-scope-check"
+        },
+        {
+          "description": "A telemetry gap is created at `record_deadline`.",
+          "type": "string",
+          "const": "gap-at-record-deadline"
+        },
+        {
+          "description": "A reviewer's identity differs from the worker session's.",
+          "type": "string",
+          "const": "reviewer-independence"
+        },
+        {
+          "description": "Admission compares the routing pin's tier with the floor.",
+          "type": "string",
+          "const": "admission-floor"
+        },
+        {
+          "description": "Plan acceptance pins a charter revision.",
+          "type": "string",
+          "const": "pinned-charter-revision"
+        },
+        {
+          "description": "A project entry never weakens an inherited law.",
+          "type": "string",
+          "const": "no-inherited-law-weakened"
+        },
+        {
+          "description": "A continuation after a tightened law gets a fresh capsule.",
+          "type": "string",
+          "const": "fresh-capsule-on-tightened-law"
+        },
+        {
+          "description": "Only a human principal accepts a charter revision.",
+          "type": "string",
+          "const": "human-charter-acceptance"
+        },
+        {
+          "description": "A `judged` \"complies\" never satisfies the `review` backstop.",
+          "type": "string",
+          "const": "judged-not-review-backstop"
+        }
+      ]
+    },
+    "Lane": {
+      "description": "A commit lane.",
+      "oneOf": [
+        {
+          "description": "The domain lane: precondition `state_revision`, installs the pending commit.",
+          "type": "string",
+          "const": "DOMAIN"
+        },
+        {
+          "description": "The control lane: precondition `control_revision`, appends a control receipt.",
+          "type": "string",
+          "const": "CONTROL"
+        }
+      ]
+    },
+    "Principal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "SlotEffectIntent": {
+      "description": "One effect intent as a pending commit holds it.\n\nIt holds the fields of the FORMAL §2 `EffectIntent` record that the commit decides. The\nrest follow from it: `aggregate_uid` is the UID of the aggregate whose slot holds the\nintent, `committed_revision` is the slot's `proposed_revision`, `uid` and `operation_key`\nare derived from those and the fields here, and `state` belongs to the `EffectIntent`\nobject materialized from it.",
+      "type": "object",
+      "properties": {
+        "contract_revision": {
+          "description": "The revision of the provider contract the intent is written against.",
+          "type": "string"
+        },
+        "desired_outcome": {
+          "description": "The outcome the effect is to produce.",
+          "type": "string"
+        },
+        "effect_index": {
+          "description": "The position of the intent among the commit's intents.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "installation_lineage": {
+          "description": "The installation lineage the intent's operation key binds.",
+          "type": "string"
+        },
+        "payload_digest": {
+          "description": "The digest of the intent's payload.",
+          "$ref": "#/$defs/Digest"
+        },
+        "provider_binding": {
+          "description": "The provider binding that is to carry out the effect.",
+          "type": "string"
+        },
+        "target_identity": {
+          "description": "The identity of the effect's target at the provider.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_index",
+        "installation_lineage",
+        "payload_digest",
+        "provider_binding",
+        "desired_outcome",
+        "target_identity",
+        "contract_revision"
+      ]
+    },
+    "StateDigests": {
+      "description": "The domain and control digests of an aggregate's state at one point (KERNEL §1).",
+      "type": "object",
+      "properties": {
+        "control": {
+          "description": "The digest of the control fields.",
+          "$ref": "#/$defs/Digest"
+        },
+        "domain": {
+          "description": "The digest of the domain fields.",
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "required": [
+        "domain",
+        "control"
+      ]
+    },
+    "StateRevision": {
+      "type": "integer",
+      "format": "int64",
+      "maximum": 9223372036854775807,
+      "minimum": 0
+    },
+    "Uid": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
