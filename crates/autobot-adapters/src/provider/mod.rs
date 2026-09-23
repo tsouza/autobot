@@ -23,10 +23,10 @@
 //!   send that lacks the source and base heads its capability requires. The broker refuses both
 //!   before any send (KERNEL §3.3); the adapter's refusal is a second fence, not the first.
 //! - A rate-limited send is [`SendError::RateLimited`], not a transport fault: the provider
-//!   answered, and the answer is that nothing was applied. The design leaves open
-//!   what follows: KERNEL §3.3 step 4 names no operation state for a rate-limited send, and
-//!   a rate-limit answer is not one of the two proofs of non-application reconciliation
-//!   accepts, so this module claims nothing about either.
+//!   answered that it did not take the request. Whether that answer proves nothing was applied
+//!   is decided in #390: only when the provider's declared capability says its rate-limit
+//!   answers are authoritative; otherwise the send is treated as an unknown outcome. This
+//!   module reports the answer and claims neither.
 //! - `COMPENSATED` has no contract yet (#318): this module offers no compensation call.
 
 mod contract;
@@ -195,8 +195,9 @@ pub enum SendError {
     /// lacks.
     MissingHeadBase,
     /// The provider answered that it is rate limiting the caller and did not take the request.
-    /// Unlike a transport fault this is an answer, so the outcome is known: nothing was
-    /// applied.
+    /// Unlike a transport fault this is an answer: the provider says it did not take the
+    /// request. Whether that proves nothing was applied depends on the provider's capability
+    /// (#390).
     RateLimited,
     /// The request may or may not have reached the provider.
     Transport(TransportFault),

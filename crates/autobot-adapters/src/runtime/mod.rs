@@ -23,7 +23,7 @@
 //! - A tool's output reaches the session as untrusted content.
 //! - An adapter whose outbox write is refused reports no [`SessionEnd`] but
 //!   [`RuntimeFailure::OutboxRefused`], a category of its own: ROLES §4 lists no category for
-//!   it, and reporting it as [`RuntimeFailure::Crash`] would have a live session fenced and
+//!   it (#389), and reporting it as [`RuntimeFailure::Crash`] would have a live session fenced and
 //!   preserved as after a crash (ROLES §4) when a continuation that writes the records again
 //!   is enough.
 //! - A checkpoint lists the request digests of the tool invocations still open. A continuation
