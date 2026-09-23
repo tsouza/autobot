@@ -697,6 +697,8 @@ mod tests {
                 "Finding",
                 "Decision",
                 "Intervention",
+                "gate",
+                "ProjectionState",
             ]
         );
         let again = parse_block(&render(&machines)).unwrap();
@@ -841,7 +843,7 @@ mod tests {
             [st("PROPOSED"), st("CAPTURED")]
         );
         let ws = find(&machines, "Workspace").unwrap().field(None).unwrap();
-        assert_eq!(sources(ws, "CONFLICT"), [Source::Any]);
+        assert_eq!(sources(ws, "CONFLICT"), [Source::AnyNonTerminal]);
         let receipt = find(&machines, "EffectReceipt").unwrap();
         assert_eq!(receipt.field(None).unwrap().states, ["RECORDED"]);
         assert!(receipt.field(None).unwrap().transitions.is_empty());

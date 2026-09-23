@@ -242,11 +242,17 @@ Session expiry, context exhaustion, stream disconnect or provider outage produce
 
 ## 10. Lifecycles — the only place they are printed
 
-Every state referenced in a core document appears here. Another document may name a state; it may not print a machine. An extension kind's machine is printed at the extension's gate, never in a core document. The first value listed is the initial state.
+Every state referenced in a core document appears here. Another document may name a state; it may not print a machine. An extension kind's machine is printed at the extension's gate, never in a core document. The first value listed is the initial state. A state set that actions move is a machine here even when its record is not a kind (a gate, a projection's read model); an enumerated value that no transition moves, such as a lane, a verdict, a mode, a trust label or a consequence class, is a value, not a state, and is not printed here.
 
 ```text
 CommandReceipt       PREPARED → COMMITTED | REJECTED | CANCELLED | REPLAY_EXPIRED
                      PREPARED → UNCERTAIN → COMMITTED | REJECTED | CANCELLED
+                     (REPLAY_EXPIRED: the command was received after its own pinned replay window; it is never evaluated,
+                      never read as new intent and never rewrites a terminal receipt, and it is not reached from UNCERTAIN,
+                      which may already have committed)
+                     (CANCELLED: a reserved Manager command whose slot was APPLYING when its target's owning controller
+                      consumed its fixed expected revision with the §4 cancel CAS, so it can never commit; the retained
+                      cancellation receipt is the proof)
 
 AdmissionStamp       ISSUED → BROKER_ACCEPTED → CONSUMED
                      ISSUED | BROKER_ACCEPTED → INVALIDATED ; ISSUED → EXPIRED
@@ -262,26 +268,52 @@ ToolInvocation       PERMITTED → REQUESTED                          (permit in
                       DISPATCHING always carries send_attempt)
 
 EffectIntent         MATERIALIZED → ACKNOWLEDGED ; MATERIALIZED → QUARANTINED
+                     (the Broker writes ACKNOWLEDGED once the intent's operation is terminal; an operation OUTCOME_UNKNOWN,
+                      RECONCILING or UNRESOLVED keeps it MATERIALIZED; the source receipt is retained, §2, while any of its
+                      intents is not ACKNOWLEDGED)
 EffectReceipt        RECORDED  (immutable, one per attempt)
 
 pending commit slot  CLEARED → OCCUPIED → CLEARED ; OCCUPIED → REPAIRING → CLEARED   (per aggregate; REPAIRING while a new process reconstructs the receipt and event)
 control receipt      UNPUBLISHED → PUBLISHED   (ring entry; drained by audit publication)
 reservation phase    RESERVED → APPLYING → RESOLVED   (active_manager_transaction; RESOLVED only with a non-empty terminal_state and its receipt)
+                     RESERVED → RESOLVED (released as CANCELLED before any claim, §4)
+                     RESOLVED → RESERVED (a new reservation overwrites a RESOLVED slot)
+                     terminal_state:  NONE → COMMITTED | CANCELLED | REJECTED   (set by ReleaseManagerTransaction with its proving receipt)
+                     terminal_state:  COMMITTED | CANCELLED | REJECTED → NONE (a new reservation overwrites the RESOLVED slot)
 ledger entry         ACCEPTED_NOT_SENT → SEND_ATTEMPTED → ACKNOWLEDGED   (send_state; ACKNOWLEDGED is written in the CAS that removes the entry)
                      ACCEPTED_NOT_SENT → ACKNOWLEDGED                    (currency failure at step 2, or currency or register failure at recovery row 1; no send_attempt)
-expected record      PENDING → RECORDED | GAP   (TaskRun.status.expected_records.<kind>)
+expected record      PENDING → RECORDED | GAP   (TaskRun.status.expected_records.<kind>; GAP is final: a record committed after
+                      the gap closes the TelemetryGap and leaves the entry GAP)
 
 WorkContext          hold_state:  RUNNING → FREEZE_PENDING → PROPAGATING → ENFORCED → RELEASING → RUNNING
                      manager_authority[plan].phase:  ACTIVE → DRAINING → ACTIVE (new epoch)
-                     (the two fields are independent; both are checked by AcceptDispatch)
+                     plan_authority[plan].revision_phase:  ACTIVE → QUIESCING → ACTIVE (the same revision, or the replacement)
+                     integration_authority[basis].state:  RESERVED → INVALIDATED
+                     (hold_state and each manager_authority[plan].phase are independent of each other; AcceptDispatch checks every field)
+                     (a hold requested in RELEASING keeps it there until that hold's own RESUME, because CompleteHoldRelease
+                      requires hold_causes empty)
+                     (a keyed entry exists from the action that creates it until its retirement, §3.1, and its absence is
+                      no state: plan_authority[plan] is created ACTIVE by the first ActivatePlanRevision, and absent means no
+                      active revision; integration_authority[basis] is created RESERVED by ReserveIntegrationBasis, and
+                      INVALIDATED is final for that key)
 
 Plan.phase           ACCEPTED → ACTIVATING → ACTIVE
                      ACTIVATING → ACTIVATION_FAILED → ACTIVATING (same snapshot) | CANCELLED
+                     ACTIVATION_FAILED → QUIESCING (replacement revision only; the register still holds the previous revision QUIESCING)
                      ACTIVE → PAUSED → ACTIVE
                      ACTIVE | PAUSED → QUIESCING → ACTIVE (same revision) | ACTIVATING (replacement revision)
-                     ACTIVE → COMPLETED | FAILED
+                     ACTIVE → COMPLETED
+                     ACTIVE | PAUSED | QUIESCING → FAILED
                      ACCEPTED | ACTIVATING | ACTIVE | PAUSED | QUIESCING → CANCELLED
                      (RevisionPending is a condition, not a phase)
+                     (ACTIVATING runs from the Plan controller's start of snapshot verification through MEMBERS_VERIFIED and
+                      the submission of ActivatePlanRevision, or of SupersedePlanRevision for a replacement; ACTIVE follows
+                      only its COMMITTED receipt; ACTIVATION_FAILED acknowledges PlanSnapshot ACTIVATION_FAILED and is reached
+                      only before that submission or on a REJECTED receipt, never while the receipt is UNCERTAIN)
+                     (FAILED and CANCELLED of a plan that holds a plan_authority entry follow its QuiescePlan and the §5 wait
+                      for active attempts, during which the phase stays where it was and then moves directly to FAILED or
+                      CANCELLED; no plan is CANCELLED while an activation receipt is UNCERTAIN; a plan that ended is retired
+                      from the registers, §3.1)
 
 Plan.status.         PROPOSED → VERIFIED → ACTIVE → QUIESCING → SUPERSEDED
 revisions[rev]       PROPOSED | VERIFIED → ABANDONED
@@ -289,6 +321,7 @@ revisions[rev]       PROPOSED | VERIFIED → ABANDONED
 
 PlanSnapshot         PROPOSED → SNAPSHOT_VERIFIED → MEMBERS_VERIFIED → ACTIVATED
                      PROPOSED | SNAPSHOT_VERIFIED | MEMBERS_VERIFIED → ACTIVATION_FAILED
+                     ACTIVATION_FAILED → PROPOSED (retry of the same snapshot: verification starts again)
 
 PlanProposal         DRAFT → REVIEW → ACCEPTED | REJECTED ; DRAFT → REJECTED
                      REVIEW → DRAFT                                  (revised by the intake client)
@@ -301,52 +334,104 @@ Charter, ProjectCharter  ACTIVE → RETIRED
                      revisions[rev]:  PROPOSED → REJECTED
                      (both kinds carry revisions[rev]; an ACCEPTED revision is immutable and digested; a SUPERSEDED revision stays pinned by every plan revision that pinned it)
 ManagerLease         ACKNOWLEDGED → EXPIRED   (acknowledgement of manager_authority; never authority)
+                     (the Context controller writes EXPIRED on the DrainManager control commit that drained this lease_uid,
+                      whatever caused the drain, or on the COMMITTED receipt of the RetirePlanAuthority that removed its entry; an EXPIRED
+                      lease never returns: AdvanceManagerEpoch installs a new lease)
 
 Task, Milestone      PROPOSED → READY → RUNNING → VERIFYING → ACCEPTED | BLOCKED | FAILED | CANCELLED | SUPERSEDED
                      READY | RUNNING | VERIFYING → BLOCKED → READY            (blocking decision, dependency, budget, capability or evidence resolved)
                      READY | RUNNING | VERIFYING | BLOCKED → SUPERSEDED | CANCELLED
+                     (VERIFYING → ACCEPTED is the acceptance adjudication the Task controller commits; it lists the UID and
+                      digest of every EvidenceBundle it relies on)
 
 TaskRun              PENDING → ADMITTED → PREPARING → EXECUTING → VERIFYING → SUCCEEDED | FAILED
                      EXECUTING | VERIFYING → RECOVERING → EXECUTING | FAILED
-                     any non-terminal → CANCELLED
+                     PREPARING → FAILED (setup failed, or fenced)
+                     PENDING | ADMITTED | EXECUTING → FAILED (fenced)
+                     any non-terminal → CANCELLED (a cancel fences first: only once fence_state is FENCED or FENCED_UNCERTAIN)
                      fence_state (control lane, from any non-terminal phase, phase unchanged):
                        ACTIVE → FENCE_PENDING → FENCED | FENCED_UNCERTAIN ; FENCED_UNCERTAIN → FENCED
+                     (the TaskRun holds the fence request and the epoch: ACTIVE → FENCE_PENDING is one TaskRun control CAS that also
+                      increments execution_epoch; FENCED and FENCED_UNCERTAIN acknowledge the FenceSession of this TaskRun at
+                      that epoch reaching CONFIRMED or UNCERTAIN, never the reverse)
+                     (once fence_state leaves ACTIVE the phase never moves to EXECUTING or SUCCEEDED; it moves to FAILED, or
+                      to CANCELLED when a cancel caused the fence, and only once fence_state is FENCED or FENCED_UNCERTAIN;
+                      FENCED_UNCERTAIN → FENCED may land after the phase is terminal; custody keeps the candidate, and a
+                      replacement TaskRun verifies it again)
 
 AgentRun             STARTING → RUNNING → COMPLETED | FAILED | CANCELLED
-                     RUNNING → HEARTBEAT_LOST → RUNNING (continuation) | fence_state := FENCE_PENDING
+                     STARTING → FAILED | CANCELLED
+                     RUNNING → HEARTBEAT_LOST → RUNNING (continuation) | fence_state := FENCE_PENDING (continuation_deadline passed; the copy acknowledging the fence requested on the TaskRun)
+                     HEARTBEAT_LOST → FAILED | CANCELLED   (only once fence_state is FENCED or FENCED_UNCERTAIN)
+                     (CANCELLED from any phase only once fence_state is FENCED or FENCED_UNCERTAIN: a cancel fences the TaskRun first)
                      fence_state: as TaskRun
+                     (fence_state and execution_epoch are acknowledged copies of its TaskRun's and authorize nothing; a fence
+                      of an AgentRun is requested on its TaskRun)
 
 AgentCheckpoint      CREATED → VERIFIED | STALE | QUARANTINED
+                     VERIFIED → STALE
+                     (STALE: its execution_epoch is below its TaskRun's; QUARANTINED: out-of-scope content was detected at
+                      the checkpoint, ROLES §2)
 ScopeCapsule         ISSUED → REVOKED
 ExecutionIdentity    ISSUED → REVOKED
 CredentialGrant      ISSUED → EXPIRED | REVOKED
 FenceSession         PENDING → CONFIRMED | UNCERTAIN ; UNCERTAIN → CONFIRMED
+                     (the Broker's evidence of one fence of one TaskRun at one execution_epoch, created for the TaskRun's
+                      FENCE_PENDING commit; CONFIRMED records FenceConfirmed, §6)
 
 Workspace            REQUESTED → PROVISIONING → READY → IN_USE → PRESERVING → PRESERVED → RETIRED
-                     any → QUARANTINED | CONFLICT
+                     PRESERVED → IN_USE (write fence lifted after a custody checkpoint; retirement needs a new PRESERVED)
+                     any non-terminal → QUARANTINED | CONFLICT
+                     QUARANTINED | CONFLICT → PRESERVING
+                     (QUARANTINED for uncertain custody leaves once a later custody checkpoint of it is VERIFIED; QUARANTINED
+                      for a scope escape or unattributed work, and CONFLICT, leave only once their WorkspaceConflict is
+                      ADJUDICATED; a workspace that was ever QUARANTINED or in CONFLICT never returns to READY or IN_USE, and
+                      later work restores its preserved artifact into a new Workspace)
 CustodyPolicy        ACTIVE → RETIRED
-CustodyCheckpoint    INVENTORIED → UPLOADING → UPLOADED → VERIFIED ; any → FAILED
+CustodyCheckpoint    INVENTORIED → UPLOADING → UPLOADED → VERIFIED ; any non-terminal → FAILED
+                     (UPLOADED: every Artifact is VERIFIED by digest; VERIFIED: an independent restore into a fresh location
+                      is verified and restore_receipt set, and the completion marker follows)
 ArtifactCommit       PENDING → VERIFIED | FAILED
+                     (VERIFIED only for a CustodyCheckpoint VERIFIED with its completion marker written; the Workspace's
+                      PRESERVED follows it, §7)
 Artifact             PENDING → VERIFIED | EXPIRED
 WorkspaceConflict    DETECTED → PRESERVING → QUARANTINED → ADJUDICATED ; PRESERVING → PRESERVED → ADJUDICATED
-RestoreRequest       REQUESTED → RESTORING → READ_ONLY → FENCED → RECONCILED → MAPPED → DISPATCH_ENABLED ; any → FAILED
+RestoreRequest       REQUESTED → RESTORING → READ_ONLY → FENCED → RECONCILED → MAPPED → DISPATCH_ENABLED ; any non-terminal → FAILED
 
-IntegrationBasis     RESERVED → INTEGRATING → VERIFIED ; RESERVED | INTEGRATING → STALE | BLOCKED
-                     (STALE acknowledges the register's INVALIDATED; the register is the authority)
+IntegrationBasis     RESERVED → INTEGRATING → VERIFIED ; RESERVED | INTEGRATING | VERIFIED → STALE | BLOCKED
+                     VERIFIED → RELEASED
+                     (STALE and RELEASED acknowledge the register's INVALIDATED and differ by cause; the register is the authority)
+                     (RELEASED: every merge operation of its merge order is terminal and InvalidateIntegrationBasis has
+                      advanced the register; RetireIntegrationBasis then removes the entry, §3.1)
 VerificationRun      PENDING → RUNNING → PASSED | FAILED | INCONCLUSIVE
 EvidenceBundle       RECORDED → INVALIDATED | EXPIRED
+                     (a bundle has no accepted state: an accepted bundle is one a committed acceptance adjudication references)
 
 Budget               OPEN → EXHAUSTED | CLOSED
 BudgetReservation    RESERVED → COMMITTED | RELEASED | UNKNOWN | EXPIRED
                      UNKNOWN → COMMITTED | RELEASED | EXPIRED         (settlement or explicit conservative expiry)
+                     (UNKNOWN: its consumer, the TaskRun for ATTEMPT or the operation for EFFECT, is terminal, fenced or
+                      OUTCOME_UNKNOWN and its usage is not SETTLED; COMMITTED on settlement; RELEASED on proven zero use;
+                      EXPIRED only by an explicit conservative expiry, counted at the reservation ceiling)
 UsageReceipt         PENDING → PARTIAL → SETTLED | DISPUTED
                      PENDING | PARTIAL → UNKNOWN → CENSORED ; CENSORED → SETTLED (append-only correction)
 OutcomeRecord        PROVISIONAL → MATURE | DEFECT_CONFIRMED ; MATURE | DEFECT_CONFIRMED → REVISED
 TelemetryGap         OPEN → CLOSED ; OPEN → PERMANENT
+                     (CLOSED: a record of the gap's kind for its TaskRun committed after the gap, linked from it; the gap is
+                      never removed, and every count uses the linked record from then on as an append-only correction, as
+                      for a CENSORED receipt later SETTLED; PERMANENT: the outbox that held the record is lost, §8)
 
 Finding              RAISED → CLASSIFIED → LINKED | PROMOTED | DEFERRED | REJECTED
 Decision             RECORDED  (immutable)
 Intervention         REQUESTED → ACKNOWLEDGED → APPLIED | REJECTED | EXPIRED
+
+gate                  NOT_RUN → RUNNING → PASSED | FAILED ; PASSED → INVALIDATED
+                     FAILED | INVALIDATED → RUNNING   (a new run of the gate)
+                     (a gate of M0 §4, not a kind: its evidence is a signed manifest, M0 §5, and NOT_RUN is a gate with no manifest)
+ProjectionState      gap:  NONE → OPEN → NONE | PERMANENT
+                     integrity:  OK → DIGEST_CONFLICT
+                     (a projection's read model of one aggregate, not a kind: DetectAuditGap opens a gap, the repaired
+                      event closes it and DeclarePermanentGap makes it PERMANENT; RejectDigestConflict records DIGEST_CONFLICT)
 ```
 
 `Dispatched`, `ReceiptObserved`, `Ambiguous`, `Reconciled`, `Unresolved` and every other name of the form *Verb-ed* are event types, never states. `RECOVERING`, `INCONCLUSIVE`, `UNRESOLVED` and `QUARANTINED` are explicit states, never generic failures. A state set printed in a schema that differs from this section is a schema defect.
