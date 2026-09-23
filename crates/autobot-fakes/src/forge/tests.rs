@@ -145,10 +145,28 @@ fn event_ids_and_semantic_keys_tell_facts_apart() {
     assert_ne!(got[0].event_id, got[1].event_id);
     assert_ne!(got[0].semantic_key, got[1].semantic_key);
     assert!(got[1].observed_at > got[0].observed_at);
-    // A second forge assigns the same semantic key to the same object at the same generation.
-    let mut again = forge(PROMPT);
-    again.open(head("other"), head("main"), digest(9)).unwrap();
-    assert_eq!(again.poll().unwrap()[0].semantic_key, got[0].semantic_key);
+    // Another forge stating the same fact gives it the same key; a pull request at the same
+    // identity and generation with other heads or protection does not.
+    let mut same = forge(PROMPT);
+    same.open(head("h1"), head("main"), digest(1)).unwrap();
+    let same = same.poll().unwrap().remove(0);
+    assert_eq!(same.object, got[0].object);
+    assert_eq!(same.semantic_key, got[0].semantic_key);
+    for other in [
+        forge_with(head("other"), head("main"), digest(1)),
+        forge_with(head("h1"), head("develop"), digest(1)),
+        forge_with(head("h1"), head("main"), digest(9)),
+    ] {
+        assert_eq!((&other.object, other.generation), (&got[0].object, 1));
+        assert_ne!(other.semantic_key, got[0].semantic_key, "{other:?}");
+    }
+}
+
+/// The first observation of a fresh forge whose first pull request is opened as given.
+fn forge_with(source: Head, base: Head, protection: Digest) -> Observation {
+    let mut f = forge(PROMPT);
+    f.open(source, base, protection).unwrap();
+    f.poll().unwrap().remove(0)
 }
 
 #[test]
@@ -216,7 +234,7 @@ fn a_rate_limit_answers_unavailable_and_does_not_eat_into_the_delay() {
     assert_eq!(f.poll(), Err(SourceError::Unavailable));
     assert_eq!(f.relist(), Err(SourceError::Unavailable));
     assert_eq!(f.permission(&actor("a")), Err(SourceError::Unavailable));
-    // Generation 2 is held back one answered poll; the throttled calls answered nothing.
+    // Generation 2 is held back one counted poll; the throttled calls are not counted.
     let first = f.poll().unwrap();
     assert_eq!(
         first.iter().map(|o| o.generation).collect::<Vec<_>>(),
@@ -246,4 +264,62 @@ fn a_forged_answer_is_refused_and_never_delivered_or_listed() {
     assert_eq!(f.relist(), Ok(vec![genuine]));
     f.push(&pull, head("h2")).unwrap();
     assert_eq!(f.poll().unwrap()[0].source_head, Some(head("h2")));
+}
+
+#[test]
+fn relist_keeps_the_highest_generation_whatever_the_emission_order() {
+    let mut f = forge(PROMPT);
+    let pull = f.open(head("h1"), head("main"), digest(1)).unwrap();
+    f.push(&pull, head("h2")).unwrap();
+    f.push(&pull, head("h3")).unwrap();
+    let emitted = f.poll().unwrap();
+    let newest = emitted[2].clone();
+    assert_eq!(newest.generation, 3);
+    // An older generation of the same object arrives after the newer one.
+    f.feed().emit(&emitted[0]);
+    f.feed().emit(&emitted[1]);
+    assert_eq!(f.relist(), Ok(vec![newest]));
+    // It is still delivered by poll, as emitted.
+    assert_eq!(f.poll(), Ok(emitted[..2].to_vec()));
+}
+
+#[test]
+fn reorder_alone_reverses_each_batch() {
+    for reorder in [false, true] {
+        let mut f = forge(Delivery {
+            duplicate: false,
+            reorder,
+            delay_polls: 0,
+        });
+        let pull = f.open(head("h1"), head("main"), digest(1)).unwrap();
+        f.push(&pull, head("h2")).unwrap();
+        f.push(&pull, head("h3")).unwrap();
+        let order: Vec<_> = f.poll().unwrap().iter().map(|o| o.generation).collect();
+        let expected = if reorder {
+            vec![3, 2, 1]
+        } else {
+            vec![1, 2, 3]
+        };
+        assert_eq!(order, expected, "reorder: {reorder}");
+    }
+}
+
+#[test]
+fn a_poll_that_receives_a_forged_answer_counts_towards_the_delay() {
+    let delivery = Delivery {
+        duplicate: false,
+        reorder: false,
+        delay_polls: 1,
+    };
+    let mut f = forge(delivery);
+    let pull = f.open(head("h1"), head("main"), digest(1)).unwrap();
+    f.push(&pull, head("h2")).unwrap();
+    let forged = f.relist().unwrap().remove(0);
+    f.feed().inject_forged(&forged);
+    // The forged poll counts: generation 1 was due at it and arrives at the next poll, and
+    // generation 2, held back one poll, arrives with it.
+    assert_eq!(f.poll(), Err(SourceError::Unauthenticated));
+    let next: Vec<_> = f.poll().unwrap().iter().map(|o| o.generation).collect();
+    assert_eq!(next, vec![1, 2]);
+    assert_eq!(f.feed().undelivered(), 0);
 }

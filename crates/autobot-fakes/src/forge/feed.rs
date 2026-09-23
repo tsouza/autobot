@@ -47,21 +47,23 @@ impl Signed {
 /// answers the provider's current state, which only authentic emissions change.
 ///
 /// Delivery follows the feed's [`Delivery`], deterministically. The `n`-th emitted
-/// observation, counting from zero, is held back for `n % (delay_polls + 1)` answered polls;
-/// when `duplicate` is set, every even-numbered one is delivered a second time, held back for
-/// the rest of the bound; when `reorder` is set, each poll delivers its batch last emitted
-/// first. An answered poll is one made while the provider is reachable that receives no forged
-/// answer, so every observation is delivered by the `delay_polls + 1`-th answered poll after it
-/// was emitted.
+/// observation, counting from zero, is held back for `n % (delay_polls + 1)` polls; when
+/// `duplicate` is set, every even-numbered one is delivered a second time, held back for the
+/// rest of the bound; when `reorder` is set, each poll delivers its batch last emitted first.
+/// Polls are counted as [`ObservationHarness`] counts them: every poll made while the provider
+/// is reachable and not rate-limited. A poll that receives a forged answer counts but delivers
+/// nothing else, and what was due at it is delivered by the next counted poll. So every
+/// observation is delivered by the `delay_polls + 1`-th counted poll after it was emitted, plus
+/// one more counted poll for each forged answer received in between.
 #[derive(Debug, Clone)]
 pub struct Feed {
     provider: ProviderName,
     delivery: Delivery,
     available: bool,
     throttled: u32,
-    answered: u32,
+    polls: u32,
     emitted: u64,
-    /// Undelivered answers and the answered-poll count at which each is due.
+    /// Undelivered answers and the poll count at which each is due.
     pending: Vec<(Signed, u32)>,
     forged: VecDeque<Signed>,
     /// For every remote object, its emitted observation with the highest generation.
@@ -77,7 +79,7 @@ impl Feed {
             delivery,
             available: true,
             throttled: 0,
-            answered: 0,
+            polls: 0,
             emitted: 0,
             pending: Vec::new(),
             forged: VecDeque::new(),
@@ -105,11 +107,11 @@ impl Feed {
         let delay = u32::try_from(n % (u64::from(bound) + 1)).unwrap_or(bound);
         let signed = Signed::new(observation.clone(), &SIGNING_KEY);
         if self.delivery.duplicate && n.is_multiple_of(2) {
-            let again = self.answered.saturating_add(bound - delay);
+            let again = self.polls.saturating_add(bound - delay);
             self.pending.push((signed.clone(), again));
         }
         self.pending
-            .push((signed, self.answered.saturating_add(delay)));
+            .push((signed, self.polls.saturating_add(delay)));
         match self.current.get(&observation.object) {
             Some(known) if known.generation >= observation.generation => {}
             _ => {
@@ -120,7 +122,7 @@ impl Feed {
     }
 
     /// Emits the observation of `object` at `generation` with the next event id, the semantic
-    /// key of `(provider, object, generation)` and the next observation time, and returns it.
+    /// key of what it states and the next observation time, and returns it.
     ///
     /// # Errors
     ///
@@ -134,14 +136,14 @@ impl Feed {
         protection_digest: Option<Digest>,
         fact: Fact,
     ) -> Result<Observation, EmptyText> {
-        let observation = Observation {
+        let mut observation = Observation {
             provider: self.provider.clone(),
             event_id: EventId::new(format!(
                 "{}-event-{}",
                 self.provider,
                 self.emitted.saturating_add(1)
             ))?,
-            semantic_key: semantic_key(&self.provider, object, generation),
+            semantic_key: Digest::from_bytes([0; 32]),
             object: object.clone(),
             generation,
             source_head,
@@ -150,6 +152,7 @@ impl Feed {
             observed_at: EPOCH.saturating_add(self.emitted),
             fact,
         };
+        observation.semantic_key = semantic_key(&observation);
         self.emit(&observation);
         Ok(observation)
     }
@@ -175,7 +178,7 @@ impl Feed {
 
     /// Rate-limits the next `calls` calls that reach the provider, polls, relists and the
     /// provider's own queries alike: each answers [`SourceError::Unavailable`], delivers
-    /// nothing and is not an answered poll.
+    /// nothing and is not a counted poll.
     pub fn throttle(&mut self, calls: u32) {
         self.throttled = self.throttled.saturating_add(calls);
     }
@@ -215,13 +218,13 @@ fn verified(answer: Vec<Signed>) -> Result<Vec<Observation>, SourceError> {
 impl ObservationSource for Feed {
     fn poll(&mut self) -> Result<Vec<Observation>, SourceError> {
         self.reach()?;
+        let now = self.polls;
+        self.polls = self.polls.saturating_add(1);
         if let Some(forged) = self.forged.pop_front() {
             return verified(vec![forged]);
         }
-        let now = self.answered;
         let (due, later): (Vec<_>, Vec<_>) = self.pending.drain(..).partition(|(_, at)| *at <= now);
         self.pending = later;
-        self.answered = self.answered.saturating_add(1);
         let mut answer: Vec<Signed> = due.into_iter().map(|(s, _)| s).collect();
         if self.delivery.reorder {
             answer.reverse();
@@ -292,13 +295,9 @@ impl<S: FeedSource> ObservationHarness for FeedHarness<S> {
     }
 }
 
-/// The semantic key of the fact that `object` is at `generation` at `provider`.
-fn semantic_key(provider: &ProviderName, object: &RemoteIdentity, generation: u64) -> Digest {
-    let mut bytes = Vec::new();
-    field(&mut bytes, provider.as_str().as_bytes());
-    field(&mut bytes, object.as_str().as_bytes());
-    field(&mut bytes, &generation.to_be_bytes());
-    Digest::from_bytes(Sha256::digest(&bytes).into())
+/// The semantic key of what `observation` states: SHA-256 of its [`fact_bytes`].
+fn semantic_key(observation: &Observation) -> Digest {
+    Digest::from_bytes(Sha256::digest(fact_bytes(observation)).into())
 }
 
 /// The signature of `observation` under `key`: SHA-256 of the key followed by
@@ -329,12 +328,23 @@ fn optional(out: &mut Vec<u8>, bytes: Option<&[u8]>) {
     }
 }
 
-/// Every field of `observation`, each length-prefixed, as a signature covers them.
+/// Every field of `observation`, each length-prefixed, as a signature covers them: the
+/// delivery's event id, semantic key and observation time, then its [`fact_bytes`].
 fn signed_bytes(o: &Observation) -> Vec<u8> {
     let mut out = Vec::new();
-    field(&mut out, o.provider.as_str().as_bytes());
     field(&mut out, o.event_id.as_str().as_bytes());
     field(&mut out, o.semantic_key.as_bytes());
+    field(&mut out, &o.observed_at.to_be_bytes());
+    out.extend(fact_bytes(o));
+    out
+}
+
+/// What `observation` states, each field length-prefixed: the provider, the object, its
+/// generation, heads and protection, and the fact. Two deliveries of one fact encode alike
+/// whatever their event ids and observation times.
+fn fact_bytes(o: &Observation) -> Vec<u8> {
+    let mut out = Vec::new();
+    field(&mut out, o.provider.as_str().as_bytes());
     field(&mut out, o.object.as_str().as_bytes());
     field(&mut out, &o.generation.to_be_bytes());
     optional(
@@ -351,7 +361,6 @@ fn signed_bytes(o: &Observation) -> Vec<u8> {
             .as_ref()
             .map(|d| d.as_bytes().as_slice()),
     );
-    field(&mut out, &o.observed_at.to_be_bytes());
     match &o.fact {
         Fact::Heads => out.push(0),
         Fact::Ci(run) => {

@@ -25,8 +25,9 @@
 //! - A pull request is one remote object at generation 1 when opened; each push and each
 //!   protection change advances its generation by one. A comment is its own remote object at
 //!   generation 1 and carries the heads of its pull request when it was written.
-//! - The semantic key is SHA-256 over the provider, the object and the generation, each
-//!   length-prefixed: two deliveries of one object at one generation are one fact.
+//! - The semantic key is SHA-256 over what an observation states: the provider, the object,
+//!   its generation, heads and protection, and the fact, each length-prefixed. Two deliveries
+//!   of one fact share it, and observations that state different things do not.
 //! - An answer is signed with SHA-256 over a key shared by the fake provider and its source,
 //!   followed by every field of the observation, each length-prefixed. It detects a forged or
 //!   altered answer in tests and claims no cryptographic strength.
