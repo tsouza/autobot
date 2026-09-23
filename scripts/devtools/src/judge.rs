@@ -1,13 +1,17 @@
 //! The `judge` check: asks the typed-question service whether a pull request violates the
 //! charter's `judged` entries, and blocks only on a confident "violates".
 //!
-//! [`run`] reads the pull request's title, body and changed files, and the task issue its body
-//! links with `Closes #N`, through the GitHub client, and the `judged` entries of `CHARTER.md`
+//! [`run`] reads the pull request's title, body and changed files ([`scope::changed_files`]),
+//! and the task issue its body links with `Closes #N` ([`scope::capsule::linked_issue`]),
+//! through the GitHub client, and the `judged` entries of `CHARTER.md`
 //! through [`charter::judged_entries`]. It sends one request to `POST {base}/v1/systemone`,
 //! where `base` is [`API_BASE_VAR`] or [`DEFAULT_API_BASE`], with the bearer token in
 //! [`API_KEY_VAR`]. The request's state labels every input by trust: the charter entries are
 //! `CANONICAL_AUTOBOT_FACT`, the pull request text and the issue are
-//! `UNTRUSTED_ISSUE_OR_PR_TEXT`, the diff is `UNTRUSTED_REPOSITORY_CONTENT`. Each entry is one
+//! `UNTRUSTED_ISSUE_OR_PR_TEXT`, the changed paths and the diff are
+//! `UNTRUSTED_REPOSITORY_CONTENT`. The changed paths are listed on their own, one per line,
+//! so an entry about the extent of a change, such as R-2 (one task per pull request), is
+//! judged against the whole list even when the diff is long. Each entry is one
 //! `choice` question, keyed by its id, over the [`OPTIONS`] complies, violates and unsure.
 //!
 //! The decision is deterministic code over the answer ([`decide`]):
@@ -57,8 +61,8 @@ pub mod charter;
 pub mod comment;
 
 use crate::github::settings::Api;
-use crate::github::{Client, Method, pages, pr_number};
-use crate::{Error, Result};
+use crate::github::{Client, Method, pr_number};
+use crate::{Error, Result, scope};
 use charter::Entry;
 use serde_json::{Map, Value, json};
 use std::fmt::Write as _;
@@ -87,9 +91,6 @@ const COMPLIES: &str = "complies";
 const VIOLATES: &str = "violates";
 const UNSURE: &str = "unsure";
 
-/// The files GitHub lists for a pull request at most; a longer list is cut.
-const GITHUB_FILE_LIMIT: usize = 3000;
-
 /// How long one service call may take in total.
 const TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -115,6 +116,9 @@ pub struct Inputs {
     pub issue: Option<Issue>,
     /// The number the body links when GitHub has no such issue (404).
     pub missing_issue: Option<u64>,
+    /// The changed paths, one line per file: the path, or the previous and the new path of
+    /// a rename, and GitHub's status.
+    pub paths: String,
     /// The diff, one section per changed file.
     pub diff: String,
     /// Whether GitHub left part of the diff out: a changed file without a patch, or a file
@@ -122,33 +126,8 @@ pub struct Inputs {
     pub diff_truncated: bool,
 }
 
-/// The number of the first issue `body` links with `Closes`, `Fixes` or `Resolves` (any case)
-/// followed by `#N`.
-#[must_use]
-pub fn linked_issue(body: &str) -> Option<u64> {
-    let lower = body.to_ascii_lowercase();
-    let mut first: Option<(usize, u64)> = None;
-    for keyword in ["closes #", "fixes #", "resolves #"] {
-        let mut from = 0;
-        while let Some(at) = lower[from..].find(keyword).map(|i| i + from) {
-            let digits: String = lower[at + keyword.len()..]
-                .chars()
-                .take_while(char::is_ascii_digit)
-                .collect();
-            from = at + keyword.len();
-            if let Ok(n) = digits.parse()
-                && first.is_none_or(|(pos, _)| at < pos)
-            {
-                first = Some((at, n));
-                break;
-            }
-        }
-    }
-    first.map(|(_, n)| n)
-}
-
-/// Reads pull request `pr`: its title and body, its changed files as a diff, and the task
-/// issue its body links. A linked issue GitHub answers with 404 is recorded in
+/// Reads pull request `pr`: its title and body, its changed paths and files as a diff, and the
+/// task issue its body links. A linked issue GitHub answers with 404 is recorded in
 /// [`Inputs::missing_issue`] instead of failing.
 ///
 /// # Errors
@@ -160,31 +139,29 @@ pub fn read_inputs(api: &impl Api, pr: u64) -> Result<Inputs> {
         return Err(Error::Parse(format!("pulls/{pr}: no `title`")));
     };
     let body = pull["body"].as_str().unwrap_or_default();
-    let files = pages(api, &format!("pulls/{pr}/files"))?;
+    let (files, cut) = scope::changed_files(api, pr)?;
     let mut diff = String::new();
-    let mut diff_truncated = files.len() >= GITHUB_FILE_LIMIT;
+    let mut paths = String::new();
+    let mut diff_truncated = cut;
     for file in &files {
-        let Some(name) = file["filename"].as_str() else {
-            return Err(Error::Parse(format!(
-                "pulls/{pr}/files: a file has no `filename`"
-            )));
+        let (name, status) = (&file.path, &file.status);
+        let _ = match &file.previous {
+            Some(old) => writeln!(paths, "{old} -> {name} ({status})")
+                .and_then(|()| writeln!(diff, "--- {old}\n+++ {name} ({status})")),
+            None => writeln!(paths, "{name} ({status})")
+                .and_then(|()| writeln!(diff, "+++ {name} ({status})")),
         };
-        let status = file["status"].as_str().unwrap_or("changed");
-        let _ = match file["previous_filename"].as_str() {
-            Some(old) => writeln!(diff, "--- {old}\n+++ {name} ({status})"),
-            None => writeln!(diff, "+++ {name} ({status})"),
-        };
-        match file["patch"].as_str() {
+        match &file.patch {
             Some(patch) => {
                 diff.push_str(patch);
                 diff.push('\n');
             }
-            None if file["changes"].as_u64().unwrap_or(0) > 0 => diff_truncated = true,
+            None if file.changes > 0 => diff_truncated = true,
             None => diff.push_str("(no textual diff)\n"),
         }
     }
     let (mut issue, mut missing_issue) = (None, None);
-    if let Some(number) = linked_issue(body) {
+    if let Some(number) = scope::capsule::linked_issue(body) {
         match api.request(Method::Get, &format!("issues/{number}"), None) {
             Ok(found) => {
                 let Some(title) = found["title"].as_str() else {
@@ -196,7 +173,7 @@ pub fn read_inputs(api: &impl Api, pr: u64) -> Result<Inputs> {
                     body: found["body"].as_str().unwrap_or_default().to_owned(),
                 });
             }
-            Err(e) if is_not_found(&e) => missing_issue = Some(number),
+            Err(e) if scope::is_not_found(&e) => missing_issue = Some(number),
             Err(e) => return Err(e),
         }
     }
@@ -205,15 +182,10 @@ pub fn read_inputs(api: &impl Api, pr: u64) -> Result<Inputs> {
         body: body.to_owned(),
         issue,
         missing_issue,
+        paths,
         diff,
         diff_truncated,
     })
-}
-
-/// Whether `error` is GitHub's answer for a resource that does not exist, as the client
-/// reports a 404 status.
-fn is_not_found(error: &Error) -> bool {
-    matches!(error, Error::Http(msg) if msg.ends_with("http status: 404"))
 }
 
 /// The hex SHA-256 of `bytes`.
@@ -227,9 +199,9 @@ fn sha256(bytes: &[u8]) -> String {
         })
 }
 
-/// The state of the request: the charter entries, the pull request text, the linked issue
-/// and the diff, each in a section whose marker names its trust label. The markers carry a
-/// tag derived from the untrusted inputs, which those inputs cannot contain.
+/// The state of the request: the charter entries, the pull request text, the linked issue,
+/// the changed paths and the diff, each in a section whose marker names its trust label. The
+/// markers carry a tag derived from the untrusted inputs, which those inputs cannot contain.
 #[must_use]
 pub fn state(entries: &[Entry], inputs: &Inputs) -> String {
     let issue_text = inputs
@@ -240,6 +212,7 @@ pub fn state(entries: &[Entry], inputs: &Inputs) -> String {
         inputs.title.as_str(),
         inputs.body.as_str(),
         issue_text.as_deref().unwrap_or_default(),
+        inputs.paths.as_str(),
         inputs.diff.as_str(),
     ]
     .join("\0");
@@ -276,6 +249,11 @@ pub fn state(entries: &[Entry], inputs: &Inputs) -> String {
             "The pull request links no task issue.",
         ),
     }
+    section(
+        "UNTRUSTED_REPOSITORY_CONTENT",
+        "changed paths",
+        &inputs.paths,
+    );
     section(
         "UNTRUSTED_REPOSITORY_CONTENT",
         "pull request diff",
@@ -764,6 +742,7 @@ mod tests {
                 title: "devtools: a thing".to_owned(),
                 body: "Objective".to_owned(),
             }),
+            paths: "a.rs (added)\n".to_owned(),
             diff: "+++ a.rs (added)\n@@ -0,0 +1 @@\n+fn a() {}\n".to_owned(),
             missing_issue: None,
             diff_truncated: false,
@@ -1116,6 +1095,10 @@ mod tests {
                 "#9 devtools: a thing\nObjective",
             ),
             (
+                marker("UNTRUSTED_REPOSITORY_CONTENT", "changed paths"),
+                "a.rs (added)\n",
+            ),
+            (
                 marker("UNTRUSTED_REPOSITORY_CONTENT", "pull request diff"),
                 "+++ a.rs (added)",
             ),
@@ -1155,15 +1138,6 @@ mod tests {
                 .count(),
             1
         );
-    }
-
-    #[test]
-    fn linked_issue_takes_the_first_closing_keyword() {
-        assert_eq!(linked_issue("Closes #315\n\nFixes #2"), Some(315));
-        assert_eq!(linked_issue("see #4; fixes #12, closes #13"), Some(12));
-        assert_eq!(linked_issue("RESOLVES #7"), Some(7));
-        assert_eq!(linked_issue("closes #x, closes #8"), Some(8));
-        assert_eq!(linked_issue("refs #5"), None);
     }
 
     /// Serves recorded GET responses by path, fails a path in `status` with that HTTP status
@@ -1214,6 +1188,10 @@ mod tests {
                 title: "charter: mark entries".to_owned(),
                 body: String::new(),
             })
+        );
+        assert_eq!(
+            got.paths,
+            "CHARTER.md (modified)\nold.md -> new.md (renamed)\nlogo.png (added)\n"
         );
         assert_eq!(
             got.diff,

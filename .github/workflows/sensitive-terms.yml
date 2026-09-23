@@ -1,0 +1,39 @@
+# The `sensitive-terms` check: fails a pull request whose diff, commit messages or text match
+# a term of the list in the `SENSITIVE_TERMS` repository secret, printing only where each
+# match is. It reads a secret, so it is never one of the ruleset's required checks (CHARTER
+# L-5); without the secret, as on pull requests from forks, it passes and says that nothing was
+# screened. The script and recipe are checked out from the default branch, so a pull request
+# cannot change the screen; the pull request's text, commits and diff are read from the GitHub
+# API when the job runs.
+name: sensitive-terms
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# A newer event on the same pull request supersedes the running screen.
+concurrency:
+  group: sensitive-terms-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sensitive-terms:
+    runs-on: [self-hosted, autobot-light]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with:
+          tool: just,rust-script
+      - run: just toolchain
+      - run: just sensitive-terms "$PR"
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SENSITIVE_TERMS: ${{ secrets.SENSITIVE_TERMS }}

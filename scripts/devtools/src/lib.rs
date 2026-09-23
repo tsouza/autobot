@@ -27,6 +27,10 @@ pub mod layering;
 pub mod ledger;
 pub mod markdown;
 pub mod process;
+#[cfg(feature = "github")]
+pub mod scope;
+#[cfg(all(feature = "github", feature = "hooks"))]
+pub mod sensitive;
 pub mod worktree;
 
 /// Error type shared by every module.
