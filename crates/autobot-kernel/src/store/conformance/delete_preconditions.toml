@@ -1,0 +1,64 @@
+name = "delete-preconditions"
+summary = "A delete conditioned on a resource version the object has moved past, or on a UID other than the object's, is refused and leaves the object; at the current resource version and UID it removes the object, and a second delete finds nothing."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "a"
+domain = "zero"
+expect = "initialized"
+
+[[steps]]
+do = "read"
+object = "a"
+label = "before"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c1"
+lane = "DOMAIN"
+pin = 0
+fields = "one"
+expect = "committed"
+
+[[steps]]
+do = "remove"
+from = "before"
+expect = "conflict"
+
+[[steps]]
+do = "read"
+object = "a"
+label = "current"
+
+[[steps]]
+do = "remove"
+from = "current"
+uid = "an-earlier-incarnation"
+expect = "conflict"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 1
+domain = "one"
+
+[[steps]]
+do = "remove"
+from = "current"
+expect = "removed"
+
+[[steps]]
+do = "check"
+object = "a"
+absent = true
+
+[[steps]]
+do = "remove"
+from = "current"
+expect = "not_found"

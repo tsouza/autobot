@@ -8,19 +8,21 @@
 //! the same machines, and the [`conformance`] suite, itself such a machine, checks every driver.
 //!
 //! - [`StoreOp`] is the whole vocabulary: a linearizable `Get`, create-by-name, a status update
-//!   conditioned on the object's UID and resource version, `List` for relisting, and `Watch`,
-//!   whose [`WatchEvent`]s name an object and carry none of its state.
+//!   and a delete, each conditioned on the object's UID and resource version, `List` for
+//!   relisting, and `Watch`, whose [`WatchEvent`]s name an object and carry none of its state.
 //! - [`Commit`] runs one domain or control commit of one command (KERNEL §1); [`Initialize`]
 //!   writes an aggregate's first status; [`ClearSlot`] is the reconciliation-only CAS that marks
-//!   a pending slot `CLEARED`; [`Create`] creates by name (KERNEL §2); [`Triggers`] turns watch
-//!   events and relists into the set of objects to read.
+//!   a pending slot `CLEARED`; [`Create`] creates by name and [`Delete`] deletes behind a
+//!   tombstone (KERNEL §2); [`Triggers`] turns watch events and relists into the set of objects
+//!   to read.
 //! - A write that returns `UNCERTAIN` is resolved only by reading: every protocol follows it
 //!   with a `Get` of the same object and decides from what it reads. A domain commit that
 //!   finds its command in the pending slot, or a control commit that finds it in the ring, has
-//!   committed; a create that finds its own origin under the name has created. A commit that
-//!   finds neither its command nor a moved lane revision has not applied, and decides again
-//!   from the new read: if the uncertain write still lands later, it lands only on the resource
-//!   version it was conditioned on, where the new write is the same write. A commit that finds
+//!   committed; a create that finds its own origin under the name has created; a delete that
+//!   finds its target absent once its tombstone holds has deleted. A commit that finds neither
+//!   its command nor a moved lane revision has not applied, and decides again from the new
+//!   read: if the uncertain write still lands later, it lands only on the resource version it
+//!   was conditioned on, where the new write is the same write. A commit that finds
 //!   the lane revision moved without its command ends [`CommitOutcome::Passed`], which only
 //!   the command's receipt can resolve.
 //!
@@ -62,11 +64,30 @@
 //!   receipt protocol.
 //! - Every aggregate's envelope carries `control_revision`, zero without a control lane, as
 //!   [`crate::status`] records for #327.
+//! - A delete reads its target's create receipt and refuses unless [`ReceiptCheck`] judges it
+//!   terminal; an absent create receipt refuses too. How a `CommandReceipt` encodes its state
+//!   belongs to the command path (#86), so the caller judges it. How long a create receipt is
+//!   kept beside a live target is outside KERNEL §2, which states only the replay-window and
+//!   pending-effect retention.
+//! - The tombstone is written before the target is deleted, by name as [`Create`] writes, and
+//!   its origin is the target's: the create receipt UID, input digest and context the target
+//!   was created with, which KERNEL §2 retains with the tombstone. At every point the target's
+//!   name is held by the target, or the tombstone proves it was deleted, so a crash between the
+//!   writes never leaves a name absent without its tombstone. A tombstone whose target still
+//!   exists is a delete in progress, which a fresh protocol for the same request completes.
+//! - A delete is conditioned on the target's UID and the resource version it read, like a
+//!   status write; after a conflict it reads again and deletes the same incarnation at the
+//!   resource version read. The create receipt is not read again: a terminal receipt cannot
+//!   be rewritten.
+//! - The store contract writes the tombstone's spec as the caller encodes it; what a replayed
+//!   create does on finding a tombstone is the command path's (#86): [`Create`] itself still
+//!   creates on a free name.
 
 mod cas;
 mod commit;
 pub mod conformance;
 mod create;
+mod delete;
 mod object;
 mod op;
 mod watch;
@@ -77,6 +98,7 @@ pub use commit::{
     DomainChange, EventFields, GuardRefusal, Initialize, InitializeOutcome, Pin, Transition,
 };
 pub use create::{Create, CreateOutcome};
+pub use delete::{Delete, DeleteOutcome, DeleteRequest, ReceiptCheck};
 pub use object::{Kind, Object, ObjectKey, Origin, ResourceVersion, Status};
 pub use op::{OpKind, Protocol, ProtocolError, Step, StoreOp, StoreResult, WatchEvent};
 pub use watch::Triggers;

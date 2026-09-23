@@ -2,10 +2,11 @@
 //! `autobot_kernel::store` against a map in memory and injects the faults of
 //! [`Fault`] on request.
 //!
-//! [`MemStore::execute`] performs one [`StoreOp`]. Every write that applies assigns the object a
-//! new resource version from one counter for the whole store and appends a watch event, so a
-//! `Watch` after resource version `v` returns the events of every write after `v`. `Get` and
-//! `List` read the map itself, the store's only state, so every read is linearizable.
+//! [`MemStore::execute`] performs one [`StoreOp`]. Every write that applies, a delete included,
+//! takes a new resource version from one counter for the whole store and appends a watch
+//! event, so a `Watch` after resource version `v` returns the events of every write after `v`.
+//! `Get` and `List` read the map itself, the store's only state, so every read is
+//! linearizable.
 //!
 //! Faults are armed with [`MemStore::arm`] and each fires once; [`MemStore::take_fired`] reports
 //! each fault that fired, as it was armed:
@@ -166,6 +167,11 @@ impl MemStore {
                 resource_version,
                 status,
             } => self.update(&key, &uid, &resource_version, status),
+            StoreOp::Delete {
+                key,
+                uid,
+                resource_version,
+            } => self.delete(&key, &uid, &resource_version),
             StoreOp::List { kind, namespace } => self.list(&kind, &namespace),
             StoreOp::Watch {
                 kind,
@@ -232,6 +238,28 @@ impl MemStore {
                     }
                     None => StoreResult::NotFound,
                 }
+            }
+        }
+    }
+
+    /// Deletes `key` if its UID and resource version match; the result holds the object as it
+    /// was.
+    fn delete(
+        &mut self,
+        key: &ObjectKey,
+        uid: &Uid,
+        resource_version: &ResourceVersion,
+    ) -> StoreResult {
+        match self.objects.get(key) {
+            None => StoreResult::NotFound,
+            Some(o) if o.uid != *uid || o.resource_version != *resource_version => {
+                StoreResult::Conflict
+            }
+            Some(_) => {
+                self.write(key);
+                self.objects
+                    .remove(key)
+                    .map_or(StoreResult::NotFound, |o| StoreResult::Object(Box::new(o)))
             }
         }
     }

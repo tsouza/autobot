@@ -75,6 +75,8 @@ fn four_writes() -> Vec<ScriptStep> {
             slot: Some("cleared".to_owned()),
             slot_command: Some("c1".to_owned()),
             ring_entries: None,
+            create_receipt: None,
+            absent: false,
         }),
     ]
 }
@@ -171,6 +173,98 @@ fn the_suite_fails_a_driver_that_accepts_a_stale_resource_version() {
     let failure = run_ignoring_resource_versions(&script("control-between-read-and-write"))
         .expect_err("the accept write must not land over the hold");
     assert!(failure.message.contains("expected refused"), "{failure}");
+}
+
+/// A driver that deletes whatever holds the name, ignoring the UID and resource-version
+/// conditions of deletes.
+fn run_ignoring_delete_conditions(script: &Script) -> Result<(), Failure> {
+    let mut store = MemStore::new();
+    let mut script_run = ScriptRun::new(script, ring());
+    loop {
+        match script_run.step() {
+            Action::Done(result) => return result,
+            Action::Arm(fault) => store.arm(fault),
+            Action::Op(StoreOp::Delete {
+                key,
+                uid,
+                resource_version,
+            }) => {
+                let (uid, resource_version) = store
+                    .object(&key)
+                    .map_or((uid, resource_version), |current| {
+                        (current.uid.clone(), current.resource_version.clone())
+                    });
+                let op = StoreOp::Delete {
+                    key,
+                    uid,
+                    resource_version,
+                };
+                if let Execution::Result(result) = store.execute(op) {
+                    script_run.resume(result);
+                }
+            }
+            Action::Op(op) => {
+                if let Execution::Result(result) = store.execute(op) {
+                    script_run.resume(result);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_suite_fails_a_driver_that_ignores_delete_conditions() {
+    let failure = run_ignoring_delete_conditions(&script("delete-preconditions"))
+        .expect_err("a stale delete must be caught");
+    assert!(failure.message.contains("expected conflict"), "{failure}");
+    assert_eq!(
+        failure.step, 4,
+        "the stale resource version is the first refused delete"
+    );
+}
+
+#[test]
+fn a_delete_removes_the_object_and_records_a_watch_event() {
+    let mut store = MemStore::new();
+    let key = ObjectKey {
+        kind: conformance::KIND.parse().expect("kind"),
+        namespace: conformance::NAMESPACE.parse().expect("namespace"),
+        name: "a".parse().expect("name"),
+    };
+    let origin = autobot_kernel::store::Origin {
+        create_receipt_uid: "r".parse().expect("uid"),
+        input_digest: autobot_kernel::digest::digest("").expect("digest"),
+        context_uid: "ctx".parse().expect("uid"),
+    };
+    let create = StoreOp::Create {
+        key: key.clone(),
+        spec: String::new(),
+        origin,
+    };
+    let Execution::Result(StoreResult::Object(created)) = store.execute(create) else {
+        panic!("the create applies");
+    };
+    let delete = StoreOp::Delete {
+        key: key.clone(),
+        uid: created.uid.clone(),
+        resource_version: created.resource_version.clone(),
+    };
+    assert_eq!(
+        store.execute(delete),
+        Execution::Result(StoreResult::Object(created.clone()))
+    );
+    assert!(store.object(&key).is_none());
+    let watch = StoreOp::Watch {
+        kind: key.kind.clone(),
+        namespace: key.namespace.clone(),
+        since: created.resource_version.clone(),
+    };
+    let Execution::Result(StoreResult::Events { events, .. }) = store.execute(watch) else {
+        panic!("the watch answers");
+    };
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].key, key);
+    assert_ne!(events[0].resource_version, created.resource_version);
 }
 
 #[test]
