@@ -49,6 +49,10 @@ check-design:
 check-retired-terms:
     {{rs}} scripts/retired_terms.rs .
 
+# Check the crate dependency rules: layers, test-only crates and thin binaries.
+layering:
+    {{rs}} scripts/layering.rs .
+
 # Check traceability: I-n, F-n, fixture groups, owning tests and model invariants.
 # Arguments: none, `--closed G-X`, `--awaiting #N` or `--diff`.
 [positional-arguments]
@@ -57,6 +61,9 @@ trace-lint *args:
 
 # Everything CI checks, locally: every CI job.
 ci: ci-fmt ci-clippy ci-test ci-doc ci-deny ci-machete
+
+# Everything CI checks, locally.
+ci: fmt-check clippy layering test doc deny machete
 
 # Apply the ruleset and repository settings to GitHub; `--dry-run` only prints the diff.
 repo-settings *args:
@@ -75,8 +82,8 @@ main-red *args:
 # CI job: formatting.
 ci-fmt: fmt-check
 
-# CI job: lints.
-ci-clippy: clippy
+# CI job: lints and the crate dependency rules.
+ci-clippy: clippy layering
 
 # CI job: tests, the design-set check, the retired-term check, the traceability lint (stages 1
 # to 3, stage 2 for every group with a fixture directory) and its diff rule.

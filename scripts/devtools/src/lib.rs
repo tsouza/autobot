@@ -13,6 +13,7 @@ pub mod github;
 #[cfg(feature = "hooks")]
 pub mod hooks;
 pub mod kind;
+pub mod layering;
 pub mod markdown;
 pub mod process;
 pub mod worktree;
