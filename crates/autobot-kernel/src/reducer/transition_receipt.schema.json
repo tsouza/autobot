@@ -231,6 +231,16 @@
           "description": "A `judged` \"complies\" never satisfies the `review` backstop.",
           "type": "string",
           "const": "judged-not-review-backstop"
+        },
+        {
+          "description": "No accept is admitted from the intake-submitter identity.",
+          "type": "string",
+          "const": "intake-submitter-cannot-accept"
+        },
+        {
+          "description": "An `Intake` reaches `PROPOSED` only with every repository forge-verified.",
+          "type": "string",
+          "const": "forge-verified-before-proposed"
         }
       ]
     },

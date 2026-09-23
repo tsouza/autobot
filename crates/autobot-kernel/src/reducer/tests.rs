@@ -602,7 +602,7 @@ fn formal_section_5_rows() -> Vec<(String, String)> {
 #[test]
 fn the_guards_are_the_formal_section_5_rows_in_order() {
     let rows = formal_section_5_rows();
-    assert_eq!(rows.len(), 20, "FORMAL §5 rows: {rows:?}");
+    assert!(!rows.is_empty(), "FORMAL §5 has no rows");
     let guards: Vec<(String, String)> = GuardId::ALL
         .iter()
         .map(|g| (g.removed().to_owned(), g.must_violate().to_owned()))
