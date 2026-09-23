@@ -20,6 +20,10 @@ checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 [[package]]
 name = "autobot-adapters"
 version = "0.0.0"
+dependencies = [
+ "autobot-kernel",
+ "sha2",
+]
 
 [[package]]
 name = "autobot-api"
