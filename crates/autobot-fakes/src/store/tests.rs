@@ -458,3 +458,49 @@ fn a_late_write_lands_right_after_the_next_read_is_answered() {
     );
     assert!(store.object(&key).is_some(), "applied right after the read");
 }
+
+#[test]
+fn a_crash_armed_after_three_writes_fires_on_the_third_and_is_reported_as_armed() {
+    let armed = Fault::Crash {
+        after_writes: NonZeroU32::new(3).expect("three is not zero"),
+    };
+    let mut store = MemStore::new();
+    store.arm(armed);
+    let create = |name: &str| StoreOp::Create {
+        key: ObjectKey {
+            kind: conformance::KIND.parse().expect("kind"),
+            namespace: conformance::NAMESPACE.parse().expect("namespace"),
+            name: name.parse().expect("name"),
+        },
+        spec: String::new(),
+        origin: autobot_kernel::store::Origin {
+            create_receipt_uid: "r".parse().expect("uid"),
+            input_digest: autobot_kernel::digest::digest("").expect("digest"),
+            context_uid: "ctx".parse().expect("uid"),
+        },
+    };
+    for name in ["first", "second"] {
+        assert!(
+            matches!(
+                store.execute(create(name)),
+                Execution::Result(StoreResult::Object(_))
+            ),
+            "write {name} applies and reports its result"
+        );
+        assert_eq!(
+            store.take_fired(),
+            Vec::new(),
+            "no crash before the third write"
+        );
+    }
+    assert_eq!(store.execute(create("third")), Execution::Crashed);
+    assert_eq!(store.take_fired(), vec![armed]);
+    assert_eq!(store.version, 3, "the crashed write applied");
+    assert!(
+        matches!(
+            store.execute(create("fourth")),
+            Execution::Result(StoreResult::Object(_))
+        ),
+        "the crash fired once"
+    );
+}

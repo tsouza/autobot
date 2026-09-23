@@ -65,7 +65,9 @@
 //!   receipt protocol.
 //! - Every aggregate's envelope carries `control_revision`, zero without a control lane, as
 //!   [`crate::status`] records for #327.
-//! - A delete reads its target's create receipt and refuses unless [`ReceiptCheck`] judges it
+//! - A delete refuses, before reading anything more, a target whose origin names another create
+//!   receipt UID than the request's, so the request pins that UID as it pins the target's.
+//!   It then reads the target's create receipt and refuses unless [`ReceiptCheck`] judges it
 //!   terminal; an absent create receipt refuses too. How a `CommandReceipt` encodes its state
 //!   belongs to the command path (#86), so the caller judges it. How long a create receipt is
 //!   kept beside a live target is outside KERNEL §2, which states only the replay-window and

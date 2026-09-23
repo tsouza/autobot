@@ -67,3 +67,12 @@ fn a_poll_refuses_an_answer_whose_event_id_semantic_key_or_observation_time_was_
         assert_eq!(feed.poll(), Err(SourceError::Unauthenticated));
     }
 }
+
+#[test]
+fn a_signature_is_the_hmac_sha256_of_the_signed_bytes() {
+    let o = observation("approve");
+    assert_eq!(
+        sign(&SIGNING_KEY, &o),
+        crate::hmac_sha256(&SIGNING_KEY, &signed_bytes(&o))
+    );
+}

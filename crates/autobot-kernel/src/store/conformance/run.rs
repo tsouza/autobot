@@ -364,7 +364,15 @@ impl<'s> ScriptRun<'s> {
 
     /// The frame that runs `step`.
     fn start(&mut self, step: &ScriptStep) -> Result<Frame, String> {
-        let mut interleave = None;
+        let inner = match step {
+            ScriptStep::Commit(s) => s.interleave.as_deref(),
+            ScriptStep::Delete(s) => s.interleave.as_deref(),
+            _ => None,
+        };
+        let interleave = match inner {
+            Some(inner) if !self.interleaved => Some(self.commit(inner)?),
+            _ => None,
+        };
         let main = match step {
             ScriptStep::Create(s) => {
                 let receipt = s
@@ -398,24 +406,12 @@ impl<'s> ScriptRun<'s> {
                     expect: s.expect.clone(),
                 }
             }
-            ScriptStep::Commit(s) => {
-                if let Some(inner) = &s.interleave
-                    && !self.interleaved
-                {
-                    interleave = Some(self.commit(inner)?);
-                }
-                self.commit(s)?
-            }
+            ScriptStep::Commit(s) => self.commit(s)?,
             ScriptStep::Clear(s) => Machine::Clear {
                 protocol: ClearSlot::new(key(&s.object)?, self.uid(&s.object)?, parse(&s.command)?),
                 expect: s.expect.clone(),
             },
             ScriptStep::Delete(s) => {
-                if let Some(inner) = &s.interleave
-                    && !self.interleaved
-                {
-                    interleave = Some(self.commit(inner)?);
-                }
                 let named = |given: &Option<String>, prefix: &str| {
                     given
                         .clone()
