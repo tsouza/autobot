@@ -85,7 +85,7 @@ GraphActivationReceipt = [uid, plan_uid, plan_revision, snapshot_digest, member_
                         work_context_commit_sequence]
 PlanRevisionState    = [plan_uid, revision, state]
 EvidenceBundle       = [uid, candidate_digest, base_head, head, plan_revision, scope_digest,
-                        charter_digest, waivers, criteria_digest, environment_digest,
+                        charter_digest, criteria_digest, environment_digest,
                         provider_runs, ci_attestations, review_attestations, reviewer_identity,
                         remote_generation, expiry, state]
 IntegrationBasis     = [uid, plan_uid, basis_generation, source_heads, base_head, overlap_set,
@@ -272,7 +272,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 
 **I-8 Judgment**
 - F-31 Every `Decision.selected` is a member of the eligible set computed before the question; no decision grants credential, scope, budget, acceptance or merge; an absent judge takes the conservative branch and widens nothing.
-- F-41 *Charter authority.* Only a human principal accepts a charter revision or any of its entries; a model output never promotes a candidate entry; no law is waived; a rule is waived only by a `Decision` naming a human approver, a reason and an expiry, scoped to one plan revision or one task, and no agent grants one.
+- F-41 *Charter authority.* Only a human principal accepts a charter revision or any of its entries; a model output never promotes a candidate entry; no law is waived, and no agent grants a waiver.
 - F-42 *Block-only judgment.* A `judged` answer can only block: "violates" above the entry's threshold blocks the candidate and opens a `Finding`; "complies" satisfies nothing the `review` backstop has not; an outage or abstention leaves the backstop as the only check, never a pass.
 
 **I-9 Ledger** — F-32 A terminal `TaskRun` whose `record_deadline` has passed has `expected_records.outcome` and `.usage` each `RECORDED` or `GAP`, and no `TaskRun` is counted by any outcome or cost computation while either is `PENDING`; a `CENSORED` receipt carries `min(reservation ceiling, rate-card bound)` and counts at it; an `UNKNOWN` reservation stays held.

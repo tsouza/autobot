@@ -86,7 +86,7 @@ A **charter** says what must be true of all work, whatever plan it serves: its C
 
 **Content.** A charter revision has six sections: Identity, Constitution, Rules, Conventions, Vocabulary and the project's Non-goals. Every entry has a stable id (L-n for a law, R-n for a rule, C-n for a convention), one enforcement mode and a short timeless statement. Rationale goes in a companion background section of the revision, never in an entry.
 
-**Laws and rules.** The absolute guardrails form the project's **Constitution**; each is a **law**. A law changes only through a new charter revision authored by a human, and it is never waived. Every other guardrail is a **rule**. An exception to a rule is a **waiver**: a `Decision` scoped to one plan revision or one task, recording a named human approver, a reason and an expiry, and visible in the `EvidenceBundle` of the work it covers. No agent can grant a waiver.
+**Laws and rules.** The absolute guardrails form the project's **Constitution**; each is a **law**. A law changes only through a new charter revision authored by a human, and it is never waived. Every other guardrail is a **rule**. An exception to a rule is a **waiver** `Decision` (DEFERRED, M0 §5); no agent can grant a waiver.
 
 **Enforcement modes.** Each entry declares exactly one mode, and the human author chooses it:
 
@@ -107,7 +107,7 @@ A law is never `advisory`.
 
 **Pinning.** Plans pin a charter revision at acceptance; KERNEL §5 states how a later change reaches pinned work.
 
-**Bootstrap.** A human writes the context's `Charter` before the context's first project. A project charter revision is a precondition of plan acceptance (§1 step 6):
+**Bootstrap.** A human writes the context's `Charter` before the context's first project. An accepted project charter revision is a precondition of plan acceptance (§1 step 6):
 
 - from a design document, intake drafts it;
 - from a work-in-progress repository (§2), intake extracts candidate entries, each labelled with its source.
