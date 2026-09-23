@@ -312,17 +312,29 @@ mod tests {
 
     const WORKFLOW: &str = include_str!("../../../.github/workflows/labels.yml");
 
-    #[test]
-    fn the_labels_job_checks_the_title_from_the_event_through_the_environment() {
+    /// The pr-title step of the `labels` job.
+    fn title_step() -> &'static str {
         let jobs = WORKFLOW.split_once("\njobs:\n").unwrap().1;
         assert!(jobs.starts_with("  labels:\n"), "{jobs}");
-        let step = jobs
-            .split("\n      - ")
+        jobs.split("\n      - ")
             .find(|s| s.contains("just pr-title"))
-            .unwrap_or_else(|| panic!("no pr-title step in the labels job:\n{jobs}"));
+            .unwrap_or_else(|| panic!("no pr-title step in the labels job:\n{jobs}"))
+    }
+
+    /// The single-line `run:` command of the pr-title step, as GitHub hands it to bash.
+    fn title_step_script() -> &'static str {
+        let step = title_step();
+        step.lines()
+            .find_map(|l| l.trim().strip_prefix("run: "))
+            .unwrap_or_else(|| panic!("no single-line `run:` in the pr-title step:\n{step}"))
+    }
+
+    #[test]
+    fn the_labels_job_checks_the_title_from_the_event_through_the_environment() {
+        let step = title_step();
         // The title reaches the shell only as an environment variable, never interpolated into
         // the command line, so a title cannot inject shell syntax.
-        assert!(step.contains("    just pr-title \"$PR_TITLE\"\n"), "{step}");
+        assert_eq!(title_step_script(), "just pr-title \"$PR_TITLE\"");
         assert!(
             step.contains("PR_TITLE: ${{ github.event.pull_request.title }}"),
             "{step}"
@@ -343,25 +355,23 @@ mod tests {
         );
     }
 
-    /// The `run:` block of the pr-title step, dedented, as GitHub hands it to bash.
-    fn title_step_script() -> String {
-        let (_, after) = WORKFLOW
-            .split_once("\n        run: |\n")
-            .unwrap_or_else(|| panic!("no block `run:` in labels.yml:\n{WORKFLOW}"));
-        let block: Vec<&str> = after
-            .lines()
-            .take_while(|l| l.starts_with("          "))
-            .map(|l| &l["          ".len()..])
-            .collect();
-        assert!(
-            block.iter().any(|l| l.contains("just pr-title")),
-            "{block:?}"
-        );
-        block.join("\n") + "\n"
+    #[test]
+    fn the_title_step_has_no_recipe_presence_guard() {
+        // The step is the bare recipe call: no shell conditional around it, and nothing in the
+        // workflow asks `just` whether the recipe exists, so a missing recipe fails the check.
+        let step = title_step();
+        assert!(!step.contains("run: |"), "{step}");
+        for probe in ["--show", "--summary", "--list", "--dump", "::warning::"] {
+            assert!(
+                !WORKFLOW.contains(probe),
+                "`{probe}` in labels.yml:\n{WORKFLOW}"
+            );
+        }
     }
 
-    /// Runs the pr-title step with a stub `just` that has the `pr-title` recipe only when
-    /// `has_recipe`, and whose `pr-title` recipe records its arguments and rejects the title.
+    /// Runs the pr-title step with a stub `just` that logs every invocation. With `has_recipe`
+    /// its `pr-title` recipe rejects the title; without it, the stub fails the way `just` does
+    /// for an unknown recipe.
     fn run_title_step(has_recipe: bool, title: &str) -> (Option<i32>, String, String) {
         use crate::worktree::test_support::TempDir;
         use std::os::unix::fs::PermissionsExt;
@@ -372,9 +382,12 @@ mod tests {
             &stub,
             format!(
                 "#!/bin/sh\n\
-                 if [ \"$1\" = --show ]; then [ {has} = 1 ] && [ \"$2\" = pr-title ]; exit; fi\n\
                  printf '%s\\n' \"$@\" >> '{log}'\n\
-                 exit 1\n",
+                 if [ {has} = 0 ]; then\n\
+                 echo \"error: Justfile does not contain recipe \\`$1\\`\" >&2\n\
+                 exit 1\n\
+                 fi\n\
+                 exit 7\n",
                 has = u8::from(has_recipe),
                 log = log.display()
             ),
@@ -396,24 +409,28 @@ mod tests {
         let calls = std::fs::read_to_string(&log).unwrap_or_default();
         (
             out.status.code(),
-            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
             calls,
         )
     }
 
     #[test]
-    fn the_title_step_warns_instead_of_failing_before_the_recipe_is_on_the_default_branch() {
-        let (code, stdout, calls) = run_title_step(false, "Update README");
-        assert_eq!(code, Some(0), "{stdout}");
-        assert!(stdout.starts_with("::warning::"), "{stdout}");
-        assert_eq!(calls, "");
+    fn the_title_step_fails_when_the_recipe_is_missing() {
+        let (code, stderr, calls) = run_title_step(false, "feat: add a thing");
+        assert_eq!(code, Some(1), "{stderr}");
+        assert!(
+            stderr.contains("does not contain recipe `pr-title`"),
+            "{stderr}"
+        );
+        // The recipe is called directly, with no probe for its presence first.
+        assert_eq!(calls, "pr-title\nfeat: add a thing\n");
     }
 
     #[test]
     fn the_title_step_runs_the_recipe_with_the_literal_title_and_keeps_its_verdict() {
         let title = "Update \"README\" $HOME `id`";
-        let (code, stdout, calls) = run_title_step(true, title);
-        assert_eq!(code, Some(1), "{stdout}");
+        let (code, stderr, calls) = run_title_step(true, title);
+        assert_eq!(code, Some(7), "{stderr}");
         assert_eq!(calls, format!("pr-title\n{title}\n"));
     }
 }
