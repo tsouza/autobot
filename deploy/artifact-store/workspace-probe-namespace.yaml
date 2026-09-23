@@ -1,0 +1,10 @@
+# A stand-in for an agent workspace namespace, used by `just artifact-store-check`: a pod here
+# writes an object to the store, then the check deletes this namespace and requires the store's
+# namespace and that object to remain.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autobot-workspace-probe
+  labels:
+    app.kubernetes.io/part-of: autobot
+    app.kubernetes.io/component: workspace-probe

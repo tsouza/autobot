@@ -1,0 +1,9 @@
+# The artifact store's own namespace. Nothing that runs an agent workspace is placed here, and
+# nothing here is owned by a workspace namespace, so deleting one leaves the store untouched.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autobot-artifact-store
+  labels:
+    app.kubernetes.io/part-of: autobot
+    app.kubernetes.io/component: artifact-store

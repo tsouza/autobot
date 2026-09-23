@@ -3,6 +3,7 @@
 //! Every `scripts/<name>.rs` entry point is a thin rust-script that depends on this crate
 //! by path and calls one function; the logic lives here, where it is linted and tested.
 
+pub mod artifact_store;
 pub mod cargo;
 pub mod conventional;
 pub mod design;

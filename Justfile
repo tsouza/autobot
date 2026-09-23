@@ -163,6 +163,18 @@ kind-load image="autobot-operator:m0-q":
 operator-image:
     {{rs}} scripts/operator_image.rs
 
+# Deploy the MinIO artifact-store fixture on the kind cluster and assert versioning and SSE.
+artifact-store-up: kind-up
+    KUBECONFIG="{{kind-kubeconfig}}" {{rs}} scripts/artifact_store.rs up
+
+# Delete the artifact-store fixture with its volume and every object.
+artifact-store-down:
+    KUBECONFIG="{{kind-kubeconfig}}" {{rs}} scripts/artifact_store.rs down
+
+# Write an object from a workspace-probe namespace, delete that namespace, require the store and object intact.
+artifact-store-check:
+    KUBECONFIG="{{kind-kubeconfig}}" {{rs}} scripts/artifact_store.rs check
+
 # Run the tests that need a cluster (nextest profile `integration`) against the kind cluster.
 test-integration:
     KUBECONFIG="{{kind-kubeconfig}}" cargo nextest run --workspace --all-features --locked --profile integration --no-tests=pass
