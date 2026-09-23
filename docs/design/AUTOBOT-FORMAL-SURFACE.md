@@ -182,7 +182,7 @@ RestoreWitnessReceipt = [installation_id, restore_generation, witness_generation
 \* budget and canonical records                                   KERNEL §8
 Budget               = [uid, ceiling, allocated, state]
 BudgetReservation    = [uid, budget_uid, task_run_uid, amount,
-                        purpose ∈ {ATTEMPT, EFFECT},   \* ATTEMPT: the model spend of every session of task_run_uid, a planning TaskRun's included; EFFECT: one operation of it, kept by a later attempt that inherits the operation
+                        purpose ∈ {ATTEMPT, EFFECT},   \* ATTEMPT: the model spend of every session of task_run_uid, a planning TaskRun's included; EFFECT: one operation of it; task_run_uid stays the reserving TaskRun after a later attempt inherits the operation and sends under it
                         expires_at, state]
 ExpectedRecords      = [task_run_uid,
                         outcome,                 \* ExpectedEntry
@@ -193,7 +193,7 @@ ExpectedEntry        = [state ∈ {PENDING, RECORDED, GAP},
                         record_deadline]         \* NONE until the TaskRun is terminal; then the record_deadline bound after that commit, or after the entry's creation if later
 OutcomeRecord        = [task_run_uid, candidate_digest, acceptance_revision, outcome, state]
 UsageReceipt         = [task_run_uid, producer,   \* the producer of ExpectedRecords.usage whose entry it records
-                        replaces,                \* NONE for the producer's own spend; else the producer of the one refused entry this replacing receipt records, part of its name and create key (KERNEL §8 step 2)
+                        replaces,                \* NONE for the producer's own spend; else the one refused entry's producer this replacing receipt records, part of its name and create key; see ReplacingReceipt
                         provider, usage_digest, amount, censored_bound, state]
 TelemetryGap         = [uid, gap_kind ∈ {OUTCOME_MISSING, USAGE_MISSING}, task_run_uid,
                         producer,                \* NONE for OUTCOME_MISSING; for USAGE_MISSING the producer of the entry it is for
@@ -332,6 +332,7 @@ RejectIntake                by the principal who may accept that Intake (ONBOARD
 IssueScopeCapsule · CanonicalizeScopeCheck · DenyOutOfScopeAction · DetectOutOfScopeAtCheckpoint
 QuarantineOutOfScopeWorkspace · LinkFindingHistorically
 IssueExecutionIdentity      one per AgentRun, bound to its TaskRun, workspace (NONE if it holds none) and the TaskRun's execution_epoch
+ValidatePrivilegedCall      Broker, on every privileged call: namespace, WorkContext uid, target, audience, repository, path, operation, lineage, epoch, revocation generation and expiry (KERNEL §6); for a planning TaskRun of an Intake of the intake namespace the Intake's uid in the WorkContext uid's place, and every effect refused
 IssueCredentialGrant        one per ExecutionIdentity, carrying only its role's requests (ROLES §4); refused while a RestoreLineage of the installation is not DISPATCH_ENABLED
 RevokeCredentialGrant
 BeginFence                  TaskRun control; fence_state ACTIVE → FENCE_PENDING and execution_epoch+1 in one CAS; the FenceSession at the new epoch created PENDING
@@ -362,7 +363,8 @@ EnableRestoreDispatch       MAPPED → DISPATCH_ENABLED on the COMMITTED receipt
 ExpectUsage                 TaskRun domain; usage[producer] := PENDING, with record_deadline := now + the record_deadline bound if the TaskRun is terminal; the producer's first model call or accepted effect follows its COMMITTED receipt
 StartRecordDeadlines        TaskRun domain, in the commit that moves the TaskRun to a terminal phase; record_deadline := now + the record_deadline bound for the outcome and every usage entry
 WriteOutbox · DrainOutbox
-RecordCanonicalRecord       entry PENDING → RECORDED on its own record's COMMITTED create receipt (outcome: the OutcomeRecord; usage[p]: the UsageReceipt with producer = p ∧ replaces = NONE, or one with replaces = p)
+ReplacingReceipt(r, p)      ≜ r.replaces = p ∧ p and r.producer are sessions ∧ r.producer.agent_run_uid = p.agent_run_uid ∧ r.producer.session_sequence > p.session_sequence (KERNEL §8 step 2)
+RecordCanonicalRecord       entry PENDING → RECORDED on its own record's COMMITTED create receipt (outcome: the OutcomeRecord; usage[p]: the UsageReceipt r with r.producer = p ∧ r.replaces = NONE, or one with ReplacingReceipt(r, p))
 CreateGapForMissingRecord   precondition the entry PENDING ∧ its record_deadline ≠ NONE ∧ now ≥ it; creates a TelemetryGap linked to the TaskRun, naming the entry's producer for USAGE_MISSING, entry := GAP(uid), its gap_uid := uid
 CloseGap                    TelemetryGap OPEN → CLOSED, closing_record_uid := the entry's record committed after it; the entry stays GAP
 CensorUsage · SettleUsage
