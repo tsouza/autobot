@@ -17,7 +17,7 @@ The model represents bounded abstract values, hashes and finite sets; it does no
 
 ## 2. Typed correspondence
 
-The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine. Kinds without a record are abstracted, each as what the model keeps instead: an `Intervention` enters only as the register or adjudication action it becomes (§3); `Plan.phase` is outside the model, which admits against `plan_authority` and the verified `ACTIVATED` snapshot (F-13); a `Finding` enters only as opened by `AskJudgedQuestion` (F-42), as classified by `ClassifyFinding` and as linked by `LinkFindingHistorically`, which changes no other record (F-24); a `VerificationRun` enters only as the `EvidenceBundle` it records; a `RestoreRequest` is `RestoreLineage`; `PlanProposal`, `Project` and `WorkBrief` enter only as the `IntakeWrite` and `ProposalAcceptance` records that name them; the `Charter` and `ProjectCharter` kind states enter only as their `CharterRevision`s; a `CustodyPolicy` enters only as the cadence at which `CustodyCheckpoint`s occur; and an `Artifact` enters only as the digests its `CustodyCheckpoint` verifies.
+The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine. Kinds without a record are abstracted, each as what the model keeps instead: an `Intervention` enters only as the §3 interventions block states: as the register or adjudication action it becomes, an `EXCEPTION` as an `EvidenceBundle.exceptions` entry, and a `PAUSE` not at all; `Plan.phase` is outside the model, which admits against `plan_authority` and the verified `ACTIVATED` snapshot (F-13); a `Finding` enters only as opened by `AskJudgedQuestion` (F-42), as classified by `ClassifyFinding` and as linked by `LinkFindingHistorically`, which changes no other record (F-24); a `VerificationRun` enters only as the `EvidenceBundle` it records; a `RestoreRequest` is `RestoreLineage`; `PlanProposal`, `Project` and `WorkBrief` enter only as the `IntakeWrite` and `ProposalAcceptance` records that name them; the `Charter` and `ProjectCharter` kind states enter only as their `CharterRevision`s; a `CustodyPolicy` enters only as the cadence at which `CustodyCheckpoint`s occur; and an `Artifact` enters only as the digests its `CustodyCheckpoint` verifies.
 
 ```text
 \* commit, receipt, audit                                         KERNEL §1–§2
@@ -297,14 +297,15 @@ WriteOutbox · DrainOutbox · RecordCanonicalRecord · CreateGapForMissingRecord
 \* judgment
 ComputeEligibleSet · AbstainDecision
 RecordDecision              Decision controller only; commits RECORDED only; precondition selected ∈ the eligible set whose digest it records, computed before the question
-ClassifyFinding             a RecordDecision of the finding-severity question class over the eligible set computed from the finding's fields; an absent judge selects the highest eligible severity; the Finding's CLASSIFIED and the Manager's disposition are outside the model (§2)
+ClassifyFinding             a RecordDecision of the finding-severity question class (ROLES §2) over the eligible set computed from the finding's fields; an absent judge selects the highest eligible severity; the Finding's CLASSIFIED and the Manager's disposition are outside the model (§2)
 
 \* interventions: no actions of their own (§2); each becomes the kernel action listed
 HOLD, KILL_SWITCH           RequestHold
 RESUME of a hold            ReleaseHold, then CompleteHoldRelease once hold_causes is empty
-RESUME of a QUIESCE or SUPERSEDE   ResumePlanRevision, only while Plan.phase is QUIESCING
+RESUME of a QUIESCE or SUPERSEDE   ResumePlanRevision, only while Plan.phase is QUIESCING and no budget-exhausted pause is in force (ROLES §5)
 QUIESCE                     QuiescePlan
-SUPERSEDE                   QuiescePlan, then SupersedePlanRevision
+SUPERSEDE                   QuiescePlan, then SupersedePlanRevision; under a budget-exhausted pause only for a replacement whose budget policy raises the ceiling
+QUIESCE, FAIL under a budget-exhausted pause   none: REJECTED (ROLES §5)
 FAIL, CANCEL                QuiescePlan if the register holds the revision ACTIVE, then RetirePlanAuthority once the Plan is terminal, if it holds entries
 ADJUDICATE_OPERATION        AdjudicateUnresolvedOperation
 ADJUDICATE_CONFLICT         AdjudicateConflict
