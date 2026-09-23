@@ -903,3 +903,132 @@ fn a_receipt_name_depends_on_the_idempotency_key_alone() {
     assert_eq!(command_receipt_name("k-1"), command_receipt_name("k-1"));
     assert_ne!(command_receipt_name("k-1"), command_receipt_name("k-2"));
 }
+
+#[test]
+fn identities_hash_at_version_one_and_digests_at_the_encoding_version() {
+    // Identities keep version byte 1 whatever ENCODING_VERSION becomes, so these expectations
+    // name the literal 1 for identities and the constant for digests: once the two constants
+    // differ, an identity hashed at ENCODING_VERSION fails here.
+    assert_eq!(IDENTITY_VERSION, 1);
+    let payload = Digest::from_bytes([7; 32]);
+    assert_eq!(
+        operation_key("lineage", &uid("agg"), srev(3), 2, &payload),
+        sha256_of(1, &encoded(&("lineage", "agg", 3u64, 2u32, payload)))
+    );
+    let index = create();
+    assert_eq!(
+        index.digest(),
+        sha256_of(
+            1,
+            &encoded(&("ctx", "writer", "TaskRun", Some("task"), "req"))
+        )
+    );
+    let receipt = sha256_of(1, &encoded("k-1"));
+    assert_eq!(
+        command_receipt_name("k-1").expect("name"),
+        object_name("CommandReceipt", &receipt).expect("name")
+    );
+    let value = ("lineage", "agg", 3u64);
+    assert_eq!(
+        digest(&value),
+        Ok(sha256_of(ENCODING_VERSION, &encoded(&value)))
+    );
+}
+
+#[test]
+fn an_identity_encodes_as_the_value_of_the_same_shape() {
+    use super::cbor::Identity;
+    let texts = [0usize, 23, 24, 255, 256, 65_536].map(|n| "x".repeat(n));
+    let ints = [
+        0u64,
+        23,
+        24,
+        255,
+        256,
+        65_535,
+        65_536,
+        u64::from(u32::MAX) + 1,
+        u64::MAX,
+    ];
+    let mut identities: Vec<Identity> = texts.iter().cloned().map(Identity::Text).collect();
+    identities.extend(ints.map(Identity::Uint));
+    identities.push(Identity::Null);
+    let nested = Identity::Array(vec![
+        Identity::Array(identities.clone()),
+        Identity::Array(Vec::new()),
+    ]);
+    identities.push(Identity::Array((0..24).map(Identity::Uint).collect()));
+    identities.push(nested);
+    for identity in &identities {
+        let value = to_value(identity);
+        assert_eq!(identity.encode(), value.encode().expect("encodes"));
+    }
+
+    fn to_value(identity: &Identity) -> Value {
+        match identity {
+            Identity::Uint(n) => Value::Uint(*n),
+            Identity::Text(s) => Value::Text(s.clone()),
+            Identity::Null => Value::Null,
+            Identity::Array(items) => Value::Array(items.iter().map(to_value).collect()),
+        }
+    }
+}
+
+// A keyed entry whose control field is a plain value, so it serializes at its initial value.
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, FieldClasses)]
+struct PlainAuthority {
+    #[field(domain)]
+    lease_uid: String,
+    #[field(control)]
+    phase: Phase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, FieldClasses)]
+struct PlainContext {
+    #[field(nested)]
+    manager_authority: BTreeMap<String, PlainAuthority>,
+}
+
+#[test]
+fn an_entry_that_serializes_no_control_field_at_its_initial_value_passes_the_check() {
+    let entry = ManagerAuthority {
+        lease_uid: "lease".to_owned(),
+        epoch: 1,
+        phase: None,
+    };
+    assert_eq!(check_initial_entry(&entry), Ok(()));
+}
+
+#[test]
+fn an_entry_that_serializes_a_control_field_at_its_initial_value_fails_the_check() {
+    let entry = PlainAuthority {
+        lease_uid: "lease".to_owned(),
+        phase: Phase::Draining,
+    };
+    assert_eq!(
+        check_initial_entry(&entry),
+        Err(EncodeError::InitialControl("phase".to_owned()))
+    );
+    // The rule the check stands for: creating that entry changes the control digest.
+    let before = PlainContext {
+        manager_authority: BTreeMap::new(),
+    };
+    let mut after = before.clone();
+    after.manager_authority.insert("plan".to_owned(), entry);
+    assert_ne!(control_digest(&before), control_digest(&after));
+}
+
+#[test]
+fn the_initial_entry_check_refuses_an_entry_that_does_not_follow_its_declaration() {
+    #[derive(Serialize, FieldClasses)]
+    struct Renamed {
+        #[field(control)]
+        #[serde(rename = "other")]
+        phase: u8,
+    }
+    assert_eq!(
+        check_initial_entry(&Renamed { phase: 0 }),
+        Err(EncodeError::UnknownField("other".to_owned()))
+    );
+}

@@ -7,7 +7,7 @@ use crate::store::{
     Change, ClearOutcome, ClearSlot, Commit, CommitOutcome, CommitRequest, ControlChange, Create,
     CreateOutcome, DomainChange, EventFields, GuardRefusal, Initialize, InitializeOutcome, Kind,
     Missing, Object, ObjectKey, Origin, Pin, Protocol, ProtocolError, Status, Step, StoreOp,
-    StoreResult, Transition, Triggers, fields_digest,
+    StoreResult, Transition, Triggers,
 };
 use crate::types::{
     ControlRevision, Lane, LaneRevision, Namespace, ObjectName, ObjectRef, Principal,
@@ -354,7 +354,7 @@ impl<'s> ScriptRun<'s> {
                     .unwrap_or_else(|| format!("create-{}", s.object));
                 let origin = Origin {
                     create_receipt_uid: parse(&receipt)?,
-                    input_digest: fields_digest(&s.spec),
+                    input_digest: crate::digest::digest(&s.spec).map_err(|e| e.to_string())?,
                     context_uid: parse("conformance-context")?,
                 };
                 Machine::Create {
@@ -597,6 +597,7 @@ fn commit_name(outcome: &CommitOutcome) -> &'static str {
         CommitOutcome::NoControlLane => "no_control_lane",
         CommitOutcome::LaneMismatch => "lane_mismatch",
         CommitOutcome::Overflow => "overflow",
+        CommitOutcome::Unencodable(_) => "unencodable",
         CommitOutcome::Uninitialized => "uninitialized",
         CommitOutcome::Missing(missing) => missing_name(missing),
     }
