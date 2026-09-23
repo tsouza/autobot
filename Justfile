@@ -62,6 +62,26 @@ trace-lint *args:
 # Everything CI checks, locally: every CI job.
 ci: ci-fmt ci-clippy ci-test ci-doc ci-deny ci-machete
 
+# Download the pinned formal tools into target/formal, verify their digests and write the digest manifest.
+formal-setup:
+    {{rs}} scripts/formal.rs setup
+
+# Typecheck every Quint file under formal/.
+formal-typecheck:
+    {{rs}} scripts/formal.rs typecheck
+
+# Simulate every check target's invariants with the fixed seed and step bound.
+formal-sim:
+    {{rs}} scripts/formal.rs sim
+
+# Check a target's invariants with Apalache: `just formal-verify <target>` or `--all`.
+formal-verify target:
+    {{rs}} scripts/formal.rs verify {{quote(target)}}
+
+# Write one ITF trace per check target to target/formal/traces.
+formal-trace:
+    {{rs}} scripts/formal.rs trace
+
 # Apply the ruleset and repository settings to GitHub; `--dry-run` only prints the diff.
 repo-settings *args:
     {{rs}} scripts/repo_settings.rs {{args}}
@@ -127,6 +147,14 @@ kind-load image:
 # Run the tests that need a cluster (nextest profile `integration`) against the kind cluster.
 test-integration:
     KUBECONFIG="{{kind-kubeconfig}}" cargo nextest run --workspace --all-features --locked --profile integration --no-tests=pass
+
+# CI job `formal`: typecheck and simulate when formal/** or the toolchain changed, else pass.
+ci-formal:
+    {{rs}} scripts/formal.rs ci
+
+# CI job `formal-verify`: Apalache over every target when formal/** changed or nightly, else pass.
+ci-formal-verify:
+    {{rs}} scripts/formal.rs ci-verify
 
 # Worktree per pull request: `just wt new <issue#>`, `just wt list`, `just wt rm <issue#>`.
 [positional-arguments]

@@ -1,7 +1,7 @@
 //! The design set under `docs/design`: its consistency check, the retired-term check, the traceability lint and the KERNEL §10 parser.
 //!
-//! This module also holds what the checks share: the [`Violation`] they report, the walk over
-//! a directory tree, and the offset, line and identifier helpers.
+//! This module also holds what the checks, and the formal toolchain, share: the [`Violation`]
+//! they report, the walk over a directory tree, and the offset, line and identifier helpers.
 
 pub mod check;
 pub mod lifecycle;
@@ -60,7 +60,7 @@ impl<R: RuleName> fmt::Display for Violation<R> {
 ///
 /// # Errors
 /// Fails if a directory, `dir` included, cannot be listed.
-fn walk(root: &Path, dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+pub(crate) fn walk(root: &Path, dir: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -101,7 +101,7 @@ fn line_of(doc: &str, offset: usize) -> usize {
 }
 
 /// Whether `c` belongs to an identifier: a letter, a digit or `_`.
-fn is_word_char(c: char) -> bool {
+pub(crate) fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 

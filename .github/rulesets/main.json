@@ -72,6 +72,10 @@
           {
             "context": "labels",
             "integration_id": 15368
+          },
+          {
+            "context": "formal",
+            "integration_id": 15368
           }
         ]
       }
