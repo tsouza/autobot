@@ -49,6 +49,12 @@ check-design:
 check-retired-terms:
     {{rs}} scripts/retired_terms.rs .
 
+# Check traceability: I-n, F-n, fixture groups, owning tests and model invariants.
+# Arguments: none, `--closed G-X`, `--awaiting #N` or `--diff`.
+[positional-arguments]
+trace-lint *args:
+    {{rs}} scripts/trace_lint.rs "$@"
+
 # Everything CI checks, locally.
 ci: fmt-check clippy test doc deny machete
 

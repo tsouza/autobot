@@ -1,8 +1,9 @@
-//! The design set under `docs/design`: its consistency check, the retired-term check and the KERNEL §10 parser.
+//! The design set under `docs/design`: its consistency check, the retired-term check, the traceability lint and the KERNEL §10 parser.
 
 pub mod check;
 pub mod lifecycle;
 pub mod retired;
+pub mod trace;
 
 /// Tracks whether the current line is inside a fenced code block.
 ///
