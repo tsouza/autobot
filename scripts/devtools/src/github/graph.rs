@@ -382,33 +382,54 @@ fn capsule_section(body: &str, name: &str) -> Option<String> {
 
 /// Whether an Allowed paths text names a path under, or an ancestor of, the human-lane areas.
 ///
-/// A token is cut at its first glob character (`*`, `?` or `[`). The remaining literal
-/// touches an area when it lies inside the area (`docs/design/x.md`), is the area itself,
-/// or is a directory above it (`.github`, `.github/**`, `docs/`). A literal that stops
-/// part-way through a path segment before a glob (`.github/work*`) touches every area it is
-/// a prefix of. A token that is only a glob (`*`, `**`) never matches, since it cannot be told
-/// apart from a Markdown bullet or bold marker in the capsule text.
+/// Each token is read as a glob over `/`-separated segments: a `**` segment spans any number of
+/// segments, and inside a segment `*` spans any run of characters, `?` one character and
+/// `[...]` one character. A token touches an area when some path it names lies inside the
+/// area (`docs/design/x.md`, `**/*.yml`), is the area itself (`.github/work*`), or is a
+/// directory above it (`.github`, `.github/**`, `docs/`). A token made only of `*` (`*`, `**`)
+/// never matches, since it cannot be told apart from a Markdown bullet or bold marker in the
+/// capsule text.
 fn touches_human_lane(paths: &str) -> bool {
     paths
         .split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '`'))
+        .filter(|token| !token.is_empty() && !token.chars().all(|c| c == '*'))
         .any(|token| {
-            let (literal, glob) = match token.find(['*', '?', '[']) {
-                Some(i) => (&token[..i], true),
-                None => (token, false),
-            };
-            let dir = literal.trim_end_matches('/');
-            let below = |outer: &str, inner: &str| {
-                !outer.is_empty()
-                    && inner
-                        .strip_prefix(outer)
-                        .is_some_and(|r| r.is_empty() || r.starts_with('/'))
-            };
-            HUMAN_LANE_PATHS.iter().any(|p| {
-                below(p, literal)
-                    || below(dir, p)
-                    || (glob && !literal.is_empty() && p.starts_with(literal))
+            let pattern: Vec<&str> = token.trim_end_matches('/').split('/').collect();
+            HUMAN_LANE_PATHS.iter().any(|area| {
+                let area: Vec<&str> = area.split('/').collect();
+                glob_overlaps(&pattern, &area)
             })
         })
+}
+
+/// Whether a path named by the segment glob `pattern` lies inside `area`, is it, or is a
+/// directory above it.
+fn glob_overlaps(pattern: &[&str], area: &[&str]) -> bool {
+    match (pattern.split_first(), area.split_first()) {
+        // Either the area is consumed, so the rest of the pattern names the area or a path
+        // inside it, or the pattern is consumed first, so it names a directory above the area.
+        (_, None) | (None, Some(_)) => true,
+        (Some((&"**", rest)), Some((_, area_rest))) => {
+            glob_overlaps(rest, area) || glob_overlaps(pattern, area_rest)
+        }
+        (Some((seg, rest)), Some((name, area_rest))) => {
+            segment_matches(seg.as_bytes(), name.as_bytes()) && glob_overlaps(rest, area_rest)
+        }
+    }
+}
+
+/// Whether one glob segment matches one path segment.
+fn segment_matches(pattern: &[u8], name: &[u8]) -> bool {
+    match pattern.split_first() {
+        None => name.is_empty(),
+        Some((b'*', rest)) => (0..=name.len()).any(|i| segment_matches(rest, &name[i..])),
+        Some((b'?', rest)) => !name.is_empty() && segment_matches(rest, &name[1..]),
+        Some((b'[', rest)) if rest.contains(&b']') => {
+            let close = rest.iter().position(|&b| b == b']').map_or(0, |i| i + 1);
+            !name.is_empty() && segment_matches(&rest[close..], &name[1..])
+        }
+        Some((c, rest)) => name.first() == Some(c) && segment_matches(rest, &name[1..]),
+    }
 }
 
 fn is_priority_label(label: &str) -> bool {
@@ -1203,10 +1224,28 @@ mod tests {
         let mut fx = Fixture::recorded();
         fx.issue(204)["body"] = json!("**Allowed paths**\n.github/**, Justfile");
         fx.issue(222)["body"] = json!("**Allowed paths**\n- docs/");
-        fx.issue(224)["body"] = json!("**Allowed paths**\n.github/work*.yml");
+        fx.issue(224)["body"] = json!("**Allowed paths**\n.github/work*/dag.yml");
         assert_eq!(
             rules(&fx.lint()),
             vec![
+                (204, Rule::HumanLane),
+                (222, Rule::HumanLane),
+                (224, Rule::HumanLane)
+            ]
+        );
+    }
+
+    #[test]
+    fn leading_glob_that_reaches_a_human_lane_area_needs_human_lane() {
+        let mut fx = Fixture::recorded();
+        fx.issue(204)["body"] = json!("**Allowed paths**\n**/*.yml");
+        fx.issue(222)["body"] = json!("**Allowed paths**\n- `**/workflows/**`");
+        fx.issue(224)["body"] = json!("**Allowed paths**\n**/dag.yml, Justfile");
+        fx.issue(203)["body"] = json!("**Allowed paths**\n*/design/[A-Z]*.md");
+        assert_eq!(
+            rules(&fx.lint()),
+            vec![
+                (203, Rule::HumanLane),
                 (204, Rule::HumanLane),
                 (222, Rule::HumanLane),
                 (224, Rule::HumanLane)
@@ -1219,7 +1258,9 @@ mod tests {
         let mut fx = Fixture::recorded();
         fx.issue(204)["body"] =
             json!("**Allowed paths**\n* .github/ISSUE_TEMPLATE/**, docs/designs.md, **, scripts/*");
-        fx.issue(222)["body"] = json!("**Allowed paths**\n.github/workflows-notes.md");
+        fx.issue(222)["body"] =
+            json!("**Allowed paths**\n.github/workflows-notes.md, .github/work*.yml");
+        fx.issue(224)["body"] = json!("**Allowed paths**\n*.rs, **Note**: scripts/?/x");
         assert_eq!(rules(&fx.lint()), vec![]);
     }
 
