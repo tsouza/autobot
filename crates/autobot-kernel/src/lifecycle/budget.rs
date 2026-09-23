@@ -24,16 +24,17 @@ lifecycle! {
         Committed = "COMMITTED",
         /// Released on proven zero use.
         Released = "RELEASED",
-        /// Its consumer ended, was fenced or is `OUTCOME_UNKNOWN`, and its usage is not settled.
+        /// Its consumer is terminal or fenced, or its operation is terminal or `UNRESOLVED`, and its
+        /// usage is not settled.
         Unknown = "UNKNOWN",
         /// Expired by an explicit conservative expiry, counted at the reservation ceiling.
         Expired = "EXPIRED",
     }
     edges {
-        [Reserved] -> [Committed, Released, Unknown];
+        [Reserved] -> [Committed, Released];
+        [Reserved] -> [Unknown] if ConsumerUnsettled;
         [Reserved] -> [Expired] if ConservativeExpiry;
-        [Unknown] -> [Committed, Released];
-        [Unknown] -> [Expired] if ConservativeExpiry;
+        [Unknown] -> [Committed, Released, Expired] if Settlement;
     }
 }
 
@@ -91,7 +92,7 @@ lifecycle! {
         Permanent = "PERMANENT",
     }
     edges {
-        [Open] -> [Closed];
-        [Open] -> [Permanent];
+        [Open] -> [Closed] if LateRecordLinked;
+        [Open] -> [Permanent] if OutboxLost;
     }
 }

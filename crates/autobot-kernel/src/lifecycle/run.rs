@@ -32,8 +32,8 @@ lifecycle! {
         [Executing, Verifying] -> [Recovering];
         [Recovering] -> [Executing] if FenceActive;
         [Recovering] -> [Failed] if FenceNotPending;
-        [Preparing] -> [Failed] if FenceNotPending;
-        [Pending, Admitted, Executing] -> [Failed] if FenceSettled;
+        [Preparing] -> [Failed] if SetupFailedOrFenced;
+        [Pending, Admitted, Executing] -> [Failed] if Fenced;
         [Pending, Admitted, Preparing, Executing, Verifying, Recovering] -> [Cancelled] if FenceSettled;
     }
 }
@@ -52,9 +52,9 @@ lifecycle! {
         FencedUncertain = "FENCED_UNCERTAIN",
     }
     edges {
-        [Active] -> [FencePending];
+        [Active] -> [FencePending] if FenceRequested;
         [FencePending] -> [Fenced, FencedUncertain] if FenceSessionReached;
-        [FencedUncertain] -> [Fenced] if FenceSessionReached;
+        [FencedUncertain] -> [Fenced] if LateFenceConfirmation;
     }
 }
 
@@ -77,11 +77,11 @@ lifecycle! {
     edges {
         [Starting] -> [Running];
         [Running] -> [Completed, Failed];
-        [Running] -> [Cancelled] if FenceSettled;
+        [Running] -> [Cancelled] if CancelFencesFirst;
         [Starting] -> [Failed];
-        [Starting] -> [Cancelled] if FenceSettled;
+        [Starting] -> [Cancelled] if CancelFencesFirst;
         [Running] -> [HeartbeatLost];
-        [HeartbeatLost] -> [Running];
+        [HeartbeatLost] -> [Running] if Continuation;
         [HeartbeatLost] -> [Failed, Cancelled] if FenceSettled;
     }
     sibling_sets {
@@ -102,8 +102,9 @@ lifecycle! {
         Quarantined = "QUARANTINED",
     }
     edges {
-        [Created] -> [Verified, Stale, Quarantined];
-        [Verified] -> [Stale];
+        [Created] -> [Verified];
+        [Created, Verified] -> [Stale] if EpochBelowRun;
+        [Created] -> [Quarantined] if OutOfScopeContent;
     }
 }
 

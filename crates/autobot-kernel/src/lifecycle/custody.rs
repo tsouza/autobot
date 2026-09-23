@@ -29,7 +29,7 @@ lifecycle! {
         [InUse] -> [Preserving];
         [Preserving] -> [Preserved];
         [Preserved] -> [Retired];
-        [Preserved] -> [InUse] if NotRetireOnly;
+        [Preserved] -> [InUse] if WriteFenceLifted;
         [Requested, Provisioning, Ready, InUse, Preserving, Preserved] -> [Quarantined, Conflict];
         [Quarantined] -> [Conflict, Preserving] if QuarantineCleared;
         [Conflict] -> [Quarantined, Preserving] if ConflictAdjudicated;
@@ -65,8 +65,8 @@ lifecycle! {
     }
     edges {
         [Inventoried] -> [Uploading];
-        [Uploading] -> [Uploaded];
-        [Uploaded] -> [Verified];
+        [Uploading] -> [Uploaded] if DigestsVerified;
+        [Uploaded] -> [Verified] if RestoreVerified;
         [Inventoried, Uploading, Uploaded] -> [Failed];
     }
 }

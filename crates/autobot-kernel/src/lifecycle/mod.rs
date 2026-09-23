@@ -1,37 +1,48 @@
 //! Every lifecycle of `docs/design/AUTOBOT-KERNEL.md` §10 as a typed transition table.
 //!
 //! Each §10 machine, and each field a machine labels (`hold_state`, `fence_state`,
-//! `terminal_state`, ...), is one state enum implementing [`Lifecycle`]: its states in printed
-//! order, the first being the initial state, and its allowed transitions as [`Edges`]. A
-//! transition §10 restricts beyond its source state carries a [`Requirement`]. The names of the
-//! form *Verb-ed* that §10 calls event types are [`LifecycleEvent`], never a state. [`tables`]
-//! lists every machine in §10 order as a [`Table`]; the `lifecycle_sync` test diffs it against
+//! `terminal_state`, ...), is one state enum implementing [`Lifecycle`]. The enum lists its
+//! states in printed order, with the initial state first, and its allowed transitions as
+//! [`Edges`]. Transitions §10 says more about carry a [`Requirement`]. The names of the form
+//! *Verb-ed* that §10 calls event types are [`LifecycleEvent`], never a state. [`tables`] lists
+//! every machine in §10 order as a [`Table`]. The `lifecycle_sync` test diffs that list against
 //! the design text through the shared §10 parser.
 //!
-//! State enums serialize, and their JSON schemas enumerate, the printed state names
-//! (`OUTCOME_UNKNOWN`, `FENCE_PENDING`).
+//! State enums serialize as the printed state names (`OUTCOME_UNKNOWN`, `FENCE_PENDING`), and
+//! their JSON schemas enumerate those names.
 //!
 //! # Reading of the design text
 //!
-//! - `any non-terminal → X` is an edge to `X` from every state with an outgoing transition of its
-//!   own, except `X` itself: no table holds an edge from a state to itself.
+//! - `any non-terminal → X` is an edge to `X` from every state with an outgoing transition of
+//!   its own, except `X` itself. No table holds an edge from a state to itself.
 //! - A state is terminal when no edge leaves it ([`Lifecycle::is_terminal`]). A table whose
 //!   every state has an exit, such as [`HoldState`], has no terminal state.
-//! - A transition carries a [`Requirement`] when §10 restricts it with `only`, `once`,
-//!   `requires`, or `never` or `no ... while`, or marks it human-only or an append-only
-//!   correction. An annotation that names a cause or an effect (`setup failed`, `new epoch`,
-//!   `same snapshot`) is not a requirement. A requirement names a condition; the controller that
-//!   takes the transition checks it.
-//! - `ExternalOperation`'s `(human adjudication only)` follows the chain `RECONCILING →
-//!   UNRESOLVED → CONFIRMED | COMPENSATED | FAILED`; it applies to the exits of `UNRESOLVED`,
-//!   which FORMAL §2 records as the human adjudication of an `UNRESOLVED` operation, and not to
-//!   `RECONCILING → UNRESOLVED`.
+//! - The parser *annotates* a transition in three ways:
+//!   - a note printed on it (`(same snapshot)`);
+//!   - the line note of the line that prints it, when it is an arrow into that line's last group
+//!     (`(human adjudication only)`);
+//!   - a note of its machine that names it (`BROKER_ACCEPTED → INVALIDATED only …`, `UNKNOWN: …`).
+//!
+//!   Each annotated transition carries the [`Requirement`] that quotes its annotations, whether
+//!   they state a condition or a cause. A transition §10 does not annotate carries a requirement
+//!   only when a machine note states a condition on it and names one of its states, such as
+//!   [`Requirement::FenceActive`] or [`Requirement::HoldCausesEmpty`]. A requirement
+//!   names what must hold or what happened. The controller that takes the transition checks it.
+//! - `ExternalOperation`'s `(human adjudication only)` closes the line `RECONCILING →
+//!   UNRESOLVED → CONFIRMED | COMPENSATED | FAILED`. It annotates only the exits of
+//!   `UNRESOLVED`, the line's last arrow, which FORMAL §2 records as the human adjudication of an
+//!   `UNRESOLVED` operation. It does not annotate `RECONCILING → UNRESOLVED`.
 //! - `TaskRun`'s "once `fence_state` leaves `ACTIVE` the phase never moves to `EXECUTING` or
-//!   `SUCCEEDED`" is [`Requirement::FenceActive`] on the edges into those two states only.
+//!   `SUCCEEDED`" is [`Requirement::FenceActive`], on the edges into those two states only.
+//! - `AgentRun`'s "`CANCELLED` from any phase only once `fence_state` is `FENCED` or
+//!   `FENCED_UNCERTAIN`" is [`Requirement::CancelFencesFirst`] on `STARTING → CANCELLED` and
+//!   `RUNNING → CANCELLED`, and [`Requirement::FenceSettled`] on `HEARTBEAT_LOST → CANCELLED`,
+//!   whose line note states the same condition. "Any phase" is every phase with an edge into
+//!   `CANCELLED`. `COMPLETED`, `FAILED` and `CANCELLED` are terminal and have none.
 //! - `AgentRun`'s `HEARTBEAT_LOST → fence_state := FENCE_PENDING` moves the sibling field and
 //!   leaves the phase where it is: it is a [`SiblingSet`], not an edge.
-//! - `AgentRun.fence_state` is `as TaskRun`: both use [`FenceState`], whose table is the
-//!   `TaskRun` one; [`tables`] lists it a second time under `AgentRun` with
+//! - `AgentRun.fence_state` is `as TaskRun`. Both use [`FenceState`], whose table is the
+//!   `TaskRun` one. [`tables`] lists it a second time under `AgentRun`, with
 //!   [`Table::same_as`] set.
 //! - The pending commit slot and the control receipt are the kernel's own enums,
 //!   [`crate::status::PendingCommitState`] and [`crate::status::ControlReceiptState`], which

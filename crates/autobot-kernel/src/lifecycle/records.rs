@@ -19,9 +19,11 @@ lifecycle! {
         Uncertain = "UNCERTAIN",
     }
     edges {
-        [Prepared] -> [Committed, Rejected, Cancelled, ReplayExpired];
+        [Prepared] -> [Committed, Rejected];
+        [Prepared, Uncertain] -> [Cancelled] if CancelledReservation;
+        [Prepared] -> [ReplayExpired] if ReplayWindowPassed;
         [Prepared] -> [Uncertain];
-        [Uncertain] -> [Committed, Rejected, Cancelled];
+        [Uncertain] -> [Committed, Rejected];
     }
 }
 
@@ -80,17 +82,17 @@ lifecycle! {
         [Requested] -> [Permitted];
         [Permitted] -> [Dispatching];
         [Dispatching] -> [Confirmed, Rejected, Failed];
-        [Permitted] -> [Requested];
+        [Permitted] -> [Requested] if PermitInvalidated;
         [Dispatching] -> [OutcomeUnknown];
         [OutcomeUnknown] -> [Reconciling];
         [Reconciling] -> [Confirmed, Failed];
-        [Reconciling] -> [Requested];
+        [Reconciling] -> [Requested] if NonApplicationProven;
         [Reconciling] -> [Unresolved];
         [Unresolved] -> [Confirmed, Compensated, Failed] if HumanAdjudication;
         [Requested, Permitted] -> [BlockedUnsupported];
-        [Requested] -> [Released];
-        [Requested] -> [Confirmed];
-        [Requested] -> [Unresolved];
+        [Requested] -> [Released] if UnsentNotApplied;
+        [Requested] -> [Confirmed] if RestoredFoundApplied;
+        [Requested] -> [Unresolved] if RestoredUnverifiable;
     }
 }
 
@@ -129,7 +131,7 @@ lifecycle! {
         [Cleared] -> [Occupied];
         [Occupied] -> [Cleared];
         [Occupied] -> [Repairing];
-        [Repairing] -> [Cleared];
+        [Repairing] -> [Cleared] if ReceiptReconstructed;
     }
 }
 
@@ -139,7 +141,7 @@ lifecycle! {
         Published = "PUBLISHED",
     }
     edges {
-        [Unpublished] -> [Published];
+        [Unpublished] -> [Published] if AuditPublished;
     }
 }
 
@@ -156,8 +158,8 @@ lifecycle! {
     edges {
         [Reserved] -> [Applying];
         [Applying] -> [Resolved] if TerminalStateRecorded;
-        [Reserved] -> [Resolved] if TerminalStateRecorded;
-        [Resolved] -> [Reserved];
+        [Reserved] -> [Resolved] if ReleasedBeforeClaim;
+        [Resolved] -> [Reserved] if NewReservation;
     }
 }
 
@@ -174,8 +176,8 @@ lifecycle! {
         Rejected = "REJECTED",
     }
     edges {
-        [None] -> [Committed, Cancelled, Rejected];
-        [Committed, Cancelled, Rejected] -> [None];
+        [None] -> [Committed, Cancelled, Rejected] if ReleasedWithReceipt;
+        [Committed, Cancelled, Rejected] -> [None] if NewReservation;
     }
 }
 
@@ -191,8 +193,8 @@ lifecycle! {
     }
     edges {
         [AcceptedNotSent] -> [SendAttempted];
-        [SendAttempted] -> [Acknowledged];
-        [AcceptedNotSent] -> [Acknowledged];
+        [SendAttempted] -> [Acknowledged] if EntryRemoved;
+        [AcceptedNotSent] -> [Acknowledged] if RefusedBeforeSend;
     }
 }
 
@@ -207,6 +209,6 @@ lifecycle! {
         Gap = "GAP",
     }
     edges {
-        [Pending] -> [Recorded, Gap];
+        [Pending] -> [Recorded, Gap] if ExpectedBeforeSpend;
     }
 }

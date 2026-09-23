@@ -33,7 +33,7 @@ lifecycle! {
     }
     edges {
         [Active] -> [Draining];
-        [Draining] -> [Active];
+        [Draining] -> [Active] if NewEpoch;
     }
 }
 
@@ -47,7 +47,7 @@ lifecycle! {
     }
     edges {
         [Active] -> [Quiescing];
-        [Quiescing] -> [Active];
+        [Quiescing] -> [Active] if SameOrReplacementRevision;
     }
 }
 
@@ -90,13 +90,14 @@ lifecycle! {
         [Accepted] -> [Activating];
         [Activating] -> [Active] if ActivationCommitted;
         [Activating] -> [ActivationFailed] if ActivationNotUncertain;
-        [ActivationFailed] -> [Activating];
+        [ActivationFailed] -> [Activating] if SameSnapshot;
         [ActivationFailed] -> [Cancelled] if NoUncertainActivation;
         [ActivationFailed] -> [Quiescing] if ReplacementRevision;
         [Active] -> [Paused];
         [Paused] -> [Active];
         [Active, Paused] -> [Quiescing];
-        [Quiescing] -> [Active, Activating];
+        [Quiescing] -> [Active] if SameRevision;
+        [Quiescing] -> [Activating] if ReplacementRevision;
         [Active] -> [Completed];
         [Active, Paused, Quiescing] -> [Failed];
         [Accepted, Activating, Active, Paused, Quiescing] -> [Cancelled] if NoUncertainActivation;
@@ -125,7 +126,7 @@ lifecycle! {
         [Active] -> [Quiescing];
         [Quiescing] -> [Superseded];
         [Proposed, Verified] -> [Abandoned];
-        [Quiescing] -> [Active];
+        [Quiescing] -> [Active] if ExplicitResume;
     }
 }
 
@@ -148,7 +149,7 @@ lifecycle! {
         [SnapshotVerified] -> [MembersVerified];
         [MembersVerified] -> [Activated];
         [Proposed, SnapshotVerified, MembersVerified] -> [ActivationFailed];
-        [ActivationFailed] -> [Proposed];
+        [ActivationFailed] -> [Proposed] if SnapshotRetry;
     }
 }
 
@@ -168,7 +169,7 @@ lifecycle! {
         [Draft] -> [Review];
         [Review] -> [Accepted, Rejected];
         [Draft] -> [Rejected];
-        [Review] -> [Draft];
+        [Review] -> [Draft] if RevisedByIntakeClient;
     }
 }
 
@@ -188,7 +189,7 @@ lifecycle! {
         [Captured] -> [Proposed];
         [Proposed] -> [Accepted, Rejected];
         [Captured] -> [Rejected];
-        [Proposed] -> [Captured];
+        [Proposed] -> [Captured] if IntakeRevised;
     }
 }
 
@@ -264,7 +265,7 @@ lifecycle! {
         Expired = "EXPIRED",
     }
     edges {
-        [Acknowledged] -> [Expired];
+        [Acknowledged] -> [Expired] if LeaseDrained;
     }
 }
 
@@ -294,9 +295,10 @@ lifecycle! {
         [Proposed] -> [Ready];
         [Ready] -> [Running];
         [Running] -> [Verifying];
-        [Verifying] -> [Accepted, Failed];
+        [Verifying] -> [Accepted] if AcceptanceAdjudication;
+        [Verifying] -> [Failed];
         [Ready, Running, Verifying] -> [Blocked];
-        [Blocked] -> [Ready];
+        [Blocked] -> [Ready] if BlockResolved;
         [Ready, Running, Verifying, Blocked] -> [Superseded, Cancelled];
     }
 }

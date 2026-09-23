@@ -3,65 +3,22 @@ use schemars::schema_for;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Runs `$check::<L>()` for every state enum.
+/// Runs `$check::<L>()` for every state enum, and checks the enums are those of [`tables`],
+/// in its order, so a table added there is not skipped here.
 macro_rules! each_lifecycle {
     ($check:ident) => {
-        $check::<CommandReceiptState>();
-        $check::<AdmissionStampState>();
-        $check::<OperationState>();
-        $check::<EffectIntentState>();
-        $check::<EffectReceiptState>();
-        $check::<PendingCommitState>();
-        $check::<ControlReceiptState>();
-        $check::<ReservationPhase>();
-        $check::<ReservationTerminalState>();
-        $check::<SendState>();
-        $check::<ExpectedRecordState>();
-        $check::<HoldState>();
-        $check::<ManagerPhase>();
-        $check::<RevisionPhase>();
-        $check::<IntegrationAuthorityState>();
-        $check::<PlanPhase>();
-        $check::<PlanRevisionState>();
-        $check::<PlanSnapshotState>();
-        $check::<PlanProposalState>();
-        $check::<IntakeState>();
-        $check::<WorkBriefState>();
-        $check::<ProjectState>();
-        $check::<CharterState>();
-        $check::<CharterRevisionState>();
-        $check::<ManagerLeaseState>();
-        $check::<TaskState>();
-        $check::<TaskRunState>();
-        $check::<FenceState>();
-        $check::<AgentRunState>();
-        $check::<AgentCheckpointState>();
-        $check::<ScopeCapsuleState>();
-        $check::<ExecutionIdentityState>();
-        $check::<CredentialGrantState>();
-        $check::<FenceSessionState>();
-        $check::<WorkspaceState>();
-        $check::<CustodyPolicyState>();
-        $check::<CustodyCheckpointState>();
-        $check::<ArtifactCommitState>();
-        $check::<ArtifactState>();
-        $check::<WorkspaceConflictState>();
-        $check::<RestoreRequestState>();
-        $check::<IntegrationBasisState>();
-        $check::<VerificationRunState>();
-        $check::<EvidenceBundleState>();
-        $check::<BudgetState>();
-        $check::<BudgetReservationState>();
-        $check::<UsageReceiptState>();
-        $check::<OutcomeRecordState>();
-        $check::<TelemetryGapState>();
-        $check::<FindingState>();
-        $check::<DecisionState>();
-        $check::<InterventionState>();
-        $check::<GateState>();
-        $check::<ProjectionGap>();
-        $check::<ProjectionIntegrity>();
+        each_lifecycle!(@ $check; CommandReceiptState, AdmissionStampState, OperationState, EffectIntentState, EffectReceiptState, PendingCommitState, ControlReceiptState, ReservationPhase, ReservationTerminalState, SendState, ExpectedRecordState, HoldState, ManagerPhase, RevisionPhase, IntegrationAuthorityState, PlanPhase, PlanRevisionState, PlanSnapshotState, PlanProposalState, IntakeState, WorkBriefState, ProjectState, CharterState, CharterRevisionState, ManagerLeaseState, TaskState, TaskRunState, FenceState, AgentRunState, AgentCheckpointState, ScopeCapsuleState, ExecutionIdentityState, CredentialGrantState, FenceSessionState, WorkspaceState, CustodyPolicyState, CustodyCheckpointState, ArtifactCommitState, ArtifactState, WorkspaceConflictState, RestoreRequestState, IntegrationBasisState, VerificationRunState, EvidenceBundleState, BudgetState, BudgetReservationState, UsageReceiptState, OutcomeRecordState, TelemetryGapState, FindingState, DecisionState, InterventionState, GateState, ProjectionGap, ProjectionIntegrity)
     };
+    (@ $check:ident; $($t:ty),+) => {{
+        let visited: Vec<(&str, Option<&str>)> =
+            vec![$({ $check::<$t>(); (<$t as Lifecycle>::MACHINE, <$t as Lifecycle>::FIELD) }),+];
+        let listed: Vec<(&str, Option<&str>)> = tables()
+            .into_iter()
+            .filter(|t| t.same_as.is_none())
+            .map(|t| (t.machine, t.field))
+            .collect();
+        assert_eq!(visited, listed, "each_lifecycle! and tables() list different enums");
+    }};
 }
 
 fn serde_is_the_printed_name<L: Lifecycle>() {
@@ -170,76 +127,128 @@ fn tables_list_each_machine_field_once() {
 }
 
 #[test]
-fn every_requirement_is_listed_and_used() {
-    // A new variant fails to compile here until it is placed in `ALL`.
-    for &r in Requirement::ALL {
-        let i = match r {
-            Requirement::OperationPermitted => 0,
-            Requirement::RevalidationRefused => 1,
-            Requirement::HumanAdjudication => 2,
-            Requirement::OperationTerminal => 3,
-            Requirement::TerminalStateRecorded => 4,
-            Requirement::HoldCausesEmpty => 5,
-            Requirement::ActivationCommitted => 6,
-            Requirement::ActivationNotUncertain => 7,
-            Requirement::NoUncertainActivation => 8,
-            Requirement::ReplacementRevision => 9,
-            Requirement::FenceActive => 10,
-            Requirement::FenceNotPending => 11,
-            Requirement::FenceSettled => 12,
-            Requirement::FenceSessionReached => 13,
-            Requirement::NotRetireOnly => 14,
-            Requirement::QuarantineCleared => 15,
-            Requirement::ConflictAdjudicated => 16,
-            Requirement::CustodyCompleted => 17,
-            Requirement::ConservativeExpiry => 18,
-            Requirement::AppendOnlyCorrection => 19,
-        };
-        assert_eq!(Requirement::ALL.get(i), Some(&r));
-        assert!(!r.phrases().is_empty());
-    }
+fn every_requirement_is_used_once_in_all() {
+    let all: BTreeSet<Requirement> = Requirement::ALL.iter().copied().collect();
+    assert_eq!(all.len(), Requirement::ALL.len());
+    assert!(Requirement::ALL.iter().all(|r| !r.phrases().is_empty()));
     let used: BTreeSet<Requirement> = tables()
         .iter()
         .flat_map(|t| t.edges.iter().filter_map(|e| e.requires))
         .collect();
-    let all: BTreeSet<Requirement> = Requirement::ALL.iter().copied().collect();
     assert_eq!(used, all);
+}
+
+/// The requirement of `from → to`, which the table must allow.
+fn req<L: Lifecycle>(from: L, to: L) -> Option<Requirement> {
+    L::edge(from, to)
+        .unwrap_or_else(|| panic!("{} has no {from:?} → {to:?}", L::MACHINE))
+        .requires
 }
 
 #[test]
 fn transitions_report_their_requirement() {
     use OperationState as Op;
+    use Requirement as R;
     assert_eq!(
-        Op::Unresolved
-            .edge(Op::Compensated)
-            .and_then(|e| e.requires),
-        Some(Requirement::HumanAdjudication)
+        req(Op::Unresolved, Op::Compensated),
+        Some(R::HumanAdjudication)
     );
-    let to_unresolved = Op::Reconciling.edge(Op::Unresolved).unwrap();
-    assert_eq!(to_unresolved.requires, None);
+    assert_eq!(req(Op::Reconciling, Op::Unresolved), None);
+    assert_eq!(
+        req(Op::Reconciling, Op::Requested),
+        Some(R::NonApplicationProven)
+    );
+    assert_eq!(
+        req(Op::Requested, Op::Confirmed),
+        Some(R::RestoredFoundApplied)
+    );
+    assert_eq!(req(Op::Dispatching, Op::Confirmed), None);
     assert!(!Op::Released.allows(Op::Requested));
     assert!(!Op::Dispatching.allows(Op::Requested));
-    assert!(Op::Reconciling.allows(Op::Requested));
-
     assert_eq!(
-        UsageReceiptState::Censored
-            .edge(UsageReceiptState::Settled)
-            .and_then(|e| e.requires),
-        Some(Requirement::AppendOnlyCorrection)
+        req(UsageReceiptState::Censored, UsageReceiptState::Settled),
+        Some(R::AppendOnlyCorrection)
     );
     assert_eq!(
-        UsageReceiptState::Partial
-            .edge(UsageReceiptState::Settled)
-            .and_then(|e| e.requires),
+        req(UsageReceiptState::Partial, UsageReceiptState::Settled),
         None
     );
-    assert_eq!(
-        TaskRunState::Pending
-            .edge(TaskRunState::Cancelled)
-            .and_then(|e| e.requires),
-        Some(Requirement::FenceSettled)
-    );
     assert!(!TaskRunState::Succeeded.allows(TaskRunState::Cancelled));
+}
+
+/// The transitions whose requirement only a machine note states: the sync test binds each to
+/// the states its phrase names but cannot see one go missing, so each is listed here.
+#[test]
+fn conditions_stated_only_in_notes_are_on_their_edges() {
+    use Requirement as R;
+    use TaskRunState as T;
+    for (from, to) in [
+        (T::Preparing, T::Executing),
+        (T::Recovering, T::Executing),
+        (T::Verifying, T::Succeeded),
+    ] {
+        assert_eq!(req(from, to), Some(R::FenceActive));
+    }
+    for from in [T::Verifying, T::Recovering] {
+        assert_eq!(req(from, T::Failed), Some(R::FenceNotPending));
+    }
+    for from in [AgentRunState::Starting, AgentRunState::Running] {
+        assert_eq!(
+            req(from, AgentRunState::Cancelled),
+            Some(R::CancelFencesFirst)
+        );
+    }
+    for to in [FenceState::Fenced, FenceState::FencedUncertain] {
+        assert_eq!(
+            req(FenceState::FencePending, to),
+            Some(R::FenceSessionReached)
+        );
+    }
+    use PlanPhase as P;
+    assert_eq!(req(P::Activating, P::Active), Some(R::ActivationCommitted));
+    assert_eq!(
+        req(P::Activating, P::ActivationFailed),
+        Some(R::ActivationNotUncertain)
+    );
+    for from in [
+        P::Accepted,
+        P::Activating,
+        P::Active,
+        P::Paused,
+        P::Quiescing,
+        P::ActivationFailed,
+    ] {
+        assert_eq!(req(from, P::Cancelled), Some(R::NoUncertainActivation));
+    }
+    assert_eq!(
+        req(HoldState::Releasing, HoldState::Running),
+        Some(R::HoldCausesEmpty)
+    );
+    assert_eq!(
+        req(
+            EffectIntentState::Materialized,
+            EffectIntentState::Acknowledged
+        ),
+        Some(R::OperationTerminal)
+    );
+    use WorkspaceState as W;
+    for to in [W::Conflict, W::Preserving] {
+        assert_eq!(req(W::Quarantined, to), Some(R::QuarantineCleared));
+    }
+    for to in [W::Quarantined, W::Preserving] {
+        assert_eq!(req(W::Conflict, to), Some(R::ConflictAdjudicated));
+    }
+    assert_eq!(
+        req(ArtifactCommitState::Pending, ArtifactCommitState::Verified),
+        Some(R::CustodyCompleted)
+    );
+    assert_eq!(
+        req(
+            BudgetReservationState::Reserved,
+            BudgetReservationState::Expired
+        ),
+        Some(R::ConservativeExpiry)
+    );
 }
 
 #[test]

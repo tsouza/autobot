@@ -69,7 +69,7 @@ lifecycle! {
         [NotRun] -> [Running];
         [Running] -> [Passed, Failed];
         [Passed] -> [Invalidated];
-        [Failed, Invalidated] -> [Running];
+        [Failed, Invalidated] -> [Running] if NewRun;
     }
 }
 

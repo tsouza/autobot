@@ -23,7 +23,12 @@
 //!
 //! A parenthesis directly after a state (one space) annotates the transitions into it. A
 //! parenthesis at the start of a line or after two or more spaces is a note on the machine;
-//! it may run over several lines. The first state listed for a field is its initial state.
+//! it may run over several lines. A note after two or more spaces that follows a statement on
+//! its line (a *line note*) is also the line note of the transitions into that statement's last
+//! group: the last arrow of its chain. The first state listed for a field is its initial state.
+//!
+//! A machine note *names* a transition when it holds `FROM → TO` for it, or when one of its
+//! `;`-separated clauses starts with `TO:` ([`Machine::notes_naming`]).
 
 use crate::{Error, Result, markdown};
 use std::collections::BTreeSet;
@@ -79,6 +84,10 @@ pub struct Transition {
     pub assigns: Option<String>,
     /// The annotation printed after the target (`same snapshot`, `continuation`).
     pub note: Option<String>,
+    /// The line note of the transition: a note that closes the line of the statement that
+    /// printed it, when the transition is into that statement's last group (`human adjudication
+    /// only`). It is also in [`Machine::notes`].
+    pub line_note: Option<String>,
 }
 
 impl Machine {
@@ -87,6 +96,35 @@ impl Machine {
     pub fn field(&self, name: Option<&str>) -> Option<&Field> {
         self.fields.iter().find(|f| f.name.as_deref() == name)
     }
+
+    /// The notes of the machine that name the transition `from → to`: those that hold
+    /// `from → to` as whole states, or with a `;`-separated clause that starts with `to:`.
+    #[must_use]
+    pub fn notes_naming(&self, from: &str, to: &str) -> Vec<&str> {
+        let arrow = format!("{from} → {to}");
+        let label = format!("{to}:");
+        self.notes
+            .iter()
+            .map(String::as_str)
+            .filter(|n| {
+                contains_whole(n, &arrow)
+                    || n.split(';')
+                        .any(|clause| clause.trim_start().starts_with(&label))
+            })
+            .collect()
+    }
+}
+
+/// Whether `text` holds `needle` with no word character on either side of it, as a note holds a
+/// state or an arrow.
+#[must_use]
+pub fn contains_whole(text: &str, needle: &str) -> bool {
+    text.match_indices(needle).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + needle.len()..].chars().next();
+        !before.is_some_and(crate::design::is_word_char)
+            && !after.is_some_and(crate::design::is_word_char)
+    })
 }
 
 impl Field {
@@ -170,21 +208,49 @@ pub fn render(machines: &[Machine]) -> String {
                 continue;
             }
             lines.push(format!("{label}{}", f.states.join(" | ")));
-            for t in &f.transitions {
-                let from = match &t.from {
-                    Source::State(s) => s.as_str(),
-                    Source::Any => "any",
-                    Source::AnyNonTerminal => "any non-terminal",
-                };
-                let assigns = t
-                    .assigns
-                    .as_ref()
-                    .map_or(String::new(), |a| format!("{a} := "));
-                let note = t.note.as_ref().map_or(String::new(), |n| format!(" ({n})"));
-                lines.push(format!("{label}{from} → {assigns}{}{note}", t.to));
+            let mut rest = f.transitions.as_slice();
+            while let Some(first) = rest.first() {
+                let run = rest
+                    .iter()
+                    .take_while(|t| first.line_note.is_some() && t.line_note == first.line_note)
+                    .count()
+                    .max(1);
+                let (group, tail) = rest.split_at(run);
+                rest = tail;
+                match (&first.line_note, cross_product(group)) {
+                    (Some(ln), Some((froms, tos))) => {
+                        let froms: Vec<&str> = froms.iter().map(|s| source(s)).collect();
+                        let tos: Vec<String> = tos.iter().map(|t| target(t)).collect();
+                        lines.push(format!(
+                            "{label}{} → {}   ({ln})",
+                            froms.join(" | "),
+                            tos.join(" | ")
+                        ));
+                    }
+                    _ => {
+                        for t in group {
+                            let ln = t
+                                .line_note
+                                .as_ref()
+                                .map_or(String::new(), |n| format!("   ({n})"));
+                            lines.push(format!("{label}{} → {}{ln}", source(&t.from), target(t)));
+                        }
+                    }
+                }
             }
         }
-        lines.extend(m.notes.iter().map(|n| format!("({n})")));
+        let line_notes: Vec<&str> = m
+            .fields
+            .iter()
+            .flat_map(|f| &f.transitions)
+            .filter_map(|t| t.line_note.as_deref())
+            .collect();
+        lines.extend(
+            m.notes
+                .iter()
+                .filter(|n| !line_notes.contains(&n.as_str()))
+                .map(|n| format!("({n})")),
+        );
         let indent = " ".repeat(m.name.chars().count() + 2);
         for (i, line) in lines.iter().enumerate() {
             let lead = if i == 0 {
@@ -199,6 +265,43 @@ pub fn render(machines: &[Machine]) -> String {
         out.push('\n');
     }
     out
+}
+
+/// A source as the block prints it.
+fn source(s: &Source) -> &str {
+    match s {
+        Source::State(s) => s,
+        Source::Any => "any",
+        Source::AnyNonTerminal => "any non-terminal",
+    }
+}
+
+/// A transition's target as the block prints it, with its annotation.
+fn target(t: &Transition) -> String {
+    let assigns = t
+        .assigns
+        .as_ref()
+        .map_or(String::new(), |a| format!("{a} := "));
+    let note = t.note.as_ref().map_or(String::new(), |n| format!(" ({n})"));
+    format!("{assigns}{}{note}", t.to)
+}
+
+/// `group` as the sources and targets of one arrow, when it is exactly every source to every
+/// target, source by source, with the same target annotations for each source.
+fn cross_product(group: &[Transition]) -> Option<(Vec<&Source>, Vec<&Transition>)> {
+    let first = group.first()?;
+    let tos: Vec<&Transition> = group.iter().take_while(|t| t.from == first.from).collect();
+    let froms: Vec<&Source> = group.iter().step_by(tos.len()).map(|t| &t.from).collect();
+    let exact = group.len() == froms.len() * tos.len()
+        && group.chunks(tos.len()).zip(&froms).all(|(chunk, from)| {
+            chunk.iter().zip(&tos).all(|(t, want)| {
+                &t.from == *from
+                    && t.to == want.to
+                    && t.assigns == want.assigns
+                    && t.note == want.note
+            })
+        });
+    exact.then_some((froms, tos))
 }
 
 /// The body of the first fenced code block in `text`.
@@ -221,6 +324,10 @@ fn fenced_block(text: &str) -> Option<String> {
     None
 }
 
+/// The transitions of one field that a line note annotates: the field's index in its machine
+/// and the transitions' indexes in the field.
+type Hop = (usize, Vec<usize>);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Tok {
     Word(String),
@@ -230,7 +337,14 @@ enum Tok {
     Semi,
     Colon,
     Assign,
-    Note { text: String, detached: bool },
+    /// A note: `detached` after two or more spaces, `trailing` when it also follows a statement
+    /// on its line, and `hop` the transitions it annotates when it opened on an earlier line.
+    Note {
+        text: String,
+        detached: bool,
+        trailing: bool,
+        hop: Option<Hop>,
+    },
 }
 
 /// A note still open at the end of a line.
@@ -239,6 +353,10 @@ struct OpenNote {
     text: String,
     depth: usize,
     detached: bool,
+    /// The note follows a statement on the line it opened on.
+    trailing: bool,
+    /// The last arrow of that statement, once its line is parsed.
+    hop: Option<Hop>,
 }
 
 #[derive(Debug, Default)]
@@ -247,6 +365,8 @@ struct Parser {
     note: Option<OpenNote>,
     /// A field label with an empty chain, and the body column it was printed at.
     pending_field: Option<(String, usize)>,
+    /// The transitions into the last group of the last statement parsed.
+    last_hop: Option<Hop>,
 }
 
 type LineResult<T = ()> = std::result::Result<T, String>;
@@ -277,19 +397,62 @@ impl Parser {
             _ => None,
         };
         let mut stmt = Vec::new();
+        let mut line_notes = Vec::new();
         for tok in toks.into_iter().chain(std::iter::once(Tok::Semi)) {
             match tok {
                 Tok::Note {
                     text,
                     detached: true,
-                } => self.machine()?.notes.push(text),
+                    trailing,
+                    hop,
+                } => {
+                    self.machine()?.notes.push(text.clone());
+                    if let Some(hop) = hop {
+                        self.annotate(&hop, &text)?;
+                    } else if trailing {
+                        line_notes.push(text);
+                    }
+                }
                 Tok::Semi => {
                     if !stmt.is_empty() {
                         self.statement(&std::mem::take(&mut stmt), pending.clone(), column)?;
+                        if let Some(hop) = self.last_hop.clone() {
+                            for text in line_notes.drain(..) {
+                                self.annotate(&hop, &text)?;
+                            }
+                        }
+                        line_notes.clear();
                     }
                 }
                 other => stmt.push(other),
             }
+        }
+        if let Some(n) = &mut self.note
+            && n.trailing
+        {
+            n.trailing = false;
+            n.hop = self.last_hop.clone();
+        }
+        Ok(())
+    }
+
+    /// Sets `text` as the line note of the transitions of `hop`.
+    fn annotate(&mut self, hop: &Hop, text: &str) -> LineResult {
+        let (fi, transitions) = hop;
+        let field = self
+            .machine()?
+            .fields
+            .get_mut(*fi)
+            .ok_or("a line note on a missing field")?;
+        for &ti in transitions {
+            let t = field
+                .transitions
+                .get_mut(ti)
+                .ok_or("a line note on a missing transition")?;
+            t.line_note = Some(match t.line_note.take() {
+                Some(earlier) => format!("{earlier}; {text}"),
+                None => text.to_owned(),
+            });
         }
         Ok(())
     }
@@ -359,6 +522,8 @@ impl Parser {
                     toks.push(Tok::Note {
                         text: n.text.trim().to_owned(),
                         detached: n.detached,
+                        trailing: n.trailing,
+                        hop: n.hop,
                     });
                 } else {
                     n.text.push(c);
@@ -375,10 +540,17 @@ impl Parser {
             match c {
                 '(' => {
                     flush(&mut word, &mut toks);
+                    let follows_statement = toks
+                        .iter()
+                        .rev()
+                        .take_while(|t| !matches!(t, Tok::Semi))
+                        .any(|t| !matches!(t, Tok::Note { .. }));
                     self.note = Some(OpenNote {
                         text: String::new(),
                         depth: 1,
                         detached: run >= 2,
+                        trailing: run >= 2 && follows_statement,
+                        hop: None,
                     });
                 }
                 ')' => return Err("unbalanced `)`".to_owned()),
@@ -404,6 +576,7 @@ impl Parser {
     }
 
     fn statement(&mut self, toks: &[Tok], pending: Option<String>, column: usize) -> LineResult {
+        self.last_hop = None;
         let (label, chain) = match toks {
             [Tok::Word(f), Tok::Colon, rest @ ..] => (Some(f.clone()), rest),
             [Tok::Word(f), Tok::Note { text, .. }, Tok::Colon, rest @ ..] => {
@@ -430,11 +603,21 @@ impl Parser {
             return Ok(());
         }
         let groups = groups(chain)?;
-        let field = self.field(field_name)?;
+        let field = self.field(field_name.clone())?;
         if field.same_as.is_some() {
             return Err("states on a field printed with `as`".to_owned());
         }
-        add_chain(field, &groups)
+        let hop = add_chain(field, &groups)?;
+        let fi = self
+            .machine()?
+            .fields
+            .iter()
+            .position(|f| f.name == field_name)
+            .ok_or("unreachable field state")?;
+        if !hop.is_empty() {
+            self.last_hop = Some((fi, hop));
+        }
+        Ok(())
     }
 }
 
@@ -524,7 +707,10 @@ fn push_state(field: &mut Field, s: &str) {
     }
 }
 
-fn add_chain(field: &mut Field, groups: &[Group]) -> LineResult {
+/// Adds the states and transitions of a chain; returns the indexes of the transitions of its last
+/// arrow, into its last group.
+fn add_chain(field: &mut Field, groups: &[Group]) -> LineResult<Vec<usize>> {
+    let mut hop = Vec::new();
     for (i, g) in groups.iter().enumerate() {
         for (item, _) in &g.items {
             match item {
@@ -535,7 +721,8 @@ fn add_chain(field: &mut Field, groups: &[Group]) -> LineResult {
             }
         }
     }
-    for pair in groups.windows(2) {
+    let last = groups.len().saturating_sub(2);
+    for (w, pair) in groups.windows(2).enumerate() {
         let [from, to] = pair else { continue };
         for (src, _) in &from.items {
             let source = match src {
@@ -550,15 +737,19 @@ fn add_chain(field: &mut Field, groups: &[Group]) -> LineResult {
                     Item::Assign(f, s) => (Some(f.clone()), s.clone()),
                     Item::Any | Item::AnyNonTerminal => return Err("`any` as a target".to_owned()),
                 };
-                push_transition(
+                let i = push_transition(
                     field,
                     Transition {
                         from: source.clone(),
                         to: target,
                         assigns,
                         note: note.clone(),
+                        line_note: None,
                     },
                 );
+                if w == last {
+                    hop.push(i);
+                }
             }
         }
         if to.both {
@@ -574,24 +765,27 @@ fn add_chain(field: &mut Field, groups: &[Group]) -> LineResult {
                             to: s.clone(),
                             assigns: None,
                             note: note.clone(),
+                            line_note: None,
                         },
                     );
                 }
             }
         }
     }
-    Ok(())
+    Ok(hop)
 }
 
-/// Adds `t` unless the same arrow is already there: a `↔` may restate one.
-fn push_transition(field: &mut Field, t: Transition) {
-    if !field
+/// Adds `t` unless the same arrow is already there (a `↔` may restate one); returns its index.
+fn push_transition(field: &mut Field, t: Transition) -> usize {
+    if let Some(i) = field
         .transitions
         .iter()
-        .any(|x| x.from == t.from && x.to == t.to && x.assigns == t.assigns)
+        .position(|x| x.from == t.from && x.to == t.to && x.assigns == t.assigns)
     {
-        field.transitions.push(t);
+        return i;
     }
+    field.transitions.push(t);
+    field.transitions.len() - 1
 }
 
 /// Copies the states of every `field: as Kind` from the same field of `Kind`.
@@ -893,5 +1087,93 @@ mod tests {
             }
         }
         assert!(parse("# KERNEL\n\n## 11. Scope\n").is_err());
+    }
+
+    fn line_note<'a>(f: &'a Field, from: &str, to: &str) -> Option<&'a str> {
+        f.transitions
+            .iter()
+            .find(|t| t.from == st(from) && t.to == to && t.assigns.is_none())
+            .and_then(|t| t.line_note.as_deref())
+    }
+
+    #[test]
+    fn a_line_note_annotates_the_last_arrow_of_its_statement() {
+        let block = "Kind  A → B → C | D   (only after x)\n      A → E ; E → F   (two\n       lines)\n      F → A\n      (loose)\nOther  X → Y (attached)\n";
+        let machines = parse_block(block).unwrap();
+        let kind = find(&machines, "Kind").unwrap();
+        let own = kind.field(None).unwrap();
+        assert_eq!(line_note(own, "A", "B"), None);
+        assert_eq!(line_note(own, "B", "C"), Some("only after x"));
+        assert_eq!(line_note(own, "B", "D"), Some("only after x"));
+        assert_eq!(line_note(own, "A", "E"), None);
+        assert_eq!(line_note(own, "E", "F"), Some("two lines"));
+        // A note alone on its line follows no statement.
+        assert_eq!(line_note(own, "F", "A"), None);
+        assert_eq!(kind.notes, ["only after x", "two lines", "loose"]);
+        let other = find(&machines, "Other").unwrap();
+        let t = &other.field(None).unwrap().transitions[0];
+        assert_eq!(
+            (t.note.as_deref(), t.line_note.as_deref()),
+            (Some("attached"), None)
+        );
+        assert!(other.notes.is_empty());
+        assert_eq!(parse_block(&render(&machines)).unwrap(), machines);
+    }
+
+    #[test]
+    fn imported_kernel_line_notes_sit_on_their_arrow() {
+        let machines = parse(&kernel()).unwrap();
+        let op = find(&machines, "ExternalOperation").unwrap();
+        let own = op.field(None).unwrap();
+        assert_eq!(
+            line_note(own, "UNRESOLVED", "COMPENSATED"),
+            Some("human adjudication only")
+        );
+        assert_eq!(line_note(own, "RECONCILING", "UNRESOLVED"), None);
+        assert!(
+            line_note(own, "RECONCILING", "REQUESTED")
+                .is_some_and(|n| n.starts_with("non-application proven"))
+        );
+        assert!(op.notes.iter().any(|n| n == "human adjudication only"));
+        let task = find(&machines, "Task").unwrap().field(None).unwrap();
+        assert!(line_note(task, "BLOCKED", "READY").is_some());
+        assert_eq!(line_note(task, "READY", "BLOCKED"), None);
+        let expected = find(&machines, "expected record").unwrap();
+        assert!(
+            line_note(expected.field(None).unwrap(), "PENDING", "GAP")
+                .is_some_and(|n| n.contains("GAP is final"))
+        );
+    }
+
+    #[test]
+    fn notes_name_an_arrow_or_a_labelled_target() {
+        let machines = parse_block(
+            "Kind  A → B → C ; A → C\n      (A → B only once; C: reached last)\n      (AA → B is not A → BB)\n",
+        )
+        .unwrap();
+        let kind = find(&machines, "Kind").unwrap();
+        assert_eq!(
+            kind.notes_naming("A", "B"),
+            ["A → B only once; C: reached last"]
+        );
+        assert_eq!(
+            kind.notes_naming("B", "C"),
+            ["A → B only once; C: reached last"]
+        );
+        assert_eq!(
+            kind.notes_naming("A", "C"),
+            ["A → B only once; C: reached last"]
+        );
+        assert!(kind.notes_naming("A", "BB").len() == 1 && kind.notes_naming("B", "A").is_empty());
+
+        let real = parse(&kernel()).unwrap();
+        let stamp = find(&real, "AdmissionStamp").unwrap();
+        assert_eq!(
+            stamp.notes_naming("BROKER_ACCEPTED", "INVALIDATED").len(),
+            1
+        );
+        assert!(stamp.notes_naming("ISSUED", "INVALIDATED").is_empty());
+        let checkpoint = find(&real, "AgentCheckpoint").unwrap();
+        assert_eq!(checkpoint.notes_naming("CREATED", "QUARANTINED").len(), 1);
     }
 }

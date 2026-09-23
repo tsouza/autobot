@@ -20,7 +20,7 @@ lifecycle! {
         [Reserved] -> [Integrating];
         [Integrating] -> [Verified];
         [Reserved, Integrating, Verified] -> [Stale, Blocked];
-        [Verified] -> [Released];
+        [Verified] -> [Released] if MergesTerminal;
     }
 }
 

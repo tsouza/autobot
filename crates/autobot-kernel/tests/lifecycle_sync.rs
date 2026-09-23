@@ -1,17 +1,30 @@
 //! Keeps `autobot_kernel::lifecycle` equal to its single design home, KERNEL §10.
 //!
 //! The section is read with the shared parser, `autobot_devtools::design::lifecycle`, and
-//! diffed against [`tables`]: the same machines and fields, the same states in the same order
-//! (so the same initial state), the same transitions once `any` and `any non-terminal` are
-//! expanded, the same sibling-field moves, and every [`Requirement`] a table uses stated in the
-//! notes of its machine. The event types §10 names are [`LifecycleEvent`]. A failure means the
-//! two disagree; the design is the authority, so the fix is a `design` finding that decides which
-//! one is wrong, not an edit of either side to match.
+//! diffed against a list of tables, [`tables`] for the kernel's own. The check covers:
+//!
+//! - the same machines and fields, and the same `as` copies;
+//! - the same states in the same order, so the same initial state;
+//! - the same transitions once `any` and `any non-terminal` are expanded;
+//! - the same sibling-field moves;
+//! - requirements on exactly the annotated transitions. A transition is *annotated* when the
+//!   parser gives it an annotation or a line note, or a note of its machine names it. Each such
+//!   transition carries a [`Requirement`] that quotes every one of its annotations. Each phrase
+//!   of a transition's requirement is printed on the transition, or is in a note (naming it or
+//!   not) that holds one of the transition's two states as a word;
+//! - the same event types as [`LifecycleEvent`].
+//!
+//! A requirement on a transition §10 does not annotate is a condition stated only in a
+//! machine's prose. The check can bind it to the states its phrase names, but it cannot tell
+//! when such a requirement is missing.
+//!
+//! A failure means the two disagree. The design is the authority, so the fix is a `design`
+//! finding that decides which one is wrong, not an edit of either side to match.
 
-use autobot_devtools::design::lifecycle::{self as design, Field, Machine, Source};
+use autobot_devtools::design::lifecycle::{self as design, Field, Machine, Source, Transition};
 use autobot_devtools::markdown;
 use autobot_kernel::lifecycle::{LifecycleEvent, Requirement, Table, tables};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 const KERNEL: &str = include_str!("../../../docs/design/AUTOBOT-KERNEL.md");
 
@@ -20,19 +33,38 @@ fn squash(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The `(from, to)` pairs `field` prints, with `any` and `any non-terminal` expanded: `any`
-/// to every state, `any non-terminal` to every state with an outgoing transition from a named
-/// source; neither to the target itself.
-fn printed_edges(field: &Field) -> BTreeSet<(String, String)> {
-    let own = field.transitions.iter().filter(|t| t.assigns.is_none());
+/// What §10 prints about one transition.
+#[derive(Default)]
+struct Printed {
+    /// Its annotation and line note.
+    own: Vec<String>,
+    /// The machine notes that name it.
+    naming: Vec<String>,
+}
+
+impl Printed {
+    fn all(&self) -> impl Iterator<Item = &String> {
+        self.own.iter().chain(&self.naming)
+    }
+}
+
+/// The `(from, to)` transitions `field` of `m` prints, with `any` and `any non-terminal`
+/// expanded: `any` to every state, `any non-terminal` to every state with an outgoing
+/// transition from a named source; neither to the target itself.
+fn printed_edges(m: &Machine, field: &Field) -> BTreeMap<(String, String), Printed> {
+    let own: Vec<&Transition> = field
+        .transitions
+        .iter()
+        .filter(|t| t.assigns.is_none())
+        .collect();
     let non_terminal: BTreeSet<&str> = own
-        .clone()
+        .iter()
         .filter_map(|t| match &t.from {
             Source::State(s) => Some(s.as_str()),
             Source::Any | Source::AnyNonTerminal => None,
         })
         .collect();
-    let mut out = BTreeSet::new();
+    let mut out: BTreeMap<(String, String), Printed> = BTreeMap::new();
     for t in own {
         let sources: Vec<&str> = match &t.from {
             Source::State(s) => vec![s.as_str()],
@@ -40,7 +72,14 @@ fn printed_edges(field: &Field) -> BTreeSet<(String, String)> {
             Source::AnyNonTerminal => non_terminal.iter().copied().collect(),
         };
         for from in sources.into_iter().filter(|s| *s != t.to) {
-            out.insert((from.to_owned(), t.to.clone()));
+            let p = out.entry((from.to_owned(), t.to.clone())).or_default();
+            p.own
+                .extend(t.note.iter().chain(&t.line_note).map(|n| squash(n)));
+            p.naming = m
+                .notes_naming(from, &t.to)
+                .into_iter()
+                .map(squash)
+                .collect();
         }
     }
     out
@@ -61,39 +100,21 @@ fn printed_sets(field: &Field) -> BTreeSet<(String, String, String)> {
         .collect()
 }
 
-/// The note text a requirement of `table` may be stated in: the notes of the machine the
-/// field is printed on (for a copy, the machine it copies) and the annotations of the field's
-/// transitions.
-fn notes_for(machines: &[Machine], table: &Table) -> String {
-    let home = table.same_as.unwrap_or(table.machine);
-    let Some(m) = machines.iter().find(|m| m.name == home) else {
-        return String::new();
-    };
-    let annotations = m
-        .field(table.field)
-        .into_iter()
-        .flat_map(|f| f.transitions.iter().filter_map(|t| t.note.as_deref()));
-    squash(
-        &m.notes
-            .iter()
-            .map(String::as_str)
-            .chain(annotations)
-            .collect::<Vec<_>>()
-            .join(" "),
-    )
-}
-
 fn field_label(field: Option<&str>) -> String {
     field.map_or_else(|| "its own states".to_owned(), |f| format!("field `{f}`"))
 }
 
-/// Every disagreement between `kernel`'s §10 and [`tables`], one line each.
+/// Every disagreement between `kernel`'s §10 and the kernel's own tables, one line each.
 fn diff(kernel: &str) -> Vec<String> {
+    diff_tables(kernel, &tables())
+}
+
+/// Every disagreement between `kernel`'s §10 and `tables`, one line each.
+fn diff_tables(kernel: &str, tables: &[Table]) -> Vec<String> {
     let machines = match design::parse(kernel) {
         Ok(m) => m,
         Err(e) => return vec![format!("§10 does not parse: {e}")],
     };
-    let tables = tables();
     let mut out = Vec::new();
 
     for m in &machines {
@@ -111,7 +132,7 @@ fn diff(kernel: &str) -> Vec<String> {
         }
     }
 
-    for t in &tables {
+    for t in tables {
         let at = format!("`{}` {}", t.machine, field_label(t.field));
         let Some(field) = machines
             .iter()
@@ -136,21 +157,66 @@ fn diff(kernel: &str) -> Vec<String> {
             ));
         }
 
-        let printed = printed_edges(field);
-        let kernel: BTreeSet<(String, String)> = t
+        // A copy is annotated where the field it copies is printed.
+        let home = field
+            .same_as
+            .as_deref()
+            .and_then(|kind| design::find(&machines, kind))
+            .or_else(|| machines.iter().find(|m| m.name == t.machine));
+        let Some(home) = home else { continue };
+        let home_field = home.field(t.field).unwrap_or(field);
+        let printed = printed_edges(home, home_field);
+        let kernel: BTreeMap<(String, String), Option<Requirement>> = t
             .edges
             .iter()
-            .map(|e| (e.from.to_owned(), e.to.to_owned()))
+            .map(|e| ((e.from.to_owned(), e.to.to_owned()), e.requires))
             .collect();
-        for (from, to) in printed.difference(&kernel) {
+        for (from, to) in printed.keys().filter(|k| !kernel.contains_key(*k)) {
             out.push(format!(
                 "{at}: §10 prints {from} → {to} and the kernel does not allow it"
             ));
         }
-        for (from, to) in kernel.difference(&printed) {
+        for (from, to) in kernel.keys().filter(|k| !printed.contains_key(*k)) {
             out.push(format!(
                 "{at}: the kernel allows {from} → {to} and §10 does not print it"
             ));
+        }
+
+        let prose: Vec<String> = home.notes.iter().map(|n| squash(n)).collect();
+        let empty = Printed::default();
+        for ((from, to), requires) in &kernel {
+            let p = printed.get(&(from.clone(), to.clone())).unwrap_or(&empty);
+            let Some(r) = requires else {
+                for a in p.all() {
+                    out.push(format!(
+                        "{at}: §10 annotates {from} → {to} with `{a}` and the kernel gives it no requirement"
+                    ));
+                }
+                continue;
+            };
+            let phrases: Vec<String> = r.phrases().iter().map(|s| squash(s)).collect();
+            for phrase in &phrases {
+                let bound =
+                    design::contains_whole(phrase, from) || design::contains_whole(phrase, to);
+                let on_it = p.own.iter().any(|a| a.contains(phrase.as_str()));
+                let noted = p
+                    .naming
+                    .iter()
+                    .chain(&prose)
+                    .any(|n| n.contains(phrase.as_str()));
+                if !on_it && !(noted && bound) {
+                    out.push(format!(
+                        "{at}: {from} → {to} carries {r:?}, whose phrase `{phrase}` §10 prints neither on it nor in a note holding {from} or {to}"
+                    ));
+                }
+            }
+            for a in p.all() {
+                if !phrases.iter().any(|ph| a.contains(ph.as_str())) {
+                    out.push(format!(
+                        "{at}: §10 annotates {from} → {to} with `{a}`, which {r:?} does not quote"
+                    ));
+                }
+            }
         }
 
         let printed = printed_sets(field);
@@ -163,19 +229,6 @@ fn diff(kernel: &str) -> Vec<String> {
             out.push(format!(
                 "{at}: {from} → {sibling} := {to} is in only one of §10 and the kernel"
             ));
-        }
-
-        let notes = notes_for(&machines, t);
-        let used: BTreeSet<Requirement> = t.edges.iter().filter_map(|e| e.requires).collect();
-        for r in used {
-            for phrase in r.phrases() {
-                if !notes.contains(&squash(phrase)) {
-                    out.push(format!(
-                        "{at}: requirement {r:?} cites `{phrase}`, which the notes of `{}` do not state",
-                        t.same_as.unwrap_or(t.machine)
-                    ));
-                }
-            }
         }
     }
 
@@ -238,6 +291,23 @@ fn edited(from: &str, to: &str) -> String {
     KERNEL.replacen(from, to, 1)
 }
 
+/// The kernel's tables with the requirement of `from → to` of `machine` moved to `onto`.
+fn moved(machine: &str, from: &str, to: &str, onto: (&str, &str)) -> Vec<Table> {
+    let mut all = tables();
+    let t = all
+        .iter_mut()
+        .find(|t| t.machine == machine && t.field.is_none())
+        .unwrap();
+    let source = t
+        .edges
+        .iter()
+        .position(|e| e.from == from && e.to == to)
+        .unwrap();
+    let target = t.edges.iter().position(|e| (e.from, e.to) == onto).unwrap();
+    t.edges[target].requires = t.edges[source].requires.take();
+    all
+}
+
 #[test]
 fn kernel_tables_match_kernel_section_10() {
     let problems = diff(KERNEL);
@@ -250,18 +320,12 @@ fn a_missing_edge_fails() {
         "FENCED | FENCED_UNCERTAIN ; FENCED_UNCERTAIN → FENCED",
         "FENCED | FENCED_UNCERTAIN",
     ));
-    assert!(
-        problems.contains(
-            &"`TaskRun` field `fence_state`: the kernel allows FENCED_UNCERTAIN → FENCED and §10 does not print it"
-                .to_owned()
-        ),
-        "{problems:#?}"
-    );
-    assert!(
-        problems.iter().any(|p| p.starts_with(
-            "`AgentRun` field `fence_state`: the kernel allows FENCED_UNCERTAIN → FENCED"
-        )),
-        "{problems:#?}"
+    assert_eq!(
+        problems,
+        [
+            "`TaskRun` field `fence_state`: the kernel allows FENCED_UNCERTAIN → FENCED and §10 does not print it",
+            "`AgentRun` field `fence_state`: the kernel allows FENCED_UNCERTAIN → FENCED and §10 does not print it",
+        ],
     );
 }
 
@@ -296,24 +360,17 @@ fn an_edge_hidden_behind_any_non_terminal_fails() {
 #[test]
 fn a_renamed_state_fails() {
     let problems = diff(&KERNEL.replace("HEARTBEAT_LOST", "HEARTBEAT_MISSED"));
+    for want in [
+        "`AgentRun` its own states: §10 prints RUNNING → HEARTBEAT_MISSED and the kernel does not allow it",
+        "`AgentRun` its own states: the kernel allows RUNNING → HEARTBEAT_LOST and §10 does not print it",
+        "`AgentRun` its own states: HEARTBEAT_LOST → fence_state := FENCE_PENDING is in only one of §10 and the kernel",
+    ] {
+        assert!(problems.contains(&want.to_owned()), "{problems:#?}");
+    }
     assert!(
         problems
             .iter()
             .any(|p| p.starts_with("`AgentRun` its own states: §10 lists the states")),
-        "{problems:#?}"
-    );
-    assert!(
-        problems.contains(
-            &"`AgentRun` its own states: §10 prints RUNNING → HEARTBEAT_MISSED and the kernel does not allow it"
-                .to_owned()
-        ),
-        "{problems:#?}"
-    );
-    assert!(
-        problems.contains(
-            &"`AgentRun` its own states: HEARTBEAT_LOST → fence_state := FENCE_PENDING is in only one of §10 and the kernel"
-                .to_owned()
-        ),
         "{problems:#?}"
     );
 }
@@ -333,7 +390,7 @@ fn a_reordered_initial_state_fails() {
 }
 
 #[test]
-fn a_dropped_requirement_fails() {
+fn a_dropped_annotation_fails() {
     let problems = diff(&edited(
         "CENSORED → SETTLED (append-only correction)",
         "CENSORED → SETTLED",
@@ -341,8 +398,88 @@ fn a_dropped_requirement_fails() {
     assert_eq!(
         problems,
         [
-            "`UsageReceipt` its own states: requirement AppendOnlyCorrection cites `append-only correction`, which the notes of `UsageReceipt` do not state"
+            "`UsageReceipt` its own states: CENSORED → SETTLED carries AppendOnlyCorrection, whose phrase `append-only correction` §10 prints neither on it nor in a note holding CENSORED or SETTLED"
         ],
+    );
+}
+
+#[test]
+fn a_new_annotation_fails() {
+    let problems = diff(&edited(
+        "CustodyPolicy        ACTIVE → RETIRED",
+        "CustodyPolicy        ACTIVE → RETIRED (superseded)",
+    ));
+    assert_eq!(
+        problems,
+        [
+            "`CustodyPolicy` its own states: §10 annotates ACTIVE → RETIRED with `superseded` and the kernel gives it no requirement"
+        ],
+    );
+}
+
+#[test]
+fn an_annotation_moved_to_another_edge_fails() {
+    let problems = diff(&edited(
+        "PENDING | PARTIAL → UNKNOWN → CENSORED ; CENSORED → SETTLED (append-only correction)",
+        "PENDING | PARTIAL → UNKNOWN → CENSORED (append-only correction) ; CENSORED → SETTLED",
+    ));
+    assert_eq!(
+        problems,
+        [
+            "`UsageReceipt` its own states: CENSORED → SETTLED carries AppendOnlyCorrection, whose phrase `append-only correction` §10 prints neither on it nor in a note holding CENSORED or SETTLED",
+            "`UsageReceipt` its own states: §10 annotates UNKNOWN → CENSORED with `append-only correction` and the kernel gives it no requirement",
+        ],
+    );
+}
+
+#[test]
+fn a_requirement_moved_to_another_edge_fails() {
+    let annotated = diff_tables(
+        KERNEL,
+        &moved(
+            "UsageReceipt",
+            "CENSORED",
+            "SETTLED",
+            ("PARTIAL", "SETTLED"),
+        ),
+    );
+    assert_eq!(
+        annotated,
+        [
+            "`UsageReceipt` its own states: §10 annotates CENSORED → SETTLED with `append-only correction` and the kernel gives it no requirement",
+            "`UsageReceipt` its own states: PARTIAL → SETTLED carries AppendOnlyCorrection, whose phrase `append-only correction` §10 prints neither on it nor in a note holding PARTIAL or SETTLED",
+        ],
+    );
+    // A requirement stated only in prose is bound to the states its phrase names.
+    let prose = diff_tables(
+        KERNEL,
+        &moved(
+            "TaskRun",
+            "PREPARING",
+            "EXECUTING",
+            ("ADMITTED", "PREPARING"),
+        ),
+    );
+    assert_eq!(
+        prose,
+        [
+            "`TaskRun` its own states: ADMITTED → PREPARING carries FenceActive, whose phrase `once fence_state leaves ACTIVE the phase never moves to EXECUTING or SUCCEEDED` §10 prints neither on it nor in a note holding ADMITTED or PREPARING"
+        ],
+    );
+}
+
+#[test]
+fn a_copy_printed_as_its_own_table_fails() {
+    let problems = diff(&edited(
+        "fence_state: as TaskRun",
+        "fence_state:  ACTIVE → FENCE_PENDING → FENCED | FENCED_UNCERTAIN ; FENCED_UNCERTAIN → FENCED",
+    ));
+    assert!(
+        problems.contains(
+            &r#"`AgentRun` field `fence_state`: §10 prints it as a copy of None, the kernel of Some("TaskRun")"#
+                .to_owned()
+        ),
+        "{problems:#?}"
     );
 }
 
