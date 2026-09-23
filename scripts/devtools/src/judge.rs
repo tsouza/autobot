@@ -20,21 +20,26 @@
 //!   state over [`STATE_LIMIT`] or a diff GitHub truncated, a missing key, and a transport
 //!   error or non-JSON response.
 //!
+//! A failed read of the charter, the pull request, its files or its linked issue, or an
+//! unresolvable repository or GitHub token, is an outage of the inputs: every entry falls
+//! back to the backstop, the service is not called, and the check exits zero. A linked issue
+//! that does not exist (GitHub answers 404) is not an outage: the entries are asked without
+//! its text, and the state and the output say so. Only a usage error (a missing or
+//! non-numeric argument) makes [`run`] fail.
+//!
 //! Every run prints the model version the service reports, its token usage and the SHA-256 of
-//! the request body, for the record. Failing to read the pull request or the charter is an
-//! error of the check itself, not an answer, and exits non-zero with the error.
+//! the request body, for the record.
 //!
 //! Choices the design leaves open:
 //!
-//! - **Model.** [`MODEL`] is `jev-latest`, the service's moving alias. Pinning it to a
-//!   versioned model name stays open until the first live run of the `judge` workflow
-//!   (#317) records the version the service reports; every run prints that version.
+//! - **Model.** [`MODEL`] is `jev-latest`, the service's moving alias, until #317 pins it to
+//!   the versioned model name its first live run records; every run prints that name.
 //! - **Confidence.** The confidence of a "violates" answer is `probabilities["violates"]`
 //!   when the answer carries it, otherwise the answer's `confidence`. The probability of the
 //!   chosen option is the quantity the threshold is worded in ("the confidence at or above
 //!   which a violates answer blocks"); `confidence` is the service's own summary and is the
-//!   fallback only. Either value outside `0..=1`, or a probability of another option above
-//!   the one for "violates", makes the answer malformed.
+//!   fallback only. A `confidence` or any option's probability that is not a number in `0..=1`,
+//!   or another option at least as probable as "violates", makes the answer malformed.
 //! - **Size limit.** The service documents no limit, so the state is capped at
 //!   [`STATE_LIMIT`] bytes. An oversized state, or a changed file whose patch GitHub omits,
 //!   means the judged input would be incomplete: every entry abstains and the service is not
@@ -104,6 +109,8 @@ pub struct Inputs {
     pub body: String,
     /// The task issue the body links, if any.
     pub issue: Option<Issue>,
+    /// The number the body links when GitHub has no such issue (404).
+    pub missing_issue: Option<u64>,
     /// The diff, one section per changed file.
     pub diff: String,
     /// Whether GitHub left part of the diff out: a changed file without a patch, or a file
@@ -137,11 +144,12 @@ pub fn linked_issue(body: &str) -> Option<u64> {
 }
 
 /// Reads pull request `pr`: its title and body, its changed files as a diff, and the task
-/// issue its body links.
+/// issue its body links. A linked issue GitHub answers with 404 is recorded in
+/// [`Inputs::missing_issue`] instead of failing.
 ///
 /// # Errors
-/// Fails if a GitHub call fails, or the pull request, a file or the issue lacks a field the
-/// judge reads.
+/// Fails if any other GitHub call fails, or the pull request, a file or the issue lacks a
+/// field the judge reads.
 pub fn read_inputs(api: &impl Api, pr: u64) -> Result<Inputs> {
     let pull = api.request(Method::Get, &format!("pulls/{pr}"), None)?;
     let Some(title) = pull["title"].as_str() else {
@@ -171,27 +179,37 @@ pub fn read_inputs(api: &impl Api, pr: u64) -> Result<Inputs> {
             None => diff.push_str("(no textual diff)\n"),
         }
     }
-    let issue = match linked_issue(body) {
-        Some(number) => {
-            let issue = api.request(Method::Get, &format!("issues/{number}"), None)?;
-            let Some(title) = issue["title"].as_str() else {
-                return Err(Error::Parse(format!("issues/{number}: no `title`")));
-            };
-            Some(Issue {
-                number,
-                title: title.to_owned(),
-                body: issue["body"].as_str().unwrap_or_default().to_owned(),
-            })
+    let (mut issue, mut missing_issue) = (None, None);
+    if let Some(number) = linked_issue(body) {
+        match api.request(Method::Get, &format!("issues/{number}"), None) {
+            Ok(found) => {
+                let Some(title) = found["title"].as_str() else {
+                    return Err(Error::Parse(format!("issues/{number}: no `title`")));
+                };
+                issue = Some(Issue {
+                    number,
+                    title: title.to_owned(),
+                    body: found["body"].as_str().unwrap_or_default().to_owned(),
+                });
+            }
+            Err(e) if is_not_found(&e) => missing_issue = Some(number),
+            Err(e) => return Err(e),
         }
-        None => None,
-    };
+    }
     Ok(Inputs {
         title: title.to_owned(),
         body: body.to_owned(),
         issue,
+        missing_issue,
         diff,
         diff_truncated,
     })
+}
+
+/// Whether `error` is GitHub's answer for a resource that does not exist, as the client
+/// reports a 404 status.
+fn is_not_found(error: &Error) -> bool {
+    matches!(error, Error::Http(msg) if msg.ends_with("http status: 404"))
 }
 
 /// The hex SHA-256 of `bytes`.
@@ -241,9 +259,14 @@ pub fn state(entries: &[Entry], inputs: &Inputs) -> String {
         "pull request title and body",
         &format!("{}\n\n{}", inputs.title, inputs.body),
     );
-    match &issue_text {
-        Some(text) => section("UNTRUSTED_ISSUE_OR_PR_TEXT", "linked task issue", text),
-        None => section(
+    match (&issue_text, inputs.missing_issue) {
+        (Some(text), _) => section("UNTRUSTED_ISSUE_OR_PR_TEXT", "linked task issue", text),
+        (None, Some(n)) => section(
+            "CANONICAL_AUTOBOT_FACT",
+            "linked task issue",
+            &format!("The pull request links #{n}, which does not exist; its text is unavailable."),
+        ),
+        (None, None) => section(
             "CANONICAL_AUTOBOT_FACT",
             "linked task issue",
             "The pull request links no task issue.",
@@ -303,6 +326,9 @@ pub enum Reason {
     NoKey,
     /// The call failed or the response was not JSON.
     Transport(String),
+    /// The charter, the pull request, its files or its linked issue could not be read; the service was not
+    /// called.
+    Unavailable(String),
 }
 
 impl std::fmt::Display for Reason {
@@ -324,6 +350,7 @@ impl std::fmt::Display for Reason {
             ),
             Self::NoKey => write!(f, "`{API_KEY_VAR}` is not set; not asked"),
             Self::Transport(why) => write!(f, "service unavailable: {why}"),
+            Self::Unavailable(why) => write!(f, "inputs unavailable: {why}; not asked"),
         }
     }
 }
@@ -355,19 +382,26 @@ fn decide_one(entry: &Entry, answer: Option<&Value>) -> Outcome {
         Some(COMPLIES) => Outcome::Backstop(Reason::Complies),
         Some(UNSURE) => Outcome::Backstop(Reason::Unsure),
         Some(VIOLATES) => {
-            let probabilities = answer["probabilities"].as_object();
-            let confidence = match probabilities.and_then(|p| p.get(VIOLATES)) {
-                Some(p) => unit(p),
-                None => unit(&answer["confidence"]),
+            let probabilities = match &answer["probabilities"] {
+                Value::Null => None,
+                Value::Object(p) if p.values().all(|v| unit(v).is_some()) => Some(p),
+                _ => return malformed("`probabilities` holds a value that is not from 0 to 1"),
             };
-            let Some(confidence) = confidence else {
+            let summary = &answer["confidence"];
+            if !summary.is_null() && unit(summary).is_none() {
+                return malformed("`confidence` is not from 0 to 1");
+            }
+            let violates = probabilities.and_then(|p| p.get(VIOLATES));
+            let Some(confidence) = unit(violates.unwrap_or(summary)) else {
                 return malformed("no confidence from 0 to 1 for \"violates\"");
             };
-            let contradicted = probabilities
-                .filter(|p| p.contains_key(VIOLATES))
-                .is_some_and(|p| p.values().filter_map(unit).any(|v| v > confidence));
+            let contradicted = violates.is_some()
+                && probabilities.is_some_and(|p| {
+                    p.iter()
+                        .any(|(k, v)| k != VIOLATES && unit(v).is_some_and(|v| v >= confidence))
+                });
             if contradicted {
-                malformed("another option is more probable than the chosen \"violates\"")
+                malformed("another option is at least as probable as the chosen \"violates\"")
             } else if confidence >= entry.threshold {
                 Outcome::Blocks(confidence)
             } else {
@@ -446,8 +480,11 @@ pub struct Report {
     pub model: Option<String>,
     /// The input and output tokens the service reported, when it answered with them.
     pub usage: Option<(u64, u64)>,
-    /// The hex SHA-256 of the request body.
-    pub digest: String,
+    /// The hex SHA-256 of the request body, when the inputs were read and a request built.
+    pub digest: Option<String>,
+    /// Facts about the inputs worth recording, such as a linked issue that does not exist or
+    /// why the inputs could not be read.
+    pub notes: Vec<String>,
 }
 
 impl Report {
@@ -479,7 +516,11 @@ impl std::fmt::Display for Report {
         );
         writeln!(f, "judge: requested model {MODEL}; answered by {model}")?;
         writeln!(f, "judge: usage {usage}")?;
-        writeln!(f, "judge: request sha256 {}", self.digest)?;
+        let digest = self.digest.as_deref().unwrap_or("none (no request built)");
+        writeln!(f, "judge: request sha256 {digest}")?;
+        for note in &self.notes {
+            writeln!(f, "judge: {note}")?;
+        }
         for (entry, outcome) in &self.outcomes {
             match outcome {
                 Outcome::Blocks(c) => writeln!(
@@ -534,7 +575,53 @@ pub fn judge(
         usage: usage["input_tokens"]
             .as_u64()
             .zip(usage["output_tokens"].as_u64()),
-        digest,
+        digest: Some(digest),
+        notes: inputs
+            .missing_issue
+            .map(|n| format!("linked issue #{n} does not exist; judged without its text"))
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// The report when the inputs could not be read: every entry of `entries` (none when the
+/// charter itself is unreadable) falls back with [`Reason::Unavailable`], and the service is
+/// not called.
+#[must_use]
+pub fn unavailable(entries: Vec<Entry>, why: &str) -> Report {
+    let outcomes = entries
+        .into_iter()
+        .map(|e| (e, Outcome::Backstop(Reason::Unavailable(why.to_owned()))))
+        .collect();
+    Report {
+        outcomes,
+        model: None,
+        usage: None,
+        digest: None,
+        notes: vec![format!(
+            "inputs unavailable: {why}; the `review` backstop applies to every judged entry"
+        )],
+    }
+}
+
+/// Judges pull request `pr` from the charter text and a GitHub client, either of which may
+/// have failed to load. A failure to load or parse the charter, or to read the pull request,
+/// is an outage: the report falls back with [`unavailable`] and the service is not called.
+#[must_use]
+pub fn judge_pr<A: Api>(
+    charter_text: Result<String>,
+    api: Result<A>,
+    pr: u64,
+    key: Option<&str>,
+    service: &impl Service,
+) -> Report {
+    let entries = match charter_text.and_then(|text| charter::judged_entries(&text)) {
+        Ok(entries) => entries,
+        Err(e) => return unavailable(Vec::new(), &format!("charter: {e}")),
+    };
+    match api.and_then(|api| read_inputs(&api, pr)) {
+        Ok(inputs) => judge(&entries, &inputs, key, service),
+        Err(e) => unavailable(entries, &format!("pull request #{pr}: {e}")),
     }
 }
 
@@ -562,21 +649,28 @@ pub fn api_base(env: impl Fn(&str) -> Option<String>) -> String {
 /// argument against the `judged` entries of the `CHARTER.md` at the top of the working tree,
 /// prints the [`Report`], and returns its exit code.
 ///
+/// An unresolvable working tree, repository or GitHub token is an outage like a failed read,
+/// handled by [`judge_pr`].
+///
 /// # Errors
-/// Fails on a missing or non-numeric argument, an unresolvable repository, a missing GitHub
-/// token, a failed GitHub call, or a charter that cannot be read or parsed.
+/// Fails only on a missing or non-numeric argument.
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<ExitCode> {
     let pr = pr_number(args, "judge")?;
-    let root = crate::git::toplevel(".")?;
-    let path = std::path::Path::new(&root).join("CHARTER.md");
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| Error::Parse(format!("{}: {e}", path.display())))?;
-    let entries = charter::judged_entries(&text)?;
-    let client = Client::new(crate::github::repository(&root)?)?;
-    let inputs = read_inputs(&client, pr)?;
+    let (charter_text, client) = match crate::git::toplevel(".") {
+        Ok(root) => {
+            let path = std::path::Path::new(&root).join("CHARTER.md");
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| Error::Parse(format!("{}: {e}", path.display())));
+            (text, crate::github::repository(&root).and_then(Client::new))
+        }
+        Err(e) => (
+            Err(Error::Parse(e.to_string())),
+            Err(Error::Parse(e.to_string())),
+        ),
+    };
     let env = |name: &str| std::env::var(name).ok();
     let service = Http::new(&api_base(env));
-    let report = judge(&entries, &inputs, api_key(env).as_deref(), &service);
+    let report = judge_pr(charter_text, client, pr, api_key(env).as_deref(), &service);
     print!("{report}");
     Ok(report.exit_code())
 }
@@ -605,6 +699,7 @@ mod tests {
                 body: "Objective".to_owned(),
             }),
             diff: "+++ a.rs (added)\n@@ -0,0 +1 @@\n+fn a() {}\n".to_owned(),
+            missing_issue: None,
             diff_truncated: false,
         }
     }
@@ -728,6 +823,12 @@ mod tests {
             r#"{"type":"choice","choice":"violates","confidence":1.5}"#,
             r#"{"type":"choice","choice":"violates","probabilities":{"violates":"0.99"},"confidence":0.99}"#,
             r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9,"complies":0.95}}"#,
+            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9,"complies":2.0}}"#,
+            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9,"complies":"0.05"}}"#,
+            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9,"unsure":-0.1}}"#,
+            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.5,"complies":0.5}}"#,
+            r#"{"type":"choice","choice":"violates","probabilities":[0.9],"confidence":0.9}"#,
+            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9},"confidence":1.5}"#,
             r#""violates""#,
         ] {
             let report = judge_l1(&Canned::answering(&response(answer)));
@@ -868,11 +969,12 @@ mod tests {
             assert!(state[at + header.len()..].starts_with(content), "{header}");
             from = at + header.len();
         }
-        assert_eq!(report.digest, sha256(request.to_string().as_bytes()));
+        let digest = sha256(request.to_string().as_bytes());
+        assert_eq!(report.digest.as_deref(), Some(digest.as_str()));
         assert!(
             report
                 .to_string()
-                .contains(&format!("request sha256 {}", report.digest))
+                .contains(&format!("request sha256 {digest}"))
         );
     }
 
@@ -904,32 +1006,36 @@ mod tests {
         assert_eq!(linked_issue("refs #5"), None);
     }
 
-    /// Serves recorded GET responses by path.
-    struct Recorded(BTreeMap<String, Value>);
+    /// Serves recorded GET responses by path, fails a path in `status` with that HTTP status
+    /// the way the client reports it, and fails any other path with 404.
+    struct Recorded(BTreeMap<String, Value>, BTreeMap<String, u16>);
 
     impl Api for Recorded {
         fn request(&self, method: Method, path: &str, _body: Option<&Value>) -> Result<Value> {
             assert_eq!(method, Method::Get);
-            self.0
-                .get(path)
-                .cloned()
-                .ok_or_else(|| Error::Parse(format!("404 {path}")))
+            self.0.get(path).cloned().ok_or_else(|| {
+                let status = self.1.get(path).copied().unwrap_or(404);
+                Error::Http(format!("Get {path}: http status: {status}"))
+            })
         }
     }
 
     // Shaped like GET pulls/{n}, pulls/{n}/files and issues/{n}, keeping the fields read.
     fn github(files: Value) -> Recorded {
-        Recorded(BTreeMap::from([
-            (
-                "pulls/320".to_owned(),
-                json!({"number": 320, "title": "docs(charter): mark entries", "body": "Closes #314\n\nText.", "state": "open"}),
-            ),
-            ("pulls/320/files?per_page=100&page=1".to_owned(), files),
-            (
-                "issues/314".to_owned(),
-                json!({"number": 314, "title": "charter: mark entries", "body": null}),
-            ),
-        ]))
+        Recorded(
+            BTreeMap::from([
+                (
+                    "pulls/320".to_owned(),
+                    json!({"number": 320, "title": "docs(charter): mark entries", "body": "Closes #314\n\nText.", "state": "open"}),
+                ),
+                ("pulls/320/files?per_page=100&page=1".to_owned(), files),
+                (
+                    "issues/314".to_owned(),
+                    json!({"number": 314, "title": "charter: mark entries", "body": null}),
+                ),
+            ]),
+            BTreeMap::new(),
+        )
     }
 
     #[test]
@@ -964,6 +1070,101 @@ mod tests {
             {"filename": "huge.rs", "status": "modified", "changes": 90000}
         ]));
         assert!(read_inputs(&api, 320).unwrap().diff_truncated);
+    }
+
+    fn charter_text() -> Result<String> {
+        Ok("| Id | Law | Mode | Threshold |\n|---|---|---|---|\n\
+            | L-1 | a | `judged` | 0.8 |\n| L-2 | b | `judged` | 0.9 |\n"
+            .to_owned())
+    }
+
+    fn one_file() -> Value {
+        json!([{"filename": "a.rs", "status": "added", "changes": 1, "patch": "+a"}])
+    }
+
+    #[test]
+    fn a_missing_linked_issue_is_judged_without_its_text_and_noted() {
+        let mut api = github(one_file());
+        api.0.remove("issues/314");
+        let inputs = read_inputs(&api, 320).unwrap();
+        assert_eq!(
+            (inputs.issue.clone(), inputs.missing_issue),
+            (None, Some(314))
+        );
+        assert!(
+            state(&[entry("L-1", 0.8)], &inputs)
+                .contains("The pull request links #314, which does not exist")
+        );
+        let service = Canned::answering(&violates(0.95));
+        let report = judge_pr(charter_text(), Ok(api), 320, Some("k"), &service);
+        assert_eq!(service.calls.get(), 1);
+        assert_eq!(report.outcomes[0].1, Outcome::Blocks(0.95));
+        let text = report.to_string();
+        assert!(
+            text.contains("judge: linked issue #314 does not exist; judged without its text"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_failed_read_is_an_outage_that_falls_back_without_calling_the_service() {
+        let mut issue_down = github(one_file());
+        issue_down.0.remove("issues/314");
+        issue_down.1.insert("issues/314".to_owned(), 502);
+        let mut pull_down = github(one_file());
+        pull_down.0.remove("pulls/320");
+        pull_down.1.insert("pulls/320".to_owned(), 503);
+        let mut files_down = github(one_file());
+        files_down.0.remove("pulls/320/files?per_page=100&page=1");
+        for (what, api) in [
+            ("issue", issue_down),
+            ("pull", pull_down),
+            ("files", files_down),
+        ] {
+            let service = Canned::answering(&violates(1.0));
+            let report = judge_pr(charter_text(), Ok(api), 320, Some("k"), &service);
+            assert_eq!(service.calls.get(), 0, "{what}");
+            assert_eq!(report.outcomes.len(), 2, "{what}");
+            for (_, outcome) in &report.outcomes {
+                assert!(
+                    matches!(outcome, Outcome::Backstop(Reason::Unavailable(_))),
+                    "{what}: {outcome:?}"
+                );
+            }
+            assert!(!report.blocks(), "{what}");
+            assert_eq!(report.exit_code(), ExitCode::SUCCESS, "{what}");
+            assert!(report.to_string().contains("inputs unavailable"), "{what}");
+        }
+        let service = Canned::answering(&violates(1.0));
+        let no_client: Result<Recorded> = Err(Error::Parse("no token".to_owned()));
+        let report = judge_pr(charter_text(), no_client, 320, Some("k"), &service);
+        assert_eq!(service.calls.get(), 0);
+        assert_eq!(report.outcomes.len(), 2);
+        assert!(!report.blocks());
+    }
+
+    #[test]
+    fn an_unreadable_or_invalid_charter_is_an_outage() {
+        for charter in [
+            Err(Error::Parse("CHARTER.md: not found".to_owned())),
+            Ok(
+                "| Id | Law | Mode | Threshold |\n|---|---|---|---|\n| L-1 | a | `judged` | x |\n"
+                    .to_owned(),
+            ),
+        ] {
+            let service = Canned::answering(&violates(1.0));
+            let report = judge_pr(charter, Ok(github(one_file())), 320, Some("k"), &service);
+            assert_eq!(service.calls.get(), 0);
+            assert!(report.outcomes.is_empty());
+            assert_eq!(report.digest, None);
+            assert_eq!(report.exit_code(), ExitCode::SUCCESS);
+            let text = report.to_string();
+            assert!(
+                text.contains("judge: inputs unavailable: charter:"),
+                "{text}"
+            );
+            assert!(text.contains("the `review` backstop applies"), "{text}");
+        }
     }
 
     #[test]

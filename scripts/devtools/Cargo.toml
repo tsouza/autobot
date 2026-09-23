@@ -17,8 +17,10 @@ judge = ["github", "dep:ring"]
 # Pinned exactly: rust-script resolves these in its own generated project,
 # outside the workspace lock file.
 [dependencies]
-ring = { version = "=0.17.14", optional = true, default-features = false }
 regex = { version = "=1.13.1", optional = true, default-features = false, features = ["std", "unicode"] }
+# SHA-256 for the judge request digest: ring is already compiled for ureq's rustls (ring
+# provider), so it adds no build under rust-script.
+ring = { version = "=0.17.14", optional = true, default-features = false }
 serde_json = "=1.0.151"
 toml = { version = "=1.1.6", optional = true, default-features = false, features = ["parse", "serde", "std"] }
 ureq = { version = "=3.4.2", optional = true, default-features = false, features = ["rustls", "json"] }
