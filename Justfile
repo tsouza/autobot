@@ -96,7 +96,7 @@ review-gate pr:
 main-red *args:
     {{rs}} scripts/main_red.rs "$@"
 
-# Fail pull request `pr` when a changed human-lane path lacks the `human-lane` or `design-change` label.
+# Fail pull request `pr`, read live from the GitHub API, when a changed human-lane path lacks the `human-lane` or `design-change` label or its title is not a Conventional Commits header.
 label-gate pr:
     {{rs}} scripts/label_gate.rs {{pr}}
 
