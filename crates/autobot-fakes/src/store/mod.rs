@@ -7,12 +7,15 @@
 //! `Watch` after resource version `v` returns the events of every write after `v`. `Get` and
 //! `List` read the map itself, the store's only state, so every read is linearizable.
 //!
-//! Faults are armed with [`MemStore::arm`] and each fires once:
+//! Faults are armed with [`MemStore::arm`] and each fires once; [`MemStore::take_fired`] reports
+//! each fault that fired, as it was armed:
 //!
 //! - [`Fault::Crash`]: once `after_writes` more writes have applied, the last one's result is
 //!   replaced by [`Execution::Crashed`]; the driver treats the process as dead.
 //! - [`Fault::WriteTimeout`]: the next write reports `UNCERTAIN`, having applied if `applied`
 //!   and it would have succeeded.
+//! - [`Fault::LateWrite`]: the next write reports `UNCERTAIN` unapplied, and is applied, if its
+//!   conditions still hold, right after the store answers the next `Get`.
 //! - [`Fault::LostCreateAck`]: the next create applies, when its name is free, and reports
 //!   `UNCERTAIN`.
 //! - [`Fault::DropEvents`], [`Fault::DuplicateEvents`], [`Fault::ReorderEvents`]: the next
@@ -24,12 +27,13 @@
 use autobot_kernel::profile::ControlRing;
 use autobot_kernel::store::conformance::{Action, Failure, Fault, Script, ScriptRun};
 use autobot_kernel::store::{
-    Kind, Object, ObjectKey, Protocol, ProtocolError, ResourceVersion, Step, StoreOp, StoreResult,
-    WatchEvent,
+    Kind, Object, ObjectKey, OpKind, Protocol, ProtocolError, ResourceVersion, Step, StoreOp,
+    StoreResult, WatchEvent,
 };
 use autobot_kernel::types::{Namespace, Uid};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU32;
 
 /// What [`MemStore::execute`] did with one operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,18 +44,6 @@ pub enum Execution {
     Crashed,
 }
 
-/// The faults armed and not yet fired.
-#[derive(Debug, Clone, Default)]
-struct Armed {
-    crash_after: Option<u32>,
-    write_timeout: Option<bool>,
-    lost_create_ack: bool,
-    drop_events: u32,
-    duplicate_events: bool,
-    reorder_events: bool,
-    expire_watch: bool,
-}
-
 /// An in-memory store with fault injection.
 #[derive(Debug, Clone, Default)]
 pub struct MemStore {
@@ -59,7 +51,9 @@ pub struct MemStore {
     version: u64,
     uids: u64,
     log: Vec<(u64, ObjectKey)>,
-    armed: Armed,
+    armed: Vec<Fault>,
+    fired: Vec<Fault>,
+    late: Option<StoreOp>,
 }
 
 impl MemStore {
@@ -71,16 +65,13 @@ impl MemStore {
 
     /// Arms `fault`; it fires on the next operation it applies to.
     pub fn arm(&mut self, fault: Fault) {
-        let armed = &mut self.armed;
-        match fault {
-            Fault::Crash { after_writes } => armed.crash_after = Some(after_writes),
-            Fault::WriteTimeout { applied } => armed.write_timeout = Some(applied),
-            Fault::LostCreateAck => armed.lost_create_ack = true,
-            Fault::DropEvents { count } => armed.drop_events = count,
-            Fault::DuplicateEvents => armed.duplicate_events = true,
-            Fault::ReorderEvents => armed.reorder_events = true,
-            Fault::ExpireWatch => armed.expire_watch = true,
-        }
+        self.armed.push(fault);
+    }
+
+    /// Takes the faults that fired since the last call, in the order they fired, each as it
+    /// was armed.
+    pub fn take_fired(&mut self) -> Vec<Fault> {
+        std::mem::take(&mut self.fired)
     }
 
     /// The object under `key`, read without going through a protocol.
@@ -91,54 +82,97 @@ impl MemStore {
 
     /// Performs `op`.
     pub fn execute(&mut self, op: StoreOp) -> Execution {
-        let is_write = op.kind().is_write();
-        let is_create = matches!(op, StoreOp::Create { .. });
-        let lose_ack = is_create && std::mem::take(&mut self.armed.lost_create_ack);
-        let timeout = if is_write && !lose_ack {
-            self.armed.write_timeout.take()
+        let kind = op.kind();
+        let write_fault = if kind.is_write() {
+            self.disarm(|f| {
+                matches!(f, Fault::WriteTimeout { .. } | Fault::LateWrite)
+                    || (kind == OpKind::Create && *f == Fault::LostCreateAck)
+            })
         } else {
             None
         };
-        let result = match (timeout, op) {
-            (Some(false), _) => return Execution::Result(StoreResult::Uncertain),
-            (_, StoreOp::Get { key }) => self
+        match write_fault {
+            Some(fault @ Fault::WriteTimeout { applied: false }) => {
+                self.fired.push(fault);
+                return Execution::Result(StoreResult::Uncertain);
+            }
+            Some(fault @ Fault::LateWrite) => {
+                self.fired.push(fault);
+                self.late = Some(op);
+                return Execution::Result(StoreResult::Uncertain);
+            }
+            _ => {}
+        }
+        let result = self.perform(op);
+        if kind == OpKind::Get
+            && let Some(late) = self.late.take()
+        {
+            self.perform(late);
+        }
+        if let Some(fault) = write_fault {
+            self.fired.push(fault);
+        }
+        if kind.is_write() && matches!(result, StoreResult::Object(_)) && self.count_down_crash() {
+            return Execution::Crashed;
+        }
+        if write_fault.is_some() {
+            return Execution::Result(StoreResult::Uncertain);
+        }
+        Execution::Result(result)
+    }
+
+    /// Counts one applied write against an armed crash; whether the crash fires.
+    fn count_down_crash(&mut self) -> bool {
+        let Some(i) = self
+            .armed
+            .iter()
+            .position(|f| matches!(f, Fault::Crash { .. }))
+        else {
+            return false;
+        };
+        let Fault::Crash { after_writes } = self.armed.remove(i) else {
+            return false;
+        };
+        match NonZeroU32::new(after_writes.get() - 1) {
+            Some(left) => {
+                self.armed.insert(i, Fault::Crash { after_writes: left });
+                false
+            }
+            None => {
+                self.fired.push(Fault::Crash { after_writes });
+                true
+            }
+        }
+    }
+
+    /// Removes and returns the first armed fault `applies` accepts.
+    fn disarm(&mut self, applies: impl Fn(&Fault) -> bool) -> Option<Fault> {
+        let i = self.armed.iter().position(applies)?;
+        Some(self.armed.remove(i))
+    }
+
+    /// Performs `op` with no write fault.
+    fn perform(&mut self, op: StoreOp) -> StoreResult {
+        match op {
+            StoreOp::Get { key } => self
                 .objects
                 .get(&key)
                 .cloned()
                 .map_or(StoreResult::NotFound, |o| StoreResult::Object(Box::new(o))),
-            (_, StoreOp::Create { key, spec, origin }) => self.create(key, spec, origin),
-            (
-                _,
-                StoreOp::UpdateStatus {
-                    key,
-                    uid,
-                    resource_version,
-                    status,
-                },
-            ) => self.update(&key, &uid, &resource_version, status),
-            (_, StoreOp::List { kind, namespace }) => self.list(&kind, &namespace),
-            (
-                _,
-                StoreOp::Watch {
-                    kind,
-                    namespace,
-                    since,
-                },
-            ) => self.watch(&kind, &namespace, &since),
-        };
-        let applied = is_write && matches!(result, StoreResult::Object(_));
-        if applied && let Some(left) = self.armed.crash_after {
-            let left = left.saturating_sub(1);
-            if left == 0 {
-                self.armed.crash_after = None;
-                return Execution::Crashed;
-            }
-            self.armed.crash_after = Some(left);
+            StoreOp::Create { key, spec, origin } => self.create(key, spec, origin),
+            StoreOp::UpdateStatus {
+                key,
+                uid,
+                resource_version,
+                status,
+            } => self.update(&key, &uid, &resource_version, status),
+            StoreOp::List { kind, namespace } => self.list(&kind, &namespace),
+            StoreOp::Watch {
+                kind,
+                namespace,
+                since,
+            } => self.watch(&kind, &namespace, &since),
         }
-        if lose_ack || timeout.is_some() {
-            return Execution::Result(StoreResult::Uncertain);
-        }
-        Execution::Result(result)
     }
 
     /// The next resource version, recorded as a write of `key`.
@@ -225,7 +259,8 @@ impl MemStore {
         let Ok(since) = since.as_str().parse::<u64>() else {
             return StoreResult::Expired;
         };
-        if std::mem::take(&mut self.armed.expire_watch) {
+        if let Some(fault) = self.disarm(|f| *f == Fault::ExpireWatch) {
+            self.fired.push(fault);
             return StoreResult::Expired;
         }
         let mut events: Vec<WatchEvent> = self
@@ -237,14 +272,20 @@ impl MemStore {
                 resource_version: version(*v),
             })
             .collect();
-        let dropped =
-            usize::try_from(std::mem::take(&mut self.armed.drop_events)).unwrap_or(usize::MAX);
-        events.drain(..dropped.min(events.len()));
-        if std::mem::take(&mut self.armed.duplicate_events) {
-            events = events.into_iter().flat_map(|e| [e.clone(), e]).collect();
+        if let Some(fault) = self.disarm(|f| matches!(f, Fault::DropEvents { .. })) {
+            if let Fault::DropEvents { count } = fault {
+                let dropped = usize::try_from(count).unwrap_or(usize::MAX);
+                events.drain(..dropped.min(events.len()));
+            }
+            self.fired.push(fault);
         }
-        if std::mem::take(&mut self.armed.reorder_events) {
+        if let Some(fault) = self.disarm(|f| *f == Fault::DuplicateEvents) {
+            events = events.into_iter().flat_map(|e| [e.clone(), e]).collect();
+            self.fired.push(fault);
+        }
+        if let Some(fault) = self.disarm(|f| *f == Fault::ReorderEvents) {
             events.reverse();
+            self.fired.push(fault);
         }
         StoreResult::Events {
             events,
@@ -307,10 +348,16 @@ pub fn run_script(store: &mut MemStore, script: &Script, ring: ControlRing) -> R
         match script_run.step() {
             Action::Done(result) => return result,
             Action::Arm(fault) => store.arm(fault),
-            Action::Op(op) => match store.execute(op) {
-                Execution::Result(result) => script_run.resume(result),
-                Execution::Crashed => script_run.crash(),
-            },
+            Action::Op(op) => {
+                let execution = store.execute(op);
+                for fault in store.take_fired() {
+                    script_run.fired(fault);
+                }
+                match execution {
+                    Execution::Result(result) => script_run.resume(result),
+                    Execution::Crashed => script_run.crash(),
+                }
+            }
         }
     }
 }

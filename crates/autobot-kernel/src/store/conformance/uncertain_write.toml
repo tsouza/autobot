@@ -1,5 +1,5 @@
 name = "uncertain-write"
-summary = "A commit whose write reports UNCERTAIN reads the object and commits exactly once, whether or not that write applied."
+summary = "A commit or slot clear whose write reports UNCERTAIN reads the object and lands exactly once: whether the write applied at once, not at all, or only after the read-back."
 
 [[steps]]
 do = "create"
@@ -76,3 +76,25 @@ object = "a"
 state_revision = 2
 commit_sequence = 2
 slot = "cleared"
+
+[[steps]]
+do = "inject"
+fault = { kind = "late_write" }
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c3"
+lane = "DOMAIN"
+pin = 2
+fields = "three"
+expect = "committed"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 3
+commit_sequence = 3
+domain = "three"
+slot = "occupied"
+slot_command = "c3"

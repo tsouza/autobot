@@ -1,9 +1,7 @@
 use super::*;
 use crate::profile::{ControlRing, Profile};
 use crate::status::{AuditEnvelope, StatusEnvelope};
-use crate::types::{
-    CommitSequence, ControlRevision, Lane, LaneRevision, ObjectRef, StateRevision, Uid,
-};
+use crate::types::{CommitSequence, ControlRevision, LaneRevision, ObjectRef, StateRevision, Uid};
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
@@ -283,7 +281,7 @@ fn an_uncertain_write_read_back_with_its_slot_is_committed() {
 
 #[test]
 fn an_uncertain_write_read_back_unapplied_is_sent_again_at_the_new_resource_version() {
-    let mut p = commit(Pin::Current(Lane::Domain), set_domain);
+    let mut p = commit(Pin::Current, set_domain);
     expect_op(&mut p);
     p.resume(StoreResult::Object(boxed(1, Some(status(false)))))
         .expect("read");
@@ -298,7 +296,7 @@ fn an_uncertain_write_read_back_unapplied_is_sent_again_at_the_new_resource_vers
 
 #[test]
 fn an_uncertain_write_whose_lane_moved_on_without_its_slot_is_passed() {
-    let mut p = commit(Pin::Current(Lane::Domain), set_domain);
+    let mut p = commit(Pin::Current, set_domain);
     expect_op(&mut p);
     p.resume(StoreResult::Object(boxed(1, Some(status(false)))))
         .expect("read");
@@ -321,7 +319,7 @@ fn an_uncertain_write_whose_lane_moved_on_without_its_slot_is_passed() {
 
 #[test]
 fn a_conflict_reads_again_and_the_guard_decides_on_the_new_state() {
-    let mut p = commit(Pin::Current(Lane::Domain), guarded);
+    let mut p = commit(Pin::Current, guarded);
     expect_op(&mut p);
     p.resume(StoreResult::Object(boxed(1, Some(status(true)))))
         .expect("read");
@@ -524,4 +522,67 @@ fn a_script_step_with_an_unknown_key_is_refused() {
     assert!(toml::from_str::<conformance::Script>(&misspelled).is_err());
     let extra = format!("{text}pinn = 0\n");
     assert!(toml::from_str::<conformance::Script>(&extra).is_err());
+}
+
+#[test]
+fn a_crash_after_zero_writes_is_refused() {
+    let script = |n: u32| {
+        format!(
+            "name = \"x\"\nsummary = \"y\"\n\n[[steps]]\ndo = \"inject\"\nfault = {{ kind = \"crash\", after_writes = {n} }}\n"
+        )
+    };
+    toml::from_str::<conformance::Script>(&script(1)).expect("one write parses");
+    assert!(toml::from_str::<conformance::Script>(&script(0)).is_err());
+}
+
+#[test]
+fn a_fault_the_script_did_not_arm_fails_the_step_it_fires_in() {
+    let text = "name = \"x\"\nsummary = \"y\"\n\n[[steps]]\ndo = \"create\"\nobject = \"a\"\nexpect = \"created\"\n";
+    let script: conformance::Script = toml::from_str(text).expect("the script parses");
+    let mut run = conformance::ScriptRun::new(&script, ring());
+    let conformance::Action::Op(op) = run.step() else {
+        panic!("the create step starts with an operation");
+    };
+    run.fired(conformance::Fault::LostCreateAck);
+    run.resume(created(op));
+    let conformance::Action::Done(Err(failure)) = run.step() else {
+        panic!("the script must fail");
+    };
+    assert_eq!(failure.step, 0);
+    assert!(failure.message.contains("without being armed"), "{failure}");
+}
+
+#[test]
+fn an_armed_fault_that_never_fires_fails_its_step() {
+    let text = "name = \"x\"\nsummary = \"y\"\n\n[[steps]]\ndo = \"inject\"\nfault = { kind = \"lost_create_ack\" }\n\n[[steps]]\ndo = \"create\"\nobject = \"a\"\nexpect = \"created\"\n";
+    let script: conformance::Script = toml::from_str(text).expect("the script parses");
+    let mut run = conformance::ScriptRun::new(&script, ring());
+    assert_eq!(
+        run.step(),
+        conformance::Action::Arm(conformance::Fault::LostCreateAck)
+    );
+    let conformance::Action::Op(op) = run.step() else {
+        panic!("the create step starts with an operation");
+    };
+    run.resume(created(op));
+    let conformance::Action::Done(Err(failure)) = run.step() else {
+        panic!("the script must fail");
+    };
+    assert_eq!(failure.step, 1);
+    assert!(failure.message.contains("never fired"), "{failure}");
+}
+
+/// The result of a store that performs the create `op`.
+fn created(op: StoreOp) -> StoreResult {
+    let StoreOp::Create { key, spec, origin } = op else {
+        panic!("expected a create, got {op:?}");
+    };
+    StoreResult::Object(Box::new(Object {
+        key,
+        uid: uid("uid-a"),
+        resource_version: ResourceVersion::from(1),
+        origin,
+        spec,
+        status: None,
+    }))
 }

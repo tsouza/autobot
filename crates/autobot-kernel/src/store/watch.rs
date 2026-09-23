@@ -14,6 +14,9 @@ use std::num::NonZeroU32;
 /// last seen, or a listing no longer shows it. Events and listings only make objects due: the
 /// caller reads every due object with a linearizable `Get`, so a dropped event is caught by the
 /// next relist and a duplicated or reordered one costs at most an extra read.
+///
+/// It is stepped like a [`Protocol`](super::Protocol) but never finishes, so it does not
+/// implement that trait: [`step`](Self::step) always returns an operation.
 #[derive(Debug, Clone)]
 pub struct Triggers {
     kind: Kind,

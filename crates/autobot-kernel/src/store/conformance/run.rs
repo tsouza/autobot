@@ -57,6 +57,7 @@ pub struct ScriptRun<'s> {
     uids: BTreeMap<String, Uid>,
     labels: BTreeMap<String, Object>,
     triggers: Option<Triggers>,
+    armed: Vec<(Fault, usize)>,
     failure: Option<Failure>,
 }
 
@@ -118,6 +119,7 @@ impl<'s> ScriptRun<'s> {
             uids: BTreeMap::new(),
             labels: BTreeMap::new(),
             triggers: None,
+            armed: Vec::new(),
             failure: None,
         }
     }
@@ -129,10 +131,23 @@ impl<'s> ScriptRun<'s> {
                 return Action::Done(Err(failure.clone()));
             }
             let Some(step) = self.script.steps.get(self.index) else {
+                if let Some((fault, _)) = self.armed.first() {
+                    let message = format!("{fault:?} was armed with no step left to fire in");
+                    self.fail(message);
+                    continue;
+                }
                 return Action::Done(Ok(()));
             };
             if self.frame.is_none() {
                 if let ScriptStep::Inject(inject) = step {
+                    let target = self
+                        .script
+                        .steps
+                        .iter()
+                        .skip(self.index)
+                        .position(|s| !matches!(s, ScriptStep::Inject(_)))
+                        .map_or(self.script.steps.len(), |offset| self.index + offset);
+                    self.armed.push((inject.fault, target));
                     self.index += 1;
                     return Action::Arm(inject.fault);
                 }
@@ -178,6 +193,17 @@ impl<'s> ScriptRun<'s> {
             return Ok(());
         }
         frame.main.resume(result, &mut self.triggers)
+    }
+
+    /// Records that the driver injected `fault`, which an `inject` step armed. A fault that
+    /// fires without being armed fails the current step.
+    pub fn fired(&mut self, fault: Fault) {
+        match self.armed.iter().position(|(armed, _)| *armed == fault) {
+            Some(i) => {
+                self.armed.remove(i);
+            }
+            None => self.fail(format!("{fault:?} fired without being armed")),
+        }
     }
 
     /// Records that the process crashed: the current step starts again with a fresh protocol.
@@ -233,6 +259,9 @@ impl<'s> ScriptRun<'s> {
             );
         }
         self.finish(frame.main)?;
+        if let Some((fault, _)) = self.armed.iter().find(|(_, target)| *target == self.index) {
+            return Err(format!("{fault:?} was armed for this step and never fired"));
+        }
         self.index += 1;
         self.interleaved = false;
         Ok(None)
@@ -381,7 +410,10 @@ impl<'s> ScriptRun<'s> {
                 Machine::Single {
                     op: StoreOp::UpdateStatus {
                         key: read.key.clone(),
-                        uid: read.uid.clone(),
+                        uid: match &s.uid {
+                            Some(uid) => parse(uid)?,
+                            None => read.uid.clone(),
+                        },
                         resource_version: read.resource_version.clone(),
                         status: Box::new(status),
                     },
@@ -426,7 +458,8 @@ impl<'s> ScriptRun<'s> {
     /// The machine of a commit step.
     fn commit(&self, s: &CommitStep) -> Result<Machine, String> {
         let pin = match s.pin {
-            None => Pin::Current(s.lane),
+            None if s.lane == Lane::Domain => Pin::Current,
+            None => return Err("a control commit pins its revision".to_owned()),
             Some(value) => Pin::Revision(match s.lane {
                 Lane::Domain => {
                     LaneRevision::State(StateRevision::new(value).map_err(|e| e.to_string())?)

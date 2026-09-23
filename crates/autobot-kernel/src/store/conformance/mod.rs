@@ -15,7 +15,7 @@
 //! - `initialize`: write the first status, with `domain` and `control` fields and a control
 //!   lane when `control_lane`, expecting `initialized` or `already_initialized`.
 //! - `commit`: commit `command` on `lane` (`DOMAIN` or `CONTROL`), pinned at revision `pin` or,
-//!   without `pin`, at the revision read, setting the lane's fields to `fields`. With
+//!   for a domain commit without `pin`, at the revision read, setting the lane's fields to `fields`. With
 //!   `require_control`, the transition's `control` guard refuses unless the control fields
 //!   read equal it. With `interleave`, that commit step runs to its end after this commit's
 //!   first read and before its write. It expects one of `committed`, `passed`,
@@ -25,17 +25,22 @@
 //!   `uninitialized`.
 //! - `read`: read `object` and keep what was read under `label`.
 //! - `write`: write back the status read under `from`, conditioned on the resource version
-//!   read then, expecting `updated` or `conflict`.
+//!   read then and on the UID read, or on `uid` when given, expecting `updated` or `conflict`.
 //! - `check`: read `object` and compare each field given: `state_revision`,
 //!   `control_revision`, `commit_sequence`, `domain`, `control`, `slot` (`none`, `occupied`
 //!   or `cleared`), `slot_command` and `ring_entries`.
-//! - `inject`: arm `fault` in the driver.
+//! - `inject`: arm `fault` in the driver for the next step that is not an `inject`. That step
+//!   fails unless the driver reports, through [`ScriptRun::fired`], that the fault fired while
+//!   it ran, and a fault reported without being armed fails the step it fires in.
 //! - `relist` and `poll`: list, or take one watch batch (relisting if the watch expired and
 //!   repeating an unavailable read), and compare the names the
 //!   [`Triggers`](super::Triggers) then hold due with `expect`.
 //!
 //! `initialize`, `commit` and `clear` also end `not_found` or `replaced` when their object is
 //! missing or was created again.
+//!
+//! A driver arms a fault on [`Action::Arm`] and calls [`ScriptRun::fired`] each time an armed
+//! fault takes effect, before it passes on the result or reports the crash that fault caused.
 //!
 //! A crash restarts the current step with a fresh protocol for the same request, as a new
 //! process would; an `interleave` that already ran is not run again.
@@ -47,6 +52,7 @@ pub use run::{Action, Failure, ScriptRun};
 use crate::types::Lane;
 use serde::Deserialize;
 use std::fmt;
+use std::num::NonZeroU32;
 
 /// The kind of every object a script names.
 pub const KIND: &str = "ConformanceProbe";
@@ -55,8 +61,9 @@ pub const KIND: &str = "ConformanceProbe";
 pub const NAMESPACE: &str = "conformance";
 
 /// The embedded suite, one TOML document per script.
-const SUITE: [&str; 12] = [
+const SUITE: [&str; 13] = [
     include_str!("stale_resource_version.toml"),
+    include_str!("uid_precondition.toml"),
     include_str!("uncertain_write.toml"),
     include_str!("pinned_revision_passed.toml"),
     include_str!("control_between_read_and_write.toml"),
@@ -228,6 +235,8 @@ pub struct ReadStep {
 pub struct WriteStep {
     /// The label of the read to write back.
     pub from: String,
+    /// The UID to condition the write on instead of the one read.
+    pub uid: Option<String>,
     /// The expected result.
     pub expect: String,
 }
@@ -277,10 +286,10 @@ pub struct WatchStep {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Fault {
     /// The process crashes once `after_writes` more writes have applied, before it sees the
-    /// last one's result.
+    /// last one's result. Zero is refused: a crash follows at least one write.
     Crash {
         /// The writes that apply before the crash.
-        after_writes: u32,
+        after_writes: NonZeroU32,
     },
     /// The next write reports `UNCERTAIN`; it applies first when `applied` is true and it
     /// would have succeeded.
@@ -288,6 +297,9 @@ pub enum Fault {
         /// Whether the write applies.
         applied: bool,
     },
+    /// The next write reports `UNCERTAIN` without applying, and applies later, right after the
+    /// store answers the next read, if its UID and resource version still match then.
+    LateWrite,
     /// The next create applies, when its name is free, and its acknowledgement is lost: it
     /// reports `UNCERTAIN`.
     LostCreateAck,

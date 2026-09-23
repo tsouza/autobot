@@ -21,7 +21,7 @@ lane = "DOMAIN"
 fields = "accepted"
 require_control = "RUNNING"
 expect = "refused"
-interleave = { object = "context", command = "hold", lane = "CONTROL", fields = "FREEZE_PENDING", expect = "committed" }
+interleave = { object = "context", command = "hold", lane = "CONTROL", pin = 0, fields = "FREEZE_PENDING", expect = "committed" }
 
 [[steps]]
 do = "check"

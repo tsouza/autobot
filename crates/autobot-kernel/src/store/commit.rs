@@ -18,9 +18,14 @@ pub enum Pin {
     /// The command pinned this revision: the commit applies only at exactly this revision of
     /// its lane.
     Revision(LaneRevision),
-    /// The command pinned no revision of this lane: the commit applies at the revision it
-    /// reads, when its transition's guards accept what it read.
-    Current(Lane),
+    /// The command pinned no `state_revision`: the domain commit applies at the revision it
+    /// reads, when its transition's guards accept what it read. It exists only for
+    /// `AcceptDispatch`, whose guards carry the register values its permit pins; every other
+    /// command pins its revision, and no control commit can be unpinned. A fresh protocol for
+    /// a command whose slot a later domain commit has already replaced cannot tell that the
+    /// command committed and commits it again; that is safe only while the command's guards
+    /// refuse a second acceptance of one permit, which is open in #298.
+    Current,
 }
 
 impl Pin {
@@ -29,7 +34,7 @@ impl Pin {
     pub fn lane(self) -> Lane {
         match self {
             Self::Revision(r) => r.lane(),
-            Self::Current(lane) => lane,
+            Self::Current => Lane::Domain,
         }
     }
 }
@@ -226,7 +231,7 @@ impl<T: Transition> Decide for LaneCommit<T> {
         let at = status.envelope.commit_sequence;
         let anchor = match request.pin {
             Pin::Revision(pinned) => Some(pinned),
-            Pin::Current(_) => uncertain_base
+            Pin::Current => uncertain_base
                 .and_then(|base| base.status.as_ref())
                 .map(|base| base.revision(lane)),
         };
@@ -387,7 +392,8 @@ fn control_commit(
 pub enum InitializeOutcome {
     /// The status is the requested one.
     Initialized,
-    /// The object already has another status.
+    /// The object has another status. That status may have followed this initialization, when
+    /// an `UNCERTAIN` write of it applied and a commit landed before the read-back.
     AlreadyInitialized,
     /// The object is missing.
     Missing(Missing),
@@ -440,7 +446,8 @@ impl Decide for InitializeStatus {
 pub enum ClearOutcome {
     /// The command's slot is `CLEARED`.
     Cleared,
-    /// The pending slot is absent or belongs to another command; nothing was written.
+    /// The pending slot is absent or belongs to another command. An earlier `UNCERTAIN` write of
+    /// this protocol may still have cleared the slot before a later domain commit replaced it.
     NotHeld,
     /// The aggregate's status is not initialized.
     Uninitialized,

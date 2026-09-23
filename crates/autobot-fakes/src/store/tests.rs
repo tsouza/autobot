@@ -5,6 +5,7 @@ use autobot_kernel::store::conformance::{
 };
 use autobot_kernel::store::{Commit, CommitOutcome, CommitRequest, Pin, conformance::CheckStep};
 use autobot_kernel::types::Lane;
+use std::num::NonZeroU32;
 
 const M0_PROFILE: &str = include_str!("../../../../profiles/m0.toml");
 
@@ -80,16 +81,18 @@ fn four_writes() -> Vec<ScriptStep> {
 
 #[test]
 fn a_crash_after_any_write_is_recovered_by_a_fresh_protocol() {
-    for after_writes in 1..=4 {
+    for write in 0..4 {
         let mut steps = four_writes();
         steps.insert(
-            0,
+            write,
             ScriptStep::Inject(InjectStep {
-                fault: Fault::Crash { after_writes },
+                fault: Fault::Crash {
+                    after_writes: NonZeroU32::MIN,
+                },
             }),
         );
         let script = Script {
-            name: format!("crash after write {after_writes}"),
+            name: format!("crash after write {}", write + 1),
             summary: String::new(),
             steps,
         };
@@ -108,7 +111,9 @@ fn an_armed_crash_fires_on_the_write_that_applies() {
         panic!("the first step creates");
     };
     let mut store = MemStore::new();
-    store.arm(Fault::Crash { after_writes: 1 });
+    store.arm(Fault::Crash {
+        after_writes: NonZeroU32::MIN,
+    });
     let key = ObjectKey {
         kind: conformance::KIND.parse().expect("kind"),
         namespace: conformance::NAMESPACE.parse().expect("namespace"),
@@ -203,7 +208,7 @@ fn a_commit_on_a_missing_object_is_reported_missing() {
         },
         uid: "u".parse().expect("uid"),
         command_uid: "c".parse().expect("uid"),
-        pin: Pin::Current(Lane::Domain),
+        pin: Pin::Current,
         ring: ring(),
         transition: |_: &Object, _: &autobot_kernel::store::Status| {
             Err(autobot_kernel::store::GuardRefusal {
@@ -216,4 +221,101 @@ fn a_commit_on_a_missing_object_is_reported_missing() {
         outcome,
         CommitOutcome::Missing(autobot_kernel::store::Missing::NotFound)
     );
+}
+
+/// Runs `script` on a driver whose fault hooks do nothing.
+fn run_without_faults(script: &Script) -> Result<(), Failure> {
+    let mut store = MemStore::new();
+    let mut script_run = ScriptRun::new(script, ring());
+    loop {
+        match script_run.step() {
+            Action::Done(result) => return result,
+            Action::Arm(_) => {}
+            Action::Op(op) => match store.execute(op) {
+                Execution::Result(result) => script_run.resume(result),
+                Execution::Crashed => script_run.crash(),
+            },
+        }
+    }
+}
+
+#[test]
+fn the_suite_fails_a_driver_whose_fault_hooks_do_nothing() {
+    let scripts = conformance::scripts().expect("the suite parses");
+    let with_faults: Vec<_> = scripts
+        .iter()
+        .filter(|s| {
+            s.steps
+                .iter()
+                .any(|step| matches!(step, ScriptStep::Inject(_)))
+        })
+        .collect();
+    let kinds: std::collections::BTreeSet<String> = with_faults
+        .iter()
+        .flat_map(|s| s.steps.iter())
+        .filter_map(|step| match step {
+            ScriptStep::Inject(inject) => format!("{:?}", inject.fault)
+                .split([' ', '{'])
+                .next()
+                .map(str::to_owned),
+            _ => None,
+        })
+        .collect();
+    let expected = [
+        "Crash",
+        "WriteTimeout",
+        "LateWrite",
+        "LostCreateAck",
+        "DropEvents",
+        "DuplicateEvents",
+        "ReorderEvents",
+        "ExpireWatch",
+    ];
+    assert_eq!(
+        kinds,
+        expected.map(str::to_owned).into(),
+        "every fault kind has a script"
+    );
+    for script in with_faults {
+        let failure = run_without_faults(script).expect_err(&script.name);
+        if ["uncertain-write", "lost-create-ack", "crash-between-writes"]
+            .contains(&script.name.as_str())
+        {
+            assert!(failure.message.contains("never fired"), "{failure}");
+        }
+    }
+}
+
+#[test]
+fn a_late_write_lands_right_after_the_next_read_is_answered() {
+    let mut store = MemStore::new();
+    let key = ObjectKey {
+        kind: conformance::KIND.parse().expect("kind"),
+        namespace: conformance::NAMESPACE.parse().expect("namespace"),
+        name: "a".parse().expect("name"),
+    };
+    let origin = autobot_kernel::store::Origin {
+        create_receipt_uid: "r".parse().expect("uid"),
+        input_digest: autobot_kernel::store::fields_digest(""),
+        context_uid: "ctx".parse().expect("uid"),
+    };
+    store.arm(Fault::LateWrite);
+    let create = StoreOp::Create {
+        key: key.clone(),
+        spec: String::new(),
+        origin,
+    };
+    assert_eq!(
+        store.execute(create),
+        Execution::Result(StoreResult::Uncertain)
+    );
+    assert_eq!(store.take_fired(), vec![Fault::LateWrite]);
+    assert!(store.object(&key).is_none(), "not applied before the read");
+    let read = store.execute(StoreOp::Get { key: key.clone() });
+    assert_eq!(
+        read,
+        Execution::Result(StoreResult::NotFound),
+        "the read sees it unapplied"
+    );
+    assert!(store.object(&key).is_some(), "applied right after the read");
 }
