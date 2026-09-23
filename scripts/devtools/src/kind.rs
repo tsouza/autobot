@@ -84,13 +84,7 @@ pub fn check_config(text: &str) -> Result<()> {
         )));
     }
     for image in images {
-        let digest = image.rsplit_once("@sha256:").map(|(_, d)| d);
-        let pinned = digest.is_some_and(|d| {
-            d.len() == 64
-                && d.bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        });
-        if !pinned {
+        if !crate::image::is_pinned(image) {
             return Err(invalid(format!("image `{image}` is not pinned by digest")));
         }
     }
