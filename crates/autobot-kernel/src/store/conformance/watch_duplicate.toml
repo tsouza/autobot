@@ -1,0 +1,32 @@
+name = "watch-duplicate"
+summary = "A duplicated watch event makes its object due once."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "relist"
+expect = ["a"]
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "inject"
+fault = { kind = "duplicate_events" }
+
+[[steps]]
+do = "poll"
+expect = ["a"]
+
+[[steps]]
+do = "poll"
+expect = []
+
+[[steps]]
+do = "relist"
+expect = []

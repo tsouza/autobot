@@ -1,0 +1,50 @@
+name = "stale-resource-version"
+summary = "A status write conditioned on a resource version the object has moved past is rejected and changes nothing."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "read"
+object = "a"
+label = "before"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c1"
+lane = "DOMAIN"
+pin = 0
+fields = "one"
+expect = "committed"
+
+[[steps]]
+do = "write"
+from = "before"
+expect = "conflict"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 1
+commit_sequence = 1
+domain = "one"
+slot = "occupied"
+slot_command = "c1"
+
+[[steps]]
+do = "read"
+object = "a"
+label = "current"
+
+[[steps]]
+do = "write"
+from = "current"
+expect = "updated"
