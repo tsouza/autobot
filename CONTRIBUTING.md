@@ -55,6 +55,7 @@ just doctor --measure  # also the sccache hit split: dependencies, then workspac
 
   or `Review verdict: FAIL @ <full-head-sha>`, followed by what was checked, each blocking finding with file and line, and then an "Advisory (not blocking)" section. Only a blocking finding makes the verdict FAIL; the checklist in `AGENTS.md` defines both kinds.
 - The verdict binds to that head SHA only. Any new push needs a new verdict. The `review-gate` check reads this first line.
+- The `judge` check asks, for every `judged` entry of `CHARTER.md`, whether the pull request's diff and text violate it. It fails only on a "violates" answer at or above the entry's threshold, naming the entry and the confidence; a "complies" or "unsure" answer, a truncated input or an unavailable service passes it and leaves the entry to the review. It is never a required check and never replaces the review verdict.
 - `main` merges only through pull requests with squash, and GitHub performs every merge through auto-merge. Until `review-gate` is a required check, auto-merge is enabled on a pull request only after a PASS verdict names its current head SHA: with no required checks, enabling auto-merge merges immediately.
 
 ## Lanes
