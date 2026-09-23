@@ -12,6 +12,11 @@ rs := "rust-script --force --debug"
 default:
     @just --list
 
+# RUSTUP_TOOLCHAIN is removed so rustup reads rust-toolchain.toml itself, components included.
+# Install the pinned toolchain from rust-toolchain.toml, with its components.
+toolchain:
+    env -u RUSTUP_TOOLCHAIN rustup toolchain install
+
 # Format every crate.
 fmt:
     cargo fmt --all
