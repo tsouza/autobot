@@ -1,0 +1,10 @@
+# Tests that need a Kubernetes cluster have a name, or a module on their path, that starts
+# with `kind_` (`kind_store_survives_restart`, `kind_store::survives_restart`). The default
+# profile, which `just test` uses, leaves them out; the `integration` profile, which
+# `just test-integration` uses against the cluster `just kind-up` creates, runs only them.
+
+[profile.default]
+default-filter = "not test(/(^|::)kind_/)"
+
+[profile.integration]
+default-filter = "test(/(^|::)kind_/)"

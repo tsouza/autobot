@@ -1,0 +1,41 @@
+# The `integration` job: creates the kind cluster, runs the nextest `integration` profile
+# against it and deletes it. Gate lane: fakes only, no model access, no secrets. The runner
+# image provides Docker and kind; `just kind-up` refuses any kind release but the one the
+# node image is pinned for.
+name: kind
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run; runs on main always finish.
+concurrency:
+  group: kind-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Toolchain from rust-toolchain.toml.
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          rustflags: ""
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with:
+          tool: just,rust-script,cargo-nextest
+      - run: just kind-up
+      - run: just test-integration
+      - if: ${{ always() }}
+        run: just kind-down
