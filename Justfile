@@ -92,6 +92,27 @@ sccache-stats:
     sccache --show-adv-stats
     if [[ -f "${SCCACHE_ERROR_LOG-}" ]]; then grep -F 'compile result' "$SCCACHE_ERROR_LOG" || true; fi
 
+# The kind cluster's own kubeconfig, so the default one is never touched:
+# `KUBECONFIG=target/kind/kubeconfig kubectl ...` reaches the cluster.
+kind-kubeconfig := justfile_directory() / "target/kind/kubeconfig"
+
+# Create the kind cluster from deploy/kind/cluster.yaml, or export its kubeconfig if it is up.
+kind-up:
+    KUBECONFIG="{{kind-kubeconfig}}" {{rs}} scripts/kind.rs up
+
+# Delete the kind cluster.
+kind-down:
+    KUBECONFIG="{{kind-kubeconfig}}" {{rs}} scripts/kind.rs down
+
+# Load a local container image into the kind cluster.
+[positional-arguments]
+kind-load image:
+    {{rs}} scripts/kind.rs load "$1"
+
+# Run the tests that need a cluster (nextest profile `integration`) against the kind cluster.
+test-integration:
+    KUBECONFIG="{{kind-kubeconfig}}" cargo nextest run --workspace --all-features --locked --profile integration --no-tests=pass
+
 # Worktree per pull request: `just wt new <issue#>`, `just wt list`, `just wt rm <issue#>`.
 [positional-arguments]
 wt *args:

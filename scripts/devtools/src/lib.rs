@@ -12,6 +12,7 @@ pub mod git;
 pub mod github;
 #[cfg(feature = "hooks")]
 pub mod hooks;
+pub mod kind;
 pub mod markdown;
 pub mod process;
 pub mod worktree;
