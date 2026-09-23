@@ -13,7 +13,7 @@ Every kind below is a namespaced custom resource with a structural `spec`, a sta
 |---|---|
 | **Context** | `WorkContext` (registers, ledger, reservation slot), `ManagerLease`, `AdmissionStamp` |
 | **Intake** | `WorkBrief`, `Intake`, `Project`, `Repository`, `PlanProposal` |
-| **Plan** | `Plan`, `PlanSnapshot` (and the `GraphActivationReceipt` record) |
+| **Plan** | `Plan`, `PlanSnapshot`, `GraphActivationReceipt` |
 | **Task** | `Milestone`, `Task` |
 | **TaskRun** | `TaskRun`, `ScopeCapsule` |
 | **AgentRun** | `AgentRun`, `AgentCheckpoint` |
@@ -103,6 +103,7 @@ One line per idea not in the core, with the gate that first needs it. A term on 
 - `CleanupRequest`, `Backup`, real witness control plane (`DispatchAuthority`), Agent Sandbox and Kata qualification — G-FENCE-CUSTODY
 - `ExecutionProfile` attestation, `ScaleProfile`, health and operating-mode vocabularies — G-OPS
 - Second forge and second runtime adapter — G-PORTABILITY
+- Runtime consumption of gate evidence (deployment capability as the intersection of gate evidence, action policy, current health and holds); gate records are signed manifests under `docs/gates/**`, and there is no Gate CRD in M0 — G-QUAL
 - Micro-manager quality metrics (false alarms, missed drift, unnecessary takeovers) — G-EVALUATION
 - CLI beyond the M0 commands (intake, project adopt, plan propose and accept, task start, watch, explain) — G-INTAKE
 - Temporal, PostgreSQL as optional subordinate services — none; adopted only on a measured need and never as authority
