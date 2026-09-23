@@ -210,7 +210,8 @@ AdmitIntakeWrite            intake-submitter identity: intake kinds in proposal 
 VerifyRepositoryBinding     condition ForgeVerified on a PROPOSED Repository only on an authenticated forge-adapter answer matching it
 VerifyBriefDigest           over the stored content, or the forge adapter's answer for a path at a commit
 ProposeIntake               Intake CAPTURED → PROPOSED only when every held proposal is valid, every named repository ForgeVerified and every brief digest verified; any new or revised held proposal returns it to CAPTURED
-AcceptProposal              pinned to the Intake revision and proposal-set digest: a context configuration by a bootstrap administrator creates the WorkContext, ends the intake-namespace Intake ACCEPTED and creates its bound successor in the context namespace; a plan proposal by the reviser, from PROPOSED only, creates the Plan and moves its projects and repositories to ADOPTED
+AcceptProposal              from PROPOSED only, pinned to the Intake revision and proposal-set digest: a context configuration by a bootstrap administrator creates the WorkContext, ends the intake-namespace Intake ACCEPTED and creates its bound successor in the context namespace; a plan proposal by the reviser creates the Plan and moves its projects and repositories to ADOPTED
+RejectIntake                by the principal who may accept that Intake only; rejects every proposal it holds in proposal state
 
 \* scope, identity, fencing, continuation
 IssueScopeCapsule · CanonicalizeScopeCheck · DenyOutOfScopeAction · DetectOutOfScopeAtCheckpoint
