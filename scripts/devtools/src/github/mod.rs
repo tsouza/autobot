@@ -5,7 +5,7 @@
 //! set, otherwise `gh`.
 //!
 //! The repository is resolved once, by [`repository`]: `GITHUB_REPOSITORY` when it is set
-//! and non-empty, otherwise the repository the `origin` remote points at.
+//! and not blank (the value is trimmed), otherwise the repository the `origin` remote points at.
 
 pub mod graph;
 pub mod settings;

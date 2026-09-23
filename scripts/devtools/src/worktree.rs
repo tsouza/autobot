@@ -419,8 +419,9 @@ pub fn rm(
 
 /// Entry point of `scripts/wt.rs`: `new <issue#>`, `list` or `rm <issue#>`, run from the
 /// current directory. `new` reads the issue title, and `rm` the merged pull requests of the
-/// branch, from the GitHub repository of `origin`; `rm` asks GitHub only when the branch
-/// has commits that no remote-tracking branch contains.
+/// branch, from the repository [`crate::github::repository`] resolves: `GITHUB_REPOSITORY`
+/// when it is set and not blank, otherwise the GitHub repository of `origin`. `rm` asks
+/// GitHub only when the branch has commits that no remote-tracking branch contains.
 ///
 /// # Errors
 /// Fails on bad arguments and on any failure of the subcommand.
