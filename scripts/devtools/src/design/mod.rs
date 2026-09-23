@@ -1,8 +1,7 @@
 //! The design set under `docs/design`: its consistency check, the retired-term check, the traceability lint and the KERNEL §10 parser.
 //!
 //! This module also holds what the checks, and the formal toolchain, share: the [`Violation`]
-//! they report, the walk over a directory tree, and the path, offset, line and identifier
-//! helpers.
+//! they report, the walk over a directory tree, and the offset, line and identifier helpers.
 
 pub mod check;
 pub mod lifecycle;
@@ -82,7 +81,7 @@ pub(crate) fn walk(root: &Path, dir: &Path) -> Result<Vec<(String, PathBuf)>> {
 }
 
 /// `path` relative to `root`, with `/` separators.
-pub(crate) fn relative(root: &Path, path: &Path) -> String {
+fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .components()
