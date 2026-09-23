@@ -1,8 +1,4 @@
-```text
- ▄  ▄ ▄ ▄▄▄  ▄  ▄▄   ▄  ▄▄▄
-█■█ █ █  █  █ █ █■▄ █ █  █ 
-▀ ▀ ▀▀▀  ▀   ▀  ▀▀   ▀   ▀
-```
+<img src="assets/banner.svg" width="480" alt="AutoBot">
 
 # AutoBot
 
