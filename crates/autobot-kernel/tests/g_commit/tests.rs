@@ -30,7 +30,6 @@ fn f3_receipt_barrier() {
 }
 
 #[test]
-#[ignore = "awaiting #80"]
 fn domain_commit_is_held_by_an_unresolved_slot() {
     commit::domain_commit_waits_on_the_barrier(&mut MemStore::new());
 }
