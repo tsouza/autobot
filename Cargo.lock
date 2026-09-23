@@ -38,6 +38,7 @@ name = "autobot-devtools"
 version = "0.0.0"
 dependencies = [
  "regex",
+ "ring",
  "serde_json",
  "toml",
  "ureq",

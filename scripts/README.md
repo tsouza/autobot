@@ -11,6 +11,7 @@ A script is invoked as `rust-script --force --debug scripts/<name>.rs` with `RUS
 | `github` | `ureq` | the `github` module (the GitHub API client), `worktree::cli`, and the `Http` and `Token` variants of `Error` | `scripts/dag.rs`, `scripts/dag_lint.rs`, `scripts/dependabot_automerge.rs`, `scripts/label_gate.rs`, `scripts/main_red.rs`, `scripts/repo_settings.rs`, `scripts/review_gate.rs`, `scripts/wt.rs` |
 | `hooks` | `regex` | the `hooks` module: the hook installer behind `just hooks` and the deny-terms check behind `just hook-pre-push` | `scripts/hooks.rs` |
 | `doctor` | `toml` | the `doctor` module behind `just doctor` | `scripts/doctor.rs` |
+| `judge` | `ring`, and `github` | the `judge` module: the `judged` charter entries asked of a pull request through the typed-question service, behind `just judge` | `scripts/judge.rs` |
 
 The default feature set is empty. Crates that use the library as a dev-dependency set `default-features = false` and enable none of these features. The workspace lint, test and doc recipes build with `--all-features`, so every feature goes through the gates.
 

@@ -115,6 +115,11 @@ dependabot-automerge pr:
 pr-title title:
     {{rs}} scripts/pr_title.rs "$1"
 
+# Judge pull request `pr` against the `judged` charter entries through the typed-question service;
+# fails only on a confident "violates". Needs `TYPESAFE_API_KEY`; without it every entry abstains.
+judge pr:
+    {{rs}} scripts/judge.rs {{pr}}
+
 # CI job: formatting.
 ci-fmt: fmt-check
 

@@ -16,6 +16,8 @@ pub mod github;
 #[cfg(feature = "hooks")]
 pub mod hooks;
 pub mod image;
+#[cfg(feature = "judge")]
+pub mod judge;
 pub mod kind;
 pub mod layering;
 pub mod markdown;
