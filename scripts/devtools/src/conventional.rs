@@ -1,4 +1,4 @@
-//! The pull request title check behind `just pr-title`: a title is a
+//! The pull request title check behind `just pr-title` and the `labels` check: a title is a
 //! [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) header, since
 //! merges are squash-only and the title becomes the commit on `main`.
 //!
@@ -144,8 +144,24 @@ pub fn parse(title: &str) -> std::result::Result<Header<'_>, Invalid> {
     })
 }
 
+/// Checks `title` against the grammar and returns the line reporting the verdict: `Ok` when
+/// the title follows it, `Err` naming the first broken rule when it does not.
+///
+/// # Errors
+/// Returns the report line as `Err` when `title` does not follow the grammar.
+pub fn verdict(title: &str) -> std::result::Result<String, String> {
+    match parse(title) {
+        Ok(_) => Ok(format!(
+            "pr-title: `{title}` is a Conventional Commits header"
+        )),
+        Err(reason) => Err(format!(
+            "pr-title: `{title}` is not a Conventional Commits header: {reason}"
+        )),
+    }
+}
+
 /// Entry point of `scripts/pr_title.rs`: checks the title that is the only argument, prints
-/// the verdict and returns the exit code.
+/// the [`verdict`] and returns the exit code.
 ///
 /// # Errors
 /// Fails when `args` does not hold exactly one element.
@@ -154,16 +170,12 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<ExitCode> {
     let (Some(title), None) = (args.next(), args.next()) else {
         return Err(Error::Parse("usage: pr_title <title>".to_owned()));
     };
-    match parse(&title) {
-        Ok(_) => {
-            println!("pr-title: `{title}` is a Conventional Commits header");
-            Ok(ExitCode::SUCCESS)
-        }
-        Err(reason) => {
-            println!("pr-title: `{title}` is not a Conventional Commits header: {reason}");
-            Ok(ExitCode::FAILURE)
-        }
-    }
+    let (line, code) = match verdict(&title) {
+        Ok(line) => (line, ExitCode::SUCCESS),
+        Err(line) => (line, ExitCode::FAILURE),
+    };
+    println!("{line}");
+    Ok(code)
 }
 
 #[cfg(test)]
@@ -300,6 +312,21 @@ mod tests {
     }
 
     #[test]
+    fn the_verdict_line_quotes_the_title_and_names_the_broken_rule() {
+        assert_eq!(
+            verdict("ci: x"),
+            Ok("pr-title: `ci: x` is a Conventional Commits header".to_owned())
+        );
+        assert_eq!(
+            verdict("feat:x"),
+            Err(format!(
+                "pr-title: `feat:x` is not a Conventional Commits header: {}",
+                Invalid::BadSeparator
+            ))
+        );
+    }
+
+    #[test]
     fn run_requires_exactly_one_argument() {
         for args in [vec![], vec!["feat: a".to_owned(), "b".to_owned()]] {
             let err = run(args).unwrap_err();
@@ -308,129 +335,5 @@ mod tests {
                 "{err}"
             );
         }
-    }
-
-    const WORKFLOW: &str = include_str!("../../../.github/workflows/labels.yml");
-
-    /// The pr-title step of the `labels` job.
-    fn title_step() -> &'static str {
-        let jobs = WORKFLOW.split_once("\njobs:\n").unwrap().1;
-        assert!(jobs.starts_with("  labels:\n"), "{jobs}");
-        jobs.split("\n      - ")
-            .find(|s| s.contains("just pr-title"))
-            .unwrap_or_else(|| panic!("no pr-title step in the labels job:\n{jobs}"))
-    }
-
-    /// The single-line `run:` command of the pr-title step, as GitHub hands it to bash.
-    fn title_step_script() -> &'static str {
-        let step = title_step();
-        step.lines()
-            .find_map(|l| l.trim().strip_prefix("run: "))
-            .unwrap_or_else(|| panic!("no single-line `run:` in the pr-title step:\n{step}"))
-    }
-
-    #[test]
-    fn the_labels_job_checks_the_title_from_the_event_through_the_environment() {
-        let step = title_step();
-        // The title reaches the shell only as an environment variable, never interpolated into
-        // the command line, so a title cannot inject shell syntax.
-        assert_eq!(title_step_script(), "just pr-title \"$PR_TITLE\"");
-        assert!(
-            step.contains("PR_TITLE: ${{ github.event.pull_request.title }}"),
-            "{step}"
-        );
-        // It runs even when the label gate before it failed, so both verdicts are reported.
-        assert!(step.contains("if: ${{ !cancelled() }}"), "{step}");
-        let on = WORKFLOW.split_once("\non:\n").unwrap().1;
-        let types = on
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("types: "))
-            .unwrap();
-        assert!(
-            types
-                .trim_matches(['[', ']'])
-                .split(", ")
-                .any(|t| t == "edited"),
-            "{types}"
-        );
-    }
-
-    #[test]
-    fn the_title_step_has_no_recipe_presence_guard() {
-        // The step is the bare recipe call: no shell conditional around it, and nothing in the
-        // workflow asks `just` whether the recipe exists, so a missing recipe fails the check.
-        let step = title_step();
-        assert!(!step.contains("run: |"), "{step}");
-        for probe in ["--show", "--summary", "--list", "--dump", "::warning::"] {
-            assert!(
-                !WORKFLOW.contains(probe),
-                "`{probe}` in labels.yml:\n{WORKFLOW}"
-            );
-        }
-    }
-
-    /// Runs the pr-title step with a stub `just` that logs every invocation. With `has_recipe`
-    /// its `pr-title` recipe rejects the title; without it, the stub fails the way `just` does
-    /// for an unknown recipe.
-    fn run_title_step(has_recipe: bool, title: &str) -> (Option<i32>, String, String) {
-        use crate::worktree::test_support::TempDir;
-        use std::os::unix::fs::PermissionsExt;
-        let tmp = TempDir::new();
-        let log = tmp.0.join("calls");
-        let stub = tmp.0.join("just");
-        std::fs::write(
-            &stub,
-            format!(
-                "#!/bin/sh\n\
-                 printf '%s\\n' \"$@\" >> '{log}'\n\
-                 if [ {has} = 0 ]; then\n\
-                 echo \"error: Justfile does not contain recipe \\`$1\\`\" >&2\n\
-                 exit 1\n\
-                 fi\n\
-                 exit 7\n",
-                has = u8::from(has_recipe),
-                log = log.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let path = format!(
-            "{}:{}",
-            tmp.0.display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-        let out = std::process::Command::new("bash")
-            .args(["--noprofile", "--norc", "-eo", "pipefail", "-c"])
-            .arg(title_step_script())
-            .env("PATH", path)
-            .env("PR_TITLE", title)
-            .output()
-            .unwrap();
-        let calls = std::fs::read_to_string(&log).unwrap_or_default();
-        (
-            out.status.code(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-            calls,
-        )
-    }
-
-    #[test]
-    fn the_title_step_fails_when_the_recipe_is_missing() {
-        let (code, stderr, calls) = run_title_step(false, "feat: add a thing");
-        assert_eq!(code, Some(1), "{stderr}");
-        assert!(
-            stderr.contains("does not contain recipe `pr-title`"),
-            "{stderr}"
-        );
-        // The recipe is called directly, with no probe for its presence first.
-        assert_eq!(calls, "pr-title\nfeat: add a thing\n");
-    }
-
-    #[test]
-    fn the_title_step_runs_the_recipe_with_the_literal_title_and_keeps_its_verdict() {
-        let title = "Update \"README\" $HOME `id`";
-        let (code, stderr, calls) = run_title_step(true, title);
-        assert_eq!(code, Some(7), "{stderr}");
-        assert_eq!(calls, format!("pr-title\n{title}\n"));
     }
 }

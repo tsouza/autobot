@@ -1,5 +1,5 @@
 //! The `labels` check: a pull request that changes a human-lane path carries the labels that
-//! path requires.
+//! path requires, and its title is a Conventional Commits header ([`conventional`]).
 //!
 //! | Changed path | Required labels |
 //! |---|---|
@@ -9,12 +9,13 @@
 //! A renamed file is judged by both its new and its previous path, so moving a file out of a
 //! guarded directory needs the same labels as editing it. Any other path requires no label.
 //!
-//! The changed files and the labels are read from the GitHub API when the check runs, so a
-//! re-run after a label is added or removed sees the pull request's current labels.
+//! The title, the labels and the changed files are read from the GitHub API when the check
+//! runs, never from the event that started it, so every run judges the pull request's current
+//! state and every run on the same state reaches the same verdict.
 
 use super::settings::Api;
 use super::{Client, Method, pages, pr_number};
-use crate::{Error, Result};
+use crate::{Error, Result, conventional};
 use std::collections::BTreeSet;
 use std::process::ExitCode;
 
@@ -77,12 +78,32 @@ pub fn missing<'a>(
     out.into_iter().collect()
 }
 
-/// Reads pull request `pr`, its labels and its changed files, and returns every missing label.
+/// The `labels` check's judgement of one pull request, read from the GitHub API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Verdict {
+    /// Every label the changed paths require and the pull request lacks.
+    pub missing: Vec<Missing>,
+    /// The [`conventional::verdict`] on the pull request's title.
+    pub title: std::result::Result<String, String>,
+}
+
+impl Verdict {
+    /// Whether the pull request passes: no label is missing and the title is a header.
+    #[must_use]
+    pub fn passes(&self) -> bool {
+        self.missing.is_empty() && self.title.is_ok()
+    }
+}
+
+/// Reads pull request `pr` (its title, labels and changed files) and judges it.
 ///
 /// # Errors
-/// Fails if a GitHub call fails or a response lacks the labels or a file name.
-pub fn evaluate(api: &impl Api, pr: u64) -> Result<Vec<Missing>> {
+/// Fails if a GitHub call fails or a response lacks the title, the labels or a file name.
+pub fn evaluate(api: &impl Api, pr: u64) -> Result<Verdict> {
     let pull = api.request(Method::Get, &format!("pulls/{pr}"), None)?;
+    let Some(title) = pull["title"].as_str() else {
+        return Err(Error::Parse(format!("pulls/{pr}: no `title`")));
+    };
     let Some(labels) = pull["labels"].as_array() else {
         return Err(Error::Parse(format!("pulls/{pr}: no `labels`")));
     };
@@ -106,12 +127,16 @@ pub fn evaluate(api: &impl Api, pr: u64) -> Result<Vec<Missing>> {
         paths.push(name);
         paths.extend(file["previous_filename"].as_str());
     }
-    Ok(missing(paths, &labels))
+    Ok(Verdict {
+        missing: missing(paths, &labels),
+        title: conventional::verdict(title),
+    })
 }
 
-/// Entry point of `scripts/label_gate.rs`: checks the pull request whose number is the only
-/// argument, prints each missing label or a clean line, and returns the exit code. The
-/// repository is resolved by [`super::repository`] from the current directory.
+/// Entry point of `scripts/label_gate.rs`: judges the pull request whose number is the only
+/// argument, prints each missing label or a clean line and then the title verdict, and
+/// returns the exit code. The repository is resolved by [`super::repository`] from the
+/// current directory.
 ///
 /// # Errors
 /// Fails on a missing or non-numeric argument, an unresolvable repository, or a failed
@@ -119,16 +144,26 @@ pub fn evaluate(api: &impl Api, pr: u64) -> Result<Vec<Missing>> {
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<ExitCode> {
     let pr = pr_number(args, "label_gate")?;
     let repo = super::repository(".")?;
-    let missing = evaluate(&Client::new(repo)?, pr)?;
-    if missing.is_empty() {
+    let verdict = evaluate(&Client::new(repo)?, pr)?;
+    if verdict.missing.is_empty() {
         println!("{CONTEXT}: #{pr} carries every label its changed paths require");
-        return Ok(ExitCode::SUCCESS);
+    } else {
+        for m in &verdict.missing {
+            println!("{m}");
+        }
+        println!(
+            "{CONTEXT}: #{pr} lacks {} required label(s)",
+            verdict.missing.len()
+        );
     }
-    for m in &missing {
-        println!("{m}");
+    match &verdict.title {
+        Ok(line) | Err(line) => println!("{line}"),
     }
-    println!("{CONTEXT}: #{pr} lacks {} required label(s)", missing.len());
-    Ok(ExitCode::FAILURE)
+    Ok(if verdict.passes() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 #[cfg(test)]
@@ -139,16 +174,16 @@ mod tests {
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
 
-    // Recorded from GET repos/tsouza/autobot/pulls/248, keeping `number`, `state`, the label
-    // names and `head`.
-    const PULL_248: &str = r#"{"number":248,"state":"closed","labels":[{"name":"human-lane"},{"name":"area:ci"}],"head":{"ref":"54-review-gate","sha":"f1c9c9b525e8602a2873e56a544643705e72ef3f"}}"#;
+    // Recorded from GET repos/tsouza/autobot/pulls/248, keeping `number`, `state`, `title`, the
+    // label names and `head`.
+    const PULL_248: &str = r#"{"number":248,"state":"closed","title":"feat(ci): add the review-gate commit status bound to the head SHA","labels":[{"name":"human-lane"},{"name":"area:ci"}],"head":{"ref":"54-review-gate","sha":"f1c9c9b525e8602a2873e56a544643705e72ef3f"}}"#;
 
     // Recorded from GET repos/tsouza/autobot/pulls/248/files?per_page=100&page=1, keeping
     // `filename`, `status` and `previous_filename`.
     const FILES_248: &str = r#"[{"filename":".github/rulesets/main.json","status":"modified"},{"filename":".github/workflows/review-gate.yml","status":"added"},{"filename":"Justfile","status":"modified"},{"filename":"scripts/devtools/src/github/mod.rs","status":"modified"},{"filename":"scripts/devtools/src/github/verdict.rs","status":"added"},{"filename":"scripts/review_gate.rs","status":"added"}]"#;
 
     // Recorded from GET repos/tsouza/autobot/pulls/237, same fields as PULL_248.
-    const PULL_237: &str = r#"{"number":237,"state":"closed","labels":[{"name":"design"},{"name":"human-lane"},{"name":"design-change"}],"head":{"ref":"223-design-rulings","sha":"6b6bcf0485ea97ded8315b2ce4dbf2e26676a934"}}"#;
+    const PULL_237: &str = r#"{"number":237,"state":"closed","title":"docs(design): record the owner rulings on intake authority, kind closure, model width and gate evidence","labels":[{"name":"design"},{"name":"human-lane"},{"name":"design-change"}],"head":{"ref":"223-design-rulings","sha":"6b6bcf0485ea97ded8315b2ce4dbf2e26676a934"}}"#;
 
     // Recorded from GET repos/tsouza/autobot/pulls/237/files?per_page=100&page=1, same fields
     // as FILES_248.
@@ -206,14 +241,14 @@ mod tests {
     #[test]
     fn workflow_change_with_human_lane_passes() {
         let api = FakeRepo::new(248, parse(PULL_248), parse(FILES_248));
-        assert_eq!(evaluate(&api, 248).unwrap(), []);
+        assert_eq!(evaluate(&api, 248).unwrap().missing, []);
     }
 
     #[test]
     fn workflow_change_without_human_lane_fails() {
         let api = FakeRepo::relabelled(248, &["area:ci"]);
         assert_eq!(
-            evaluate(&api, 248).unwrap(),
+            evaluate(&api, 248).unwrap().missing,
             [
                 miss(".github/rulesets/main.json", HUMAN_LANE),
                 miss(".github/workflows/review-gate.yml", HUMAN_LANE),
@@ -224,14 +259,14 @@ mod tests {
     #[test]
     fn design_change_with_both_labels_passes() {
         let api = FakeRepo::new(237, parse(PULL_237), parse(FILES_237));
-        assert_eq!(evaluate(&api, 237).unwrap(), []);
+        assert_eq!(evaluate(&api, 237).unwrap().missing, []);
     }
 
     #[test]
     fn design_change_with_only_human_lane_fails() {
         let api = FakeRepo::relabelled(237, &["design", HUMAN_LANE]);
         assert_eq!(
-            evaluate(&api, 237).unwrap(),
+            evaluate(&api, 237).unwrap().missing,
             [
                 miss("docs/design/AUTOBOT-FORMAL-SURFACE.md", DESIGN_CHANGE),
                 miss("docs/design/AUTOBOT-KERNEL.md", DESIGN_CHANGE),
@@ -243,7 +278,7 @@ mod tests {
     #[test]
     fn design_change_with_only_design_change_fails_for_human_lane() {
         let api = FakeRepo::relabelled(237, &[DESIGN_CHANGE]);
-        let missing = evaluate(&api, 237).unwrap();
+        let missing = evaluate(&api, 237).unwrap().missing;
         assert_eq!(missing.len(), 3);
         assert!(missing.iter().all(|m| m.label == HUMAN_LANE), "{missing:?}");
     }
@@ -255,7 +290,7 @@ mod tests {
         let mut pull = parse(PULL_248);
         pull["labels"] = json!([]);
         let api = FakeRepo::new(248, pull, files);
-        assert_eq!(evaluate(&api, 248).unwrap(), []);
+        assert_eq!(evaluate(&api, 248).unwrap().missing, []);
     }
 
     #[test]
@@ -265,9 +300,13 @@ mod tests {
             "previous_filename": "docs/design/AUTOBOT-KERNEL.md",
             "status": "renamed",
         }]);
-        let api = FakeRepo::new(237, json!({"labels": [{"name": HUMAN_LANE}]}), files);
+        let api = FakeRepo::new(
+            237,
+            json!({"title": "docs: move the kernel", "labels": [{"name": HUMAN_LANE}]}),
+            files,
+        );
         assert_eq!(
-            evaluate(&api, 237).unwrap(),
+            evaluate(&api, 237).unwrap().missing,
             [miss("docs/design/AUTOBOT-KERNEL.md", DESIGN_CHANGE)]
         );
     }
@@ -297,20 +336,27 @@ mod tests {
     fn files_on_later_pages_are_read() {
         let mut filler = vec![json!({"filename": "README.md"}); PAGE_SIZE];
         filler[0] = json!({"filename": "Justfile"});
-        let mut api = FakeRepo::new(248, json!({"labels": []}), Value::Array(filler));
+        let mut api = FakeRepo::new(
+            248,
+            json!({"title": "ci: x", "labels": []}),
+            Value::Array(filler),
+        );
         api.0.insert(
             "pulls/248/files?per_page=100&page=2".to_owned(),
             json!([{"filename": ".github/settings.json"}]),
         );
         assert_eq!(
-            evaluate(&api, 248).unwrap(),
+            evaluate(&api, 248).unwrap().missing,
             [miss(".github/settings.json", HUMAN_LANE)]
         );
     }
 
     #[test]
     fn malformed_responses_are_errors() {
-        let api = FakeRepo::new(248, json!({"number": 248}), parse(FILES_248));
+        let api = FakeRepo::new(248, json!({"labels": []}), parse(FILES_248));
+        let err = evaluate(&api, 248).unwrap_err();
+        assert!(err.to_string().contains("no `title`"), "{err}");
+        let api = FakeRepo::new(248, json!({"title": "ci: x"}), parse(FILES_248));
         let err = evaluate(&api, 248).unwrap_err();
         assert!(err.to_string().contains("no `labels`"), "{err}");
         let api = FakeRepo::new(248, parse(PULL_248), json!([{"status": "added"}]));
@@ -359,6 +405,80 @@ mod tests {
         let jobs = WORKFLOW.split_once("\njobs:\n").unwrap().1;
         assert!(jobs.starts_with(&format!("  {CONTEXT}:\n")), "{jobs}");
         assert!(jobs.contains("just label-gate \"$PR\""), "{jobs}");
+    }
+
+    #[test]
+    fn the_title_is_judged_from_the_recorded_pull_request() {
+        let api = FakeRepo::new(248, parse(PULL_248), parse(FILES_248));
+        let verdict = evaluate(&api, 248).unwrap();
+        assert_eq!(
+            verdict.title,
+            conventional::verdict(
+                "feat(ci): add the review-gate commit status bound to the head SHA"
+            )
+        );
+        assert!(verdict.title.is_ok(), "{verdict:?}");
+        assert!(verdict.passes(), "{verdict:?}");
+    }
+
+    #[test]
+    fn a_non_conventional_title_fails_even_with_every_label() {
+        let mut pull = parse(PULL_248);
+        pull["title"] = json!("Add the review gate");
+        let api = FakeRepo::new(248, pull, parse(FILES_248));
+        let verdict = evaluate(&api, 248).unwrap();
+        assert_eq!(verdict.missing, []);
+        assert_eq!(
+            verdict.title,
+            Err(format!(
+                "pr-title: `Add the review gate` is not a Conventional Commits header: {}",
+                conventional::Invalid::BadTypeEnd
+            ))
+        );
+        assert!(!verdict.passes(), "{verdict:?}");
+    }
+
+    #[test]
+    fn missing_labels_fail_even_with_a_conventional_title() {
+        let verdict = evaluate(&FakeRepo::relabelled(248, &[]), 248).unwrap();
+        assert!(verdict.title.is_ok(), "{verdict:?}");
+        assert!(!verdict.passes(), "{verdict:?}");
+    }
+
+    /// The steps of the `labels` job, each without its leading `- `.
+    fn steps() -> Vec<&'static str> {
+        let jobs = WORKFLOW.split_once("\njobs:\n").unwrap().1;
+        let (_, steps) = jobs.split_once("\n    steps:\n").unwrap();
+        steps.split("\n      - ").skip(1).collect()
+    }
+
+    #[test]
+    fn every_run_judges_the_live_pull_request_and_none_is_cancelled() {
+        // Nothing from the event payload but the pull request number reaches the check, and no
+        // run cancels another: every run of the required check ends with a verdict.
+        assert!(!WORKFLOW.contains("cancel-in-progress"), "{WORKFLOW}");
+        assert!(!WORKFLOW.contains("concurrency:"), "{WORKFLOW}");
+        assert!(
+            !WORKFLOW.contains("github.event.pull_request.title"),
+            "{WORKFLOW}"
+        );
+        assert!(!WORKFLOW.contains("PR_TITLE"), "{WORKFLOW}");
+        assert!(!WORKFLOW.contains("pr-title"), "{WORKFLOW}");
+        let steps = steps();
+        let runs: Vec<_> = steps
+            .iter()
+            .filter_map(|s| s.lines().find_map(|l| l.trim().strip_prefix("run: ")))
+            .filter(|r| r.starts_with("just "))
+            .collect();
+        assert_eq!(runs, ["just label-gate \"$PR\""], "{steps:?}");
+        let gate = steps
+            .iter()
+            .find(|s| s.contains("just label-gate"))
+            .unwrap();
+        assert!(
+            gate.contains("PR: ${{ github.event.pull_request.number }}"),
+            "{gate}"
+        );
     }
 
     #[test]
