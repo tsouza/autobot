@@ -203,7 +203,7 @@ pub fn render(machines: &[Machine]) -> String {
 
 /// The body of the first fenced code block in `text`.
 fn fenced_block(text: &str) -> Option<String> {
-    let mut fence = markdown::Fence::default();
+    let mut fence = super::Fence::default();
     let mut body: Option<String> = None;
     for line in text.lines() {
         let was_open = fence.is_open();
