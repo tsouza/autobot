@@ -1,18 +1,20 @@
-//! The digest value a status record carries.
+//! The digest value a status record carries, and the `sha256:` text form every kernel digest
+//! uses.
 
 use crate::error::ValueError;
-use crate::profile::ProfileDigest;
-use schemars::{JsonSchema, Schema, SchemaGenerator};
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
 
-/// A SHA-256 digest carried by a record: a before, after, audit or payload digest.
+/// The prefix of the text form of a [`Digest`].
+const PREFIX: &str = "sha256:";
+
+/// A SHA-256 digest carried by a record: a before, after, audit, payload or profile digest.
 ///
-/// Its text form, used by `Display`, `FromStr` and serde, is the one [`ProfileDigest`] uses:
-/// `sha256:` followed by 64 lowercase hexadecimal digits. This type carries a digest and does
-/// not compute one.
+/// Its text form, used by `Display`, `FromStr` and serde, is `sha256:` followed by 64
+/// lowercase hexadecimal digits. This type carries a digest and does not compute one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Digest([u8; 32]);
@@ -33,7 +35,7 @@ impl Digest {
 
 impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("sha256:")?;
+        f.write_str(PREFIX)?;
         self.0.iter().try_for_each(|b| write!(f, "{b:02x}"))
     }
 }
@@ -42,9 +44,22 @@ impl FromStr for Digest {
     type Err = ValueError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.parse::<ProfileDigest>()
-            .map(|d| Self(*d.as_bytes()))
-            .map_err(|_| ValueError::Digest(s.to_owned()))
+        let err = || ValueError::Digest(s.to_owned());
+        let hex = s.strip_prefix(PREFIX).ok_or_else(err)?.as_bytes();
+        if hex.len() != 64 {
+            return Err(err());
+        }
+        let nibble = |c: u8| match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            _ => None,
+        };
+        let mut out = [0u8; 32];
+        for (byte, &[hi, lo]) in out.iter_mut().zip(hex.as_chunks::<2>().0) {
+            let (hi, lo) = (nibble(hi), nibble(lo));
+            *byte = (hi.ok_or_else(err)? << 4) | lo.ok_or_else(err)?;
+        }
+        Ok(Self(out))
     }
 }
 
@@ -67,7 +82,10 @@ impl JsonSchema for Digest {
         "Digest".into()
     }
 
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        ProfileDigest::json_schema(generator)
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+        })
     }
 }
