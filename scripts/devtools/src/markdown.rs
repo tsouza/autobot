@@ -5,13 +5,19 @@
 /// A fence opens with three or more backticks or tildes (at most three spaces of indent) and
 /// closes with a line of the same character, at least as long, and nothing else.
 #[derive(Debug, Default)]
-struct Fence {
+pub struct Fence {
     open: Option<(u8, usize)>,
 }
 
 impl Fence {
+    /// Whether a fenced code block is open after the lines fed so far.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
+
     /// Feeds one line; returns `true` if the line is fence markup or fenced content.
-    fn step(&mut self, line: &str) -> bool {
+    pub fn step(&mut self, line: &str) -> bool {
         let body = line.trim_end();
         let indent = body.len() - body.trim_start_matches(' ').len();
         let body = body.trim_start_matches(' ');

@@ -203,15 +203,20 @@ pub fn render(machines: &[Machine]) -> String {
 
 /// The body of the first fenced code block in `text`.
 fn fenced_block(text: &str) -> Option<String> {
-    let mut lines = text.lines().skip_while(|l| !super::is_fence(l));
-    lines.next()?;
-    let mut body = String::new();
-    for line in lines {
-        if super::is_fence(line) {
-            return Some(body);
+    let mut fence = markdown::Fence::default();
+    let mut body: Option<String> = None;
+    for line in text.lines() {
+        let was_open = fence.is_open();
+        fence.step(line);
+        match (&mut body, was_open, fence.is_open()) {
+            (None, false, true) => body = Some(String::new()),
+            (Some(_), true, false) => return body,
+            (Some(b), true, true) => {
+                b.push_str(line);
+                b.push('\n');
+            }
+            _ => {}
         }
-        body.push_str(line);
-        body.push('\n');
     }
     None
 }
@@ -698,6 +703,19 @@ mod tests {
         for (a, b) in machines.iter().zip(&again) {
             assert_eq!(a, b, "machine `{}` does not round-trip", a.name);
         }
+    }
+
+    #[test]
+    fn fenced_block_follows_commonmark_fences() {
+        assert_eq!(
+            fenced_block("x\n~~~\nA -> B\n~~~\n").as_deref(),
+            Some("A -> B\n")
+        );
+        assert_eq!(
+            fenced_block("````\n```\nA -> B\n```\n````\n").as_deref(),
+            Some("```\nA -> B\n```\n")
+        );
+        assert_eq!(fenced_block("```\nA -> B\n"), None);
     }
 
     #[test]

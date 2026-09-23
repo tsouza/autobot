@@ -7,13 +7,13 @@
 //! 1. [`Rule::StateVocabulary`]: every ALL-CAPS token of three or more characters in a main
 //!    file is a KERNEL §10 lifecycle state or in [`VOCABULARY`].
 //! 2. [`Rule::GlossaryLayer`]: the GLOSSARY CORE section names no term defined under
-//!    EXTENSION or EXTERNAL, other than a role that CORE itself defines under the same name;
-//!    a lowercase plain part after ` / ` in a label qualifies the first part and is no term.
+//!    EXTENSION or EXTERNAL, other than a role that CORE itself defines under the same name
+//!    (a CORE entry whose definition begins `The role of`); a lowercase plain part after ` / `
+//!    in a label qualifies the first part and is no term.
 //! 3. [`Rule::CoreDependsOnExtension`]: no core document's `Depends on:` line names
 //!    `extensions/` or an extension file.
 //! 4. [`Rule::NumberOutsideProfile`]: no main file other than [`M0`] holds a number of two or
-//!    more digits, except `10`, `11`, numbers inside identifiers, and tokens prefixed `F-`,
-//!    `I-` or `§`.
+//!    more digits, except `10`, `11`, and tokens prefixed `F-`, `I-` or `§`.
 //! 5. [`Rule::Background`]: a main file with a background file ends with the line
 //!    ``Background: `<name>.background.md`.``, a pointer names an existing file, and every
 //!    background file has a main file and clears both floors: at least [`BACKGROUND_MIN_LINES`]
@@ -427,6 +427,17 @@ fn line_of(doc: &str, offset: usize) -> usize {
     doc[..offset].matches('\n').count() + 1
 }
 
+/// Whether a glossary entry line defines a role: its definition begins `The role of`.
+fn is_role(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix("- **")
+        .and_then(|rest| rest.split_once("**"))
+        .is_some_and(|(_, def)| {
+            def.trim_start_matches([' ', '—'])
+                .starts_with("The role of")
+        })
+}
+
 fn glossary_layer(glossary: &str, out: &mut Vec<Violation>) {
     let section = |name: &str| markdown::section(glossary, name);
     let (Some(core), Some(ext), Some(external)) =
@@ -442,14 +453,19 @@ fn glossary_layer(glossary: &str, out: &mut Vec<Violation>) {
         return;
     };
     let core_offset = core.as_ptr() as usize - glossary.as_ptr() as usize;
-    let core_terms: BTreeSet<String> = glossary_terms(core, true)
+    let roles: String = core
+        .lines()
+        .filter(|l| is_role(l))
+        .flat_map(|l| [l, "\n"])
+        .collect();
+    let core_roles: BTreeSet<String> = glossary_terms(&roles, true)
         .iter()
         .map(|t| t.to_ascii_lowercase())
         .collect();
     let mut outside: BTreeMap<String, &str> = BTreeMap::new();
     for (layer, text) in [("EXTENSION", ext), ("EXTERNAL", external)] {
         for term in glossary_terms(text, false) {
-            if !core_terms.contains(&term.to_ascii_lowercase()) {
+            if !core_roles.contains(&term.to_ascii_lowercase()) {
                 outside.entry(term).or_insert(layer);
             }
         }
@@ -521,11 +537,7 @@ fn numbers_outside_profile(set: &DesignSet, out: &mut Vec<Violation>) {
                 let begin = chars[start].0;
                 let end = chars.get(i).map_or(line.len(), |c| c.0);
                 let digits = &line[begin..end];
-                let inside_word = line[..begin]
-                    .chars()
-                    .next_back()
-                    .is_some_and(char::is_alphanumeric);
-                if digits.len() < 2 || inside_word || digits == "10" || digits == "11" {
+                if digits.len() < 2 || digits == "10" || digits == "11" {
                     continue;
                 }
                 let token_start = line[..begin]
@@ -686,13 +698,9 @@ fn resolve(file: &str, target: &str) -> std::result::Result<Option<String>, &'st
 
 fn links(set: &DesignSet, out: &mut Vec<Violation>) {
     for (file, text) in &set.docs {
-        let mut fenced = false;
+        let mut fence = markdown::Fence::default();
         for (n, line) in text.lines().enumerate() {
-            if super::is_fence(line) {
-                fenced = !fenced;
-                continue;
-            }
-            if fenced {
+            if fence.step(line) {
                 continue;
             }
             for target in link_targets(line) {
@@ -817,7 +825,7 @@ mod tests {
         let mut set = base();
         set.insert(
             "extensions/sample.md",
-            "# Sample\n\nSee KERNEL §10.2, §3.11, F-12, I-10, sha256, 10 and 11.\n",
+            "# Sample\n\nSee KERNEL §10.2, §3.11, F-12, I-10, 10 and 11.\n",
         );
         set.insert(
             "AUTOBOT-KERNEL.background.md",
@@ -827,15 +835,16 @@ mod tests {
         // The same numbers outside the exempt forms are flagged one by one.
         set.insert(
             "extensions/sample.md",
-            "# Sample\n\nSee 3.12, G-12 and 250.\n",
+            "# Sample\n\nSee 3.12, G-12, 250, sha256, p99 and T300.\n",
         );
         let tokens: Vec<String> = check(&set)
             .unwrap()
             .into_iter()
+            .filter(|v| v.rule == Rule::NumberOutsideProfile)
             .map(|v| v.message)
             .collect();
-        assert_eq!(tokens.len(), 3, "{tokens:?}");
-        for want in ["`3.12`", "`G-12`", "`250`"] {
+        assert_eq!(tokens.len(), 6, "{tokens:?}");
+        for want in ["`3.12`", "`G-12`", "`250`", "`sha256`", "`p99`", "`T300`"] {
             assert!(
                 tokens.iter().any(|t| t.contains(want)),
                 "{want}: {tokens:?}"
@@ -856,6 +865,23 @@ mod tests {
         assert_eq!(
             v.message,
             "the CORE section names the EXTERNAL term `Forge`"
+        );
+    }
+
+    #[test]
+    fn core_entry_that_is_no_role_does_not_exempt_an_extension_term() {
+        let glossary = base().doc(GLOSSARY).unwrap().replace(
+            "- **Forge** — The role",
+            "- **`RoutingTable`** — Copied into core.\n- **Forge** — The role",
+        );
+        let mut set = base();
+        set.insert(GLOSSARY, &glossary);
+        let v = only(&set);
+        assert_eq!(v.rule, Rule::GlossaryLayer);
+        assert_eq!(v.line, Some(10));
+        assert_eq!(
+            v.message,
+            "the CORE section names the EXTENSION term `RoutingTable`"
         );
     }
 
@@ -961,6 +987,15 @@ mod tests {
             "# S\n\n`[k](x.md)`\n\n```\n[k](y.md)\n```\n",
         );
         assert_eq!(check(&set).unwrap(), []);
+        // Tilde fences, and a longer fence around an inner three-backtick pair, hide links too.
+        set.insert(
+            "extensions/sample.md",
+            "# S\n\n~~~\n[x](../../outside.md)\n~~~\n\n````\n```\n[y](nowhere.md)\n```\n````\n\n\
+             [z](gone.md)\n",
+        );
+        let got = check(&set).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].message, "the link `gone.md` resolves to no file");
     }
 
     #[test]
