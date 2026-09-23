@@ -1,6 +1,6 @@
 [package]
-name = "autobot-kernel"
-description = "AutoBot kernel: aggregates, commit lanes, receipts, dispatch registers and lifecycles, without Kubernetes, async or I/O."
+name = "autobot-controllers"
+description = "AutoBot controllers, Kubernetes store driver, admission, broker and custody."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

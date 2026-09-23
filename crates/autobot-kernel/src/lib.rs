@@ -1,1 +1,5 @@
-//! AutoBot kernel: the pure, synchronous core specified by `docs/design/AUTOBOT-KERNEL.md`.
+//! AutoBot kernel, specified by `docs/design/AUTOBOT-KERNEL.md`.
+//!
+//! This crate has no Kubernetes, async runtime or I/O dependency: controllers drive it
+//! from `autobot-controllers`.
+#![warn(missing_docs)]
