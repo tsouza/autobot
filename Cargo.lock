@@ -61,6 +61,7 @@ name = "autobot-operator"
 version = "0.0.0"
 dependencies = [
  "autobot-controllers",
+ "autobot-fakes",
 ]
 
 [[package]]

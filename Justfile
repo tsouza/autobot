@@ -154,10 +154,14 @@ kind-up:
 kind-down:
     KUBECONFIG="{{kind-kubeconfig}}" {{rs}} scripts/kind.rs down
 
-# Load a local container image into the kind cluster.
+# Load a local container image into the kind cluster; by default the one `just operator-image` builds.
 [positional-arguments]
-kind-load image:
+kind-load image="autobot-operator:m0-q":
     {{rs}} scripts/kind.rs load "$1"
+
+# Build the operator image `autobot-operator:m0-q` from a host build with `m0-fakes`; prints its digest.
+operator-image:
+    {{rs}} scripts/operator_image.rs
 
 # Run the tests that need a cluster (nextest profile `integration`) against the kind cluster.
 test-integration:

@@ -14,6 +14,7 @@ pub mod git;
 pub mod github;
 #[cfg(feature = "hooks")]
 pub mod hooks;
+pub mod image;
 pub mod kind;
 pub mod layering;
 pub mod markdown;

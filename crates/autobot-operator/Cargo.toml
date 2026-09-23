@@ -10,8 +10,20 @@ publish.workspace = true
 name = "autobot-operator"
 path = "src/main.rs"
 
+[features]
+default = []
+# The M0-Q qualification build: links the fake providers, fake forge and ScriptedAgent.
+# `just operator-image` builds with it; a release build never does.
+m0-fakes = ["dep:autobot-fakes"]
+
 [dependencies]
 autobot-controllers.workspace = true
+autobot-fakes = { workspace = true, optional = true }
+
+# `src/main.rs` names the fakes once the operator host wires them in-cluster (#95); until then
+# the feature links nothing that main references, which cargo-machete reports as unused.
+[package.metadata.cargo-machete]
+ignored = ["autobot-fakes"]
 
 [lints]
 workspace = true
