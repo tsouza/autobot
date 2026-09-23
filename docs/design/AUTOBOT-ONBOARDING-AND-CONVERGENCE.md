@@ -38,7 +38,7 @@ The target project's toolchain is configuration: image, checkout, setup, build a
 
 A milestone is accepted when all of the following hold at one plan revision, and the acceptance is a recorded acceptance adjudication committed by the Task controller under deterministic acceptance policy — no agent and no judgment decides it:
 
-- every member task is `ACCEPTED` or `SUPERSEDED`, and no member is `BLOCKED` on a decision no one has taken;
+- every member task is `ACCEPTED` or `SUPERSEDED`, and no member is `BLOCKED` on an unanswered `Intervention` or `Finding`;
 - the **composed, integrated candidate** — the result of the milestone's final `IntegrationBasis` at its current generation — has passed the milestone's acceptance evidence; individually passing branches count for nothing (I-6);
 - every `EvidenceBundle` the adjudication relies on is `RECORDED` and unexpired at the moment of acceptance, with its remote generation current;
 - no external operation in the milestone's scope is `OUTCOME_UNKNOWN`, `RECONCILING` or `UNRESOLVED` (I-4);
@@ -53,13 +53,13 @@ Convergence stops only in a named state. Each condition below ends in states pri
 
 | Condition | Where it lands |
 |---|---|
-| **Budget exhausted** — the `Budget` is `EXHAUSTED` or no reservation can be made for the next admissible attempt | No new `TaskRun` is admitted; running attempts stop at their next checkpoint and end `CANCELLED` with their custody kept; their tasks are `BLOCKED`; the Plan controller raises a `PAUSE` for the reviser, and the plan is `PAUSED` until a revision adds budget or the reviser cancels it. A budget ceiling is raised only by a plan revision. |
+| **Budget exhausted** — the `Budget` is `EXHAUSTED` or no reservation can be made for the next admissible attempt | No new `TaskRun` is admitted; running attempts stop at their next checkpoint and end `CANCELLED` with their custody kept; their tasks are `BLOCKED`; the Plan controller raises a `PAUSE` for the reviser, and the plan stays `PAUSED` until a revision whose budget policy raises the ceiling supersedes it or the reviser cancels it; a `RESUME` of this pause is `REJECTED`. A budget ceiling is raised only by a plan revision. |
 | **Human deadline** — an `Intervention` a member depends on passes its deadline unanswered | The member stays `BLOCKED`; the request escalates; the plan continues elsewhere or, if nothing is eligible, becomes the next row. |
-| **Blocked with no eligible action** — no task is `READY`, every remaining task is `BLOCKED` on a decision, dependency, capability or evidence | The Plan controller records the blocking set as a condition and raises an `Intervention` of kind `PAUSE`; the plan is `PAUSED` awaiting the reviser's `RESUME`, a revision, `FAIL` or `CANCEL` (ROLES §5); it is never marked `FAILED` for lack of options. |
+| **Blocked with no eligible action** — no task is `READY`, every remaining task is `BLOCKED` on an unanswered `Intervention` or `Finding`, a dependency, capability or evidence | The Plan controller records the blocking set as a condition and raises an `Intervention` of kind `PAUSE`; the plan is `PAUSED` awaiting the reviser's `RESUME`, a revision, `FAIL` or `CANCEL` (ROLES §5); it is never marked `FAILED` for lack of options. |
 | **Unresolved effect** — an operation the milestone depends on is `UNRESOLVED` | Dependents block; the milestone cannot be accepted until a human adjudicates the operation. |
 | **Custody uncertain** — a workspace the candidate depends on is `QUARANTINED` or in `CONFLICT` | The candidate is ineligible for evidence until adjudication; the task stays `VERIFYING` or `BLOCKED`. |
 
-A plan reaches `FAILED` only by the reviser's `FAIL` and `CANCELLED` only by the reviser's `CANCEL` (ROLES §5), never by timeout. A plan is `COMPLETED` when every milestone of its active revision is `ACCEPTED` or `SUPERSEDED` and nothing blocks plan completion; the Plan controller commits it.
+A plan reaches `FAILED` only by the reviser's `FAIL` and `CANCELLED` only by the reviser's `CANCEL` (ROLES §5), never by timeout. An `ACTIVE` plan is `COMPLETED` when every milestone of its active revision is `ACCEPTED` or `SUPERSEDED` and nothing blocks plan completion; the Plan controller commits it.
 
 ## 5. Consequence class and the worker floor — I-10
 

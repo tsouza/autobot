@@ -108,7 +108,7 @@ PlanRevisionState    = [plan_uid, revision, state]
 EvidenceBundle       = [uid, candidate_digest, base_head, head, plan_revision, scope_digest,
                         charter_digest, criteria_digest, environment_digest,
                         provider_runs, ci_attestations, review_attestations, reviewer_identity,
-                        correlated,              \* the reviewer ran on the worker's model (ROLES §3)
+                        correlated,              \* the reviewer ran on the worker's model (ROLES §3); set by the recording controller from the reviewer configuration and the TaskRun's routing pin, never from a claim
                         remote_generation, expiry, state]
 IntegrationBasis     = [uid, plan_uid, basis_generation, source_heads, base_head, overlap_set,
                         merge_order, integrated_candidate, verification_uid, state]
@@ -295,15 +295,15 @@ WriteOutbox · DrainOutbox · RecordCanonicalRecord · CreateGapForMissingRecord
 \* judgment
 ComputeEligibleSet · AbstainDecision
 RecordDecision              Decision controller only; commits RECORDED only; precondition selected ∈ the eligible set whose digest it records, computed before the question
-ClassifyFinding             a RecordDecision of the finding-severity question class over the eligible set computed from the finding's fields; an absent or abstaining judge selects the highest eligible severity; the Finding's CLASSIFIED and the Manager's disposition are outside the model (§2)
+ClassifyFinding             a RecordDecision of the finding-severity question class over the eligible set computed from the finding's fields; an absent judge selects the highest eligible severity; the Finding's CLASSIFIED and the Manager's disposition are outside the model (§2)
 
 \* interventions: no actions of their own (§2); each becomes the kernel action listed
 HOLD, KILL_SWITCH           RequestHold
 RESUME of a hold            ReleaseHold, then CompleteHoldRelease once hold_causes is empty
-RESUME of a QUIESCE or SUPERSEDE   ResumePlanRevision
+RESUME of a QUIESCE or SUPERSEDE   ResumePlanRevision, only while Plan.phase is QUIESCING
 QUIESCE                     QuiescePlan
 SUPERSEDE                   QuiescePlan, then SupersedePlanRevision
-FAIL, CANCEL                QuiescePlan while the register holds the revision ACTIVE, then RetirePlanAuthority once the Plan is terminal
+FAIL, CANCEL                QuiescePlan if the register holds the revision ACTIVE, then RetirePlanAuthority once the Plan is terminal, if it holds entries
 ADJUDICATE_OPERATION        AdjudicateUnresolvedOperation
 ADJUDICATE_CONFLICT         AdjudicateConflict
 PAUSE, RESUME of a PAUSE    none: they change only Plan.phase, which gates TaskRun admission, revokes no accepted effect and weakens no hold (KERNEL §5), so no invariant of §4 depends on them
