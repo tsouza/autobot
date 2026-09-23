@@ -7,5 +7,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+autobot-adapters.workspace = true
+autobot-kernel.workspace = true
+
 [lints]
 workspace = true

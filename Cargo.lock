@@ -37,8 +37,12 @@ version = "0.0.0"
 name = "autobot-controllers"
 version = "0.0.0"
 dependencies = [
+ "autobot-adapters",
+ "autobot-devtools",
  "autobot-kernel",
  "proptest",
+ "ring",
+ "ureq",
 ]
 
 [[package]]
@@ -58,6 +62,10 @@ dependencies = [
 [[package]]
 name = "autobot-fakes"
 version = "0.0.0"
+dependencies = [
+ "autobot-adapters",
+ "autobot-kernel",
+]
 
 [[package]]
 name = "autobot-kernel"
