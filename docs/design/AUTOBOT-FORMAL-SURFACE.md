@@ -39,7 +39,8 @@ RejectionProof       = [ground ∈ {passed_revision, replay_conflict, create_con
 AuditEnvelope        = [aggregate_uid, commit_sequence, lane ∈ {DOMAIN, CONTROL}, state_revision,
                         control_revision, source_uid, event_type, state_digest,
                         actor, causation_id, correlation_id, schema_version]
-EffectIntentRecord   = [operation_key, effect_index, payload_digest,
+EffectIntentRecord   = [operation_key,          \* derived when the EffectIntent is built (KERNEL §3.3); a slot's record holds installation_lineage in its place
+                        effect_index, payload_digest,
                         provider_binding,        \* [provider, operation]: the key of its ProviderCapability
                         desired_outcome, target_identity, contract_revision]
 PendingCommit        = [command_uid, receipt_uid, commit_sequence, before_digest, after_digest,
@@ -62,7 +63,9 @@ WorkContextRegisters = [hold_state, hold_generation,
                         manager_authority,       \* plan_uid → ManagerAuthority
                         plan_authority,          \* plan_uid → PlanAuthority
                         integration_authority,   \* basis_uid → [basis_generation, state]
-                        dispatch_authority_generation, dispatch_ledger, active_manager_transaction]
+                        dispatch_authority_generation, dispatch_ledger,
+                        blocked_targets,         \* list of [target_identity, operation_uid, adjudication_uid] in order added, one per unsettled operation
+                        active_manager_transaction]
 ManagerAuthority     = [lease_uid, epoch, holder, deadline, phase ∈ {ACTIVE, DRAINING}]
 PlanAuthority        = [active_revision, snapshot_digest, activation_receipt_uid,
                         revision_phase ∈ {ACTIVE, QUIESCING}, plan_generation]   \* absent: no active revision
@@ -70,11 +73,12 @@ ManagerReservation   = [plan_uid, target_uid, expected_revision, command_uid,
                         phase ∈ {RESERVED, APPLYING, RESOLVED},
                         target_receipt_uid, cancellation_receipt_uid,
                         terminal_state ∈ {COMMITTED, CANCELLED, REJECTED, NONE}]
-AdmissionStamp       = [uid, work_context_uid, hold_generation, plan_uid, plan_revision, plan_generation,
-                        lease_uid, epoch, routing_pin, basis_uid, basis_generation,
+AdmissionStamp       = [uid, work_context_uid, operation_uid, hold_generation, plan_uid, plan_revision, plan_generation,
+                        lease_uid, epoch, routing_pin, provider_binding, basis_uid, basis_generation,
                         dispatch_authority_generation, budget_reservation_uid, credential_grant_uid,
                         scope_digest, effect_digest, nonce, expires_at,
-                        dispatch_acceptance_sequence, dispatch_acceptance_generation, state]
+                        dispatch_acceptance_sequence, dispatch_acceptance_generation,   \* copies of the ledger entry's values
+                        state]
 DispatchLedgerEntry  = [operation_uid, operation_key, permit_uid, acceptance_sequence,
                         acceptance_generation, accepted_at,
                         send_state ∈ {ACCEPTED_NOT_SENT, SEND_ATTEMPTED, ACKNOWLEDGED}]
@@ -90,6 +94,7 @@ ToolInvocation       = ExternalOperation ⊕ [agent_run_uid, session_sequence, r
 EffectReceipt        = [operation_uid, attempt_index, outcome, remote_identity]
 ProviderCapability   = [provider, operation, supports_idempotency, supports_lookup,
                         supports_remote_marker, requires_head_base, supports_dry_run,
+                        rate_limit_authoritative,   \* a rate-limit answer proves non-application (KERNEL §3.3)
                         reconciliation_method, qualified]
 
 \* plans, evidence, integration                                   KERNEL §5
@@ -206,21 +211,35 @@ ReserveIntegrationBasis     domain; basis_generation+1, state := RESERVED; refus
 InvalidateIntegrationBasis  domain; basis_generation+1, state := INVALIDATED
 RetireIntegrationBasis      domain; removes integration_authority[basis]; precondition the IntegrationBasis terminal ∧ state = INVALIDATED
 AdvanceDispatchAuthorityGeneration   control; dispatch_authority_generation := the witness_generation of a recorded RestoreWitnessReceipt
-IssueAdmissionStamp · InvalidateAdmissionStamp
-AcceptDispatch              preconditions = registers; admission_sequence+1; ledger append
-RejectStalePermit
-AcknowledgeDispatch         only after acceptance ∧ (terminal ∨ OUTCOME_UNKNOWN ∨ (REQUESTED after a currency or register re-validation failure ∧ send_attempt = NONE)) recorded on the operation; in the last case the same reconciliation sets the permit INVALIDATED
+IssueAdmissionStamp         create on the broker's command, client request key (operation_uid, operation state_revision), for an operation REQUESTED with no ledger entry and no permit that is ISSUED or BROKER_ACCEPTED; precondition hold_state = RUNNING ∧ plan revision_phase = ACTIVE ∧ manager phase = ACTIVE ∧ (provider_binding names a merge ⇒ basis_uid ≠ ∅); every register pin from one WorkContext read; expires_at within the replay window of its AcceptDispatch
+AcceptDispatch              domain; the broker's command, idempotency key permit_uid; permit.state = ISSUED read before the CAS; preconditions = registers ∧ now < expires_at ∧ no entry with the permit's uid or operation_uid ∧ (basis_uid = ∅ ⇒ provider_binding names no merge) ∧ |dispatch_ledger| < capacity ∧ (|dispatch_ledger| + |blocked_targets| < capacity ∨ the operation holds a pair); admission_sequence+1; ledger append recording acceptance sequence and generation
+RejectStalePermit           a failed AcceptDispatch precondition → guard refusal; then InvalidateAdmissionStamp and ReturnOperationToRequested
+RecordPermitAccepted        domain, the broker's command; ISSUED → BROKER_ACCEPTED; precondition a COMMITTED AcceptDispatch receipt for the permit; copies its acceptance sequence and generation
+RecordPermitConsumed        domain, the broker's command; BROKER_ACCEPTED → CONSUMED; precondition the permit's operation carries a send_attempt under it
+InvalidateAdmissionStamp    domain; ISSUED → INVALIDATED after a change to a register the permit pins or a REJECTED AcceptDispatch for it, and only while no ledger entry and no COMMITTED AcceptDispatch receipt names it; BROKER_ACCEPTED → INVALIDATED on the broker's command, only while no ledger entry names it ∧ its operation, still naming it, REQUESTED ∧ send_attempt = NONE
+ExpireAdmissionStamp        domain; ISSUED → EXPIRED; precondition now ≥ expires_at ∧ no ledger entry and no COMMITTED AcceptDispatch receipt names the permit
+AcknowledgeDispatch         reconciliation-only; removes the entry only after acceptance ∧ ((a) terminal ∨ OUTCOME_UNKNOWN ∨ (b) REQUESTED ∧ send_attempt = NONE after a currency or register re-validation failure, the entry ACCEPTED_NOT_SENT or SEND_ATTEMPTED) recorded on the operation
 
 \* TaskRun admission (TaskRun controller)
 AdmitTask                   pins routing_pin, consequence_class, floor; refuses a pin whose tier is below the floor; sets ExpectedRecords
 
 \* effects
-MaterializeEffectIntent · QuarantineEffectIntentCollision
-ValidateCurrency            grant, reservation, capsule, and no UNRESOLVED operation with the same target_identity, before RecordSendAttempt; mismatch → REQUESTED, no send
-RecordSendAttempt           2a ledger SEND_ATTEMPTED, then 2b operation DISPATCHING + send_attempt
-RemoteSend · ObserveExternalOutcome · MarkOutcomeUnknown
-RecoverAcceptedDispatch     restart scan; the six-row table
-ReconcileAmbiguousEffect · ProveNonApplication · EscalateUnresolvedOperation · AdjudicateUnresolvedOperation
+RequestToolInvocation       AgentRun controller, on the runtime adapter's command; a domain commit on the AgentRun carrying the intent of one call with an effect outside the workspace
+MaterializeEffectIntent     from a committed receipt of any carrier, the AgentRun for a ToolInvocation · QuarantineEffectIntentCollision
+PermitOperation             Broker; REQUESTED → PERMITTED, recording permit_uid; precondition the permit's COMMITTED create receipt
+ReturnOperationToRequested  Broker; PERMITTED → REQUESTED; precondition the permit INVALIDATED or EXPIRED with no COMMITTED AcceptDispatch, or a currency failure or refused 2a before any send_attempt, or a register or currency re-validation failure at recovery row 1
+ValidateCurrency            grant, reservation, capsule, before RecordSendAttempt; mismatch → REQUESTED, no send
+RecordSendAttempt           2a ledger SEND_ATTEMPTED, precondition no blocked_targets pair on the target ∨ the first pair on it is the operation's own, or that of the operation it compensates recording the adjudication it names, a refusal handled as a currency failure; then 2b operation DISPATCHING + send_attempt
+RemoteSend · ObserveExternalOutcome
+AddBlockedTarget            reconciliation-only; appends [target_identity, operation_uid] to blocked_targets; precondition the operation's entry SEND_ATTEMPTED, or recovery row 6; no-op when present
+MarkOutcomeUnknown          Broker; DISPATCHING → OUTCOME_UNKNOWN; precondition the operation's pair in blocked_targets; OUTCOME_UNKNOWN → RECONCILING only after AcknowledgeDispatch removed its entry
+RecoverAcceptedDispatch     restart scan; the six-row table, row 4 writing send_attempt on a PERMITTED operation before acting as row 2; brings every permit level; removes the pair of every terminal operation
+ReleaseBlockedTarget        reconciliation-only; removes [target_identity, operation_uid] from blocked_targets; precondition the operation terminal ∧ no entry names it; no-op when absent
+ReconcileAmbiguousEffect · EscalateUnresolvedOperation
+AdjudicateUnresolvedOperation   Broker; first a reconciliation-only CAS setting the pair's adjudication_uid, a no-op unless it is NONE; then only for the adjudication the pair holds: UNRESOLVED → CONFIRMED | FAILED and ReleaseBlockedTarget, or compensation chosen; every other adjudication rejected
+ProveNonApplication         RECONCILING → REQUESTED, same operation_key, attempt_index+1; precondition provider lookup, deduplication or a rate-limit answer under rate_limit_authoritative proves non-application ∧ the operation's permit CONSUMED ∧ (after a rate-limit answer) the provider's back-off passed
+CommitCompensatingIntent    the originating command's owner; a domain commit, for an adjudication choosing compensation that the operation's pair holds, carrying an intent whose desired_outcome names the operation and the adjudication
+RecordCompensated           Broker; UNRESOLVED → COMPENSATED; precondition the pair holds an adjudication choosing compensation ∧ its compensating operation CONFIRMED; a compensating operation ending otherwise clears the pair's adjudication_uid
 BlockUnsupportedOperation
 
 \* plans and evidence
@@ -281,7 +300,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 
 **I-2 Authority**
 - F-7 *Register linearization.* For every accepted permit p and cut c on one context, `commit_sequence(AcceptDispatch(p)) < commit_sequence(c)` or p is never accepted; and at acceptance every pinned value equals its register.
-- F-8 *Hold.* Only permits accepted before `RequestHold` complete; every permit issued under a previous `RUNNING` generation fails after `ReleaseHold`.
+- F-8 *Hold.* Only permits accepted before `RequestHold` complete; every permit issued under a previous `RUNNING` generation fails after `ReleaseHold` and `CompleteHoldRelease`.
 - F-9 *Plan generation.* No permit pinning `(revision R, generation g)` is accepted unless the register holds `(R, ACTIVE, g)`; every `ActivatePlanRevision`, `QuiescePlan`, `ResumePlanRevision` and `SupersedePlanRevision` changes the generation, so no permit issued before any of them is accepted after it — including a permit issued before a quiesce and presented after a resume of the same revision; and no permit is issued while the register phase is not `ACTIVE`.
 - F-10 *Basis.* A merge permit pinning generation g is not accepted after `InvalidateIntegrationBasis` advanced it.
 - F-11 *Manager epoch.* A target commits a Manager command only against the reservation held for that command, taken and claimed while `phase = ACTIVE` at the epoch the command pins, not yet resolved or cancelled, and only while that epoch is still the register's epoch; a reservation is taken and claimed only while `phase = ACTIVE`; no permit is accepted between `AdvanceManagerEpoch` and `ResumeManager`; after `ResumeManager` no permit pinning the old epoch is accepted; a reservation is released only with a recorded terminal receipt.
@@ -296,7 +315,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 
 **I-4 Effects**
 - F-18 *Send-attempt write-ahead.* No remote send without a durable `send_attempt`; after a crash, an operation with no send attempt is sent at most once and one with a send attempt and no outcome is never resent.
-- F-19 *Ledger conservation.* Every `BROKER_ACCEPTED` permit has exactly one ledger entry until its operation has durably recorded acceptance and a terminal or `OUTCOME_UNKNOWN` state, or has durably returned to `REQUESTED` on a currency failure, or on a register or currency re-validation failure at recovery row 1, with no `send_attempt` present, in which case the permit is `INVALIDATED`; a `DISPATCHING` operation always has an entry; `ACCEPTED_NOT_SENT` with a present `send_attempt` is quarantined; a full ledger refuses acceptance.
+- F-19 *Ledger conservation.* Every accepted permit — one a `COMMITTED` `AcceptDispatch` receipt names — has exactly one ledger entry until its operation has durably recorded acceptance and a terminal or `OUTCOME_UNKNOWN` state, or has durably returned to `REQUESTED` on a currency failure, or on a register or currency re-validation failure at recovery row 1, with no `send_attempt` present, in which case the permit is, or is recovered to, `INVALIDATED`; no ledger holds two entries for one permit or one operation; a `DISPATCHING` operation always has an entry; no reachable state has an `ACCEPTED_NOT_SENT` entry beside a present `send_attempt`, and one observed after a storage or restore fault outside the model is quarantined; acceptance is refused once ledger entries and blocked-target pairs together fill the ledger's capacity, except for the re-request of an operation that holds a pair; no operation is `OUTCOME_UNKNOWN` without its pair.
 - F-20 *Unresolved retention.* An `UNRESOLVED` operation is never deleted or automatically retried, blocks its dependents (as KERNEL §3.3 defines them) and plan completion, and leaves only by human adjudication.
 - F-21 *Effect key.* `operation_key` is a function of its five inputs; equal keys with differing payload, target or contract quarantine and never dispatch; every committed intent materializes to exactly one operation, recoverably.
 - F-22 *Tool identity.* A tool invocation is retried only under its original identity; stream closure never becomes `FAILED`.

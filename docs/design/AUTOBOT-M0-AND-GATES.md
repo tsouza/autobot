@@ -44,7 +44,7 @@ These values are stated once, here. Any other document that needs one refers to 
 | Replay window | 30 days, plus 7 days clock and transport margin |
 | Control-receipt ring | 8 unpublished entries, ≤ 4 KiB each |
 | Dispatch ledger | 64 entries |
-| Registers | 8 plans, 8 integration bases per context |
+| Registers | 8 plans, 8 integration bases per context; blocked-target pairs share the dispatch ledger's capacity |
 | Scale | 1 context, 4 repositories, 100 tasks, 1 active TaskRun; two simulated Managers and two simulated installation identities to exercise races |
 | Objects | status ≤ 256 KiB; pending slot ≤ 32 KiB; ≤ 8 effect intents per command; late-event buffer 64 per projected aggregate; oversize input rejected or referenced by a verified artifact |
 | API budget | 10 requests/s, burst 20, per operator process; queue of 500 keys, FIFO within priority, reserved control capacity for hold, fence and receipt repair; a full queue stops admission and drops nothing accepted |
