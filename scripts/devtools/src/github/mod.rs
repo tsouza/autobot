@@ -11,8 +11,8 @@
 //! reading a paged list resource.
 
 pub mod graph;
-pub mod main_red;
 pub mod label_gate;
+pub mod main_red;
 pub mod settings;
 pub mod verdict;
 
