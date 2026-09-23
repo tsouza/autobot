@@ -26,8 +26,9 @@
 //!   rules for both. A UID and a principal are opaque, non-empty text: the API server assigns
 //!   the one and the authenticator the other, and the kernel only compares them.
 //! - An [`ObjectRef`] names no kind: the field holding it does.
-//! - [`Digest`] shares [`ProfileDigest`](crate::profile::ProfileDigest)'s text form and
-//!   parser. It carries digests and computes none.
+//! - [`Digest`] owns the `sha256:` text form, its parser and its JSON schema, which
+//!   [`ProfileDigest`](crate::profile::ProfileDigest) wraps. It carries digests and computes
+//!   none.
 //! - A [`RejectionProof`] records the two facts KERNEL §2 requires of a rejection: the target's
 //!   revision in the command's lane was read past the expected one, and the same read, at the
 //!   recorded commit sequence, found neither a pending slot nor a receipt matching the
