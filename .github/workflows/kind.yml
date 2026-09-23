@@ -8,12 +8,15 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Nightly, so the harness is exercised against the pinned node image on days with no merge.
+  schedule:
+    - cron: "23 4 * * *"
 
 permissions:
   contents: read
 
-# A new push to a pull request cancels its older run. Each push to main has a group of its
-# own, so no main run is cancelled, whether it is running or still pending.
+# A new push to a pull request cancels its older run. Each push to main and each scheduled run
+# has a group of its own, so none of them is cancelled, whether it is running or still pending.
 concurrency:
   group: kind-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
   cancel-in-progress: true

@@ -268,4 +268,16 @@ mod tests {
             assert!(err.contains("usage: kind up"), "{err}");
         }
     }
+
+    #[test]
+    fn the_integration_workflow_also_runs_nightly() {
+        const WORKFLOW: &str = include_str!("../../../.github/workflows/kind.yml");
+        let on = WORKFLOW
+            .split("\non:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n\n").next())
+            .unwrap_or_default();
+        assert!(on.contains("  pull_request:"), "{on}");
+        assert!(on.contains("  schedule:\n    - cron: "), "{on}");
+    }
 }
