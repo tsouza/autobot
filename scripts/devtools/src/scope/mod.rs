@@ -210,24 +210,58 @@ fn changed_lines(patch: &str) -> impl Iterator<Item = (char, &str)> {
     })
 }
 
-/// Whether `line` is a `mod` declaration (`mod x;`, `pub mod x;`, `pub(crate) mod x;`), an
-/// attribute, a comment or blank: what adding a module to its parent changes.
-fn is_mod_line(line: &str) -> bool {
+/// The module name `line` declares when it is `mod <name>;`, `pub mod <name>;` or
+/// `pub(crate) mod <name>;`, surrounding whitespace allowed.
+fn declared_module(line: &str) -> Option<&str> {
     let t = line.trim();
-    if t.is_empty() || t.starts_with("//") || (t.starts_with("#[") && t.ends_with(']')) {
-        return true;
+    let t = t
+        .strip_prefix("pub(crate) ")
+        .or_else(|| t.strip_prefix("pub "))
+        .unwrap_or(t);
+    let name = t.strip_prefix("mod ")?.trim().strip_suffix(';')?.trim();
+    let ident = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    ident.then_some(name)
+}
+
+/// Whether `patch` only adds declarations of the modules in `children`: it removes no line,
+/// and every run of consecutive added lines holds at least one `mod` line naming one of
+/// `children` ([`declared_module`]), with every other line of the run a `///` doc comment or
+/// blank.
+fn adds_only_child_declarations(patch: &str, children: &BTreeSet<&str>) -> bool {
+    let mut runs: Vec<Vec<&str>> = Vec::new();
+    let mut open = false;
+    for line in patch.lines() {
+        match line.strip_prefix('+') {
+            Some(added) => {
+                if !open {
+                    runs.push(Vec::new());
+                    open = true;
+                }
+                if let Some(run) = runs.last_mut() {
+                    run.push(added);
+                }
+            }
+            None if line.starts_with('-') => return false,
+            None => open = false,
+        }
     }
-    let t = match t.strip_prefix("pub") {
-        Some(rest) if rest.starts_with('(') => rest.split_once(')').map_or("", |(_, r)| r),
-        Some(rest) => rest,
-        None => t,
-    };
-    t.trim_start()
-        .strip_prefix("mod ")
-        .and_then(|rest| rest.trim().strip_suffix(';'))
-        .is_some_and(|name| {
-            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    !runs.is_empty()
+        && runs.iter().all(|run| {
+            let declares = |l: &&str| declared_module(l).is_some_and(|n| children.contains(n));
+            run.iter().any(declares)
+                && run.iter().all(|l| {
+                    declares(l) || l.trim().is_empty() || l.trim_start().starts_with("///")
+                })
         })
+}
+
+/// The module name of the Rust file `path`: its stem, or its directory's name for `mod.rs`.
+fn module_name(path: &str) -> Option<&str> {
+    let (dir, file) = path.rsplit_once('/')?;
+    match file.strip_suffix(".rs")? {
+        "mod" => dir.rsplit('/').next(),
+        stem => Some(stem),
+    }
 }
 
 /// The files that can declare a module whose file lies in directory `dir`.
@@ -269,7 +303,8 @@ fn in_gate_group(path: &str) -> bool {
 /// - `<dir>/Cargo.toml` when the task's own globs allow a changed path under `<dir>/`;
 /// - [`REGISTRY`] when the task's own globs allow a changed path under its directory;
 /// - the parent module of a Rust file the pull request adds under the task's own globs, when
-///   every line it changes is a `mod` declaration, an attribute, a comment or blank;
+///   it removes no line and adds only `mod` declarations of such files, each with the `///`
+///   doc comments and blank lines added next to it;
 /// - a modified file of a gate test group when every changed line is a removed
 ///   `#[ignore = "awaiting #N"]` line naming the task.
 #[must_use]
@@ -295,13 +330,16 @@ pub fn inherited(path: &str, file: &ChangedFile, files: &[ChangedFile], task: &T
         return true;
     }
     let patch = file.patch.as_deref();
-    let adds_child = files.iter().any(|f| {
-        f.status == "added"
-            && f.path.ends_with(".rs")
-            && task.grants(&f.path)
-            && declaring_files(&f.path).iter().any(|p| p == path)
-    });
-    if adds_child && patch.is_some_and(|p| changed_lines(p).all(|(_, l)| is_mod_line(l))) {
+    let children: BTreeSet<&str> = files
+        .iter()
+        .filter(|f| {
+            f.status == "added"
+                && task.grants(&f.path)
+                && declaring_files(&f.path).iter().any(|p| p == path)
+        })
+        .filter_map(|f| module_name(&f.path))
+        .collect();
+    if !children.is_empty() && patch.is_some_and(|p| adds_only_child_declarations(p, &children)) {
         return true;
     }
     if in_gate_group(path) && file.status == "modified" {

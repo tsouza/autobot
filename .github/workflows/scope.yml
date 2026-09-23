@@ -1,7 +1,8 @@
 # The `scope` check: fails a pull request that changes a path outside the allowed paths of the
 # task issue it closes, the paths its scope-extension comments name and the paths every task
-# may change, or that closes no task issue. The script and recipe are checked out from the
-# default branch, so a pull request cannot change the check that judges it. Only the pull
+# may change, or that closes no task issue. A `pull_request` run takes this workflow file from
+# the pull request, but it checks out the default branch and runs that branch's recipe and
+# script, so a pull request cannot change the code that judges it. Only the pull
 # request number comes from the event: the body, the changed files, the task issue and its
 # comments are read from the GitHub API when the job runs. A scope-extension comment counts
 # from the next run, which a re-run of the check starts. No run cancels another, because a

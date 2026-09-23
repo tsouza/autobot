@@ -8,15 +8,16 @@
 //! `scripts/devtools/src/lib.rs`.
 
 /// The glob `token` in the form [`matches()`] reads, or `None` when it is not a glob: it is
-/// empty, holds whitespace, or has no literal character (such as `*`, `**` or `**/*`), which
-/// would allow every path.
+/// empty, holds whitespace, has no literal character (such as `*` or `**/*`), or starts with a
+/// `**` segment (such as `**/*.rs`); each would allow every path, or every path of a kind.
 #[must_use]
 pub fn parse(token: &str) -> Option<String> {
     let token = token.trim();
     let token = token.strip_prefix("./").unwrap_or(token);
     let token = token.trim_start_matches('/');
     let literal = token.chars().any(|c| !matches!(c, '*' | '?' | '/'));
-    if token.is_empty() || !literal || token.chars().any(char::is_whitespace) {
+    let universal = token == "**" || token.starts_with("**/");
+    if token.is_empty() || !literal || universal || token.chars().any(char::is_whitespace) {
         return None;
     }
     Some(if token.ends_with('/') {
@@ -106,6 +107,8 @@ mod tests {
             "*",
             "**",
             "**/*",
+            "**/*.rs",
+            "**/tests/*.md",
             "*/",
             "a b",
             "CONTRIBUTING.md (a section)",

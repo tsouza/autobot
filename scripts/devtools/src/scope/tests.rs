@@ -243,58 +243,69 @@ fn a_crate_manifest_is_inherited_only_beside_an_allowed_change_in_its_crate() {
 }
 
 #[test]
-fn a_parent_module_is_inherited_only_for_the_mod_lines_of_an_added_child() {
+fn a_parent_module_is_inherited_only_for_added_declarations_of_added_children() {
     let child = |path: &str| file(path, "added", "@@ -0,0 +1 @@\n+//! x");
     let parent = |path: &str, patch: &str| file(path, "modified", patch);
-    let mod_lines = "@@ -5,2 +5,5 @@\n pub mod markdown;\n+#[cfg(feature = \"github\")]\n+pub mod scope;\n+pub(crate) mod x;\n \n";
     let mut task = github(json!([]));
     task.0.insert(
         "issues/9".to_owned(),
-        json!({"labels": [{"name": "type:task"}], "body": "**Allowed paths**\na/src/scope/**, a/src/b/c.rs"}),
+        json!({"labels": [{"name": "type:task"}], "body": "**Allowed paths**\na/src/scope/**, a/src/b/c.rs, a/src/b/d.rs"}),
     );
     let mut outside = |files: Value| {
         task.0.insert(FILES.to_owned(), files);
         evaluate(&task, 40).unwrap().outside
     };
-    // A `mod.rs` child is declared in the directory above; a named file beside its siblings.
+    let none = Vec::<String>::new();
+    // Valid: a `mod.rs` child is declared in the directory above, a named file beside its
+    // siblings, with its doc comment and a blank line; two children in two places.
+    let scope = "@@ -5,2 +5,5 @@\n pub mod markdown;\n+/// The scope check.\n+pub mod scope;\n+\n pub mod worktree;\n";
     assert_eq!(
         outside(json!([
             child("a/src/scope/mod.rs"),
-            parent("a/src/lib.rs", mod_lines)
+            parent("a/src/lib.rs", scope)
         ])),
-        Vec::<String>::new()
+        none
     );
-    assert_eq!(
-        outside(json!([
-            child("a/src/b/c.rs"),
-            parent("a/src/b.rs", mod_lines)
-        ])),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        outside(json!([
-            child("a/src/b/c.rs"),
-            parent("a/src/b/mod.rs", mod_lines)
-        ])),
-        Vec::<String>::new()
-    );
-    // Any other line, a parent of nothing added, or a child the task does not allow.
-    let body_change = "@@ -1,2 +1,3 @@\n+pub mod scope;\n-pub fn a() {}\n+pub fn b() {}\n";
-    assert_eq!(
-        outside(json!([
-            child("a/src/scope/mod.rs"),
-            parent("a/src/lib.rs", body_change)
-        ])),
-        ["a/src/lib.rs"]
-    );
-    assert_eq!(
-        outside(json!([parent("a/src/lib.rs", mod_lines)])),
-        ["a/src/lib.rs"]
-    );
+    let two = "@@ -1,2 +1,4 @@\n+mod c;\n pub mod a;\n+pub(crate) mod d;\n pub mod e;\n";
+    for declaring in ["a/src/b.rs", "a/src/b/mod.rs"] {
+        assert_eq!(
+            outside(json!([
+                child("a/src/b/c.rs"),
+                child("a/src/b/d.rs"),
+                parent(declaring, two)
+            ])),
+            none,
+            "{declaring}"
+        );
+    }
+    // Each bypass: removing another module, compiling an existing one out, removing a test
+    // gate, declaring a module the pull request does not add, and an attribute on the child.
+    let lib = ["a/src/lib.rs"];
+    for patch in [
+        "@@ -1,2 +1,2 @@\n-pub mod billing;\n+pub mod scope;\n",
+        "@@ -1,2 +1,4 @@\n+pub mod scope;\n pub mod a;\n+#[cfg(any())]\n pub mod billing;\n",
+        "@@ -1,3 +1,3 @@\n+pub mod scope;\n pub mod a;\n-#[cfg(test)]\n mod tests;\n",
+        "@@ -1,1 +1,3 @@\n pub mod a;\n+pub mod scope;\n+pub mod unrelated;\n",
+        "@@ -1,1 +1,3 @@\n pub mod a;\n+#[cfg(feature = \"github\")]\n+pub mod scope;\n",
+        "@@ -1,1 +1,3 @@\n pub mod a;\n+pub mod scope;\n+pub fn b() {}\n",
+        "@@ -1,1 +1,2 @@\n pub mod a;\n+/// A comment alone.\n",
+    ] {
+        assert_eq!(
+            outside(json!([
+                child("a/src/scope/mod.rs"),
+                parent("a/src/lib.rs", patch)
+            ])),
+            lib,
+            "{patch}"
+        );
+    }
+    // A parent of nothing added, and a child the task does not allow.
+    assert_eq!(outside(json!([parent("a/src/lib.rs", scope)])), lib);
+    let other = "@@ -1 +1,2 @@\n pub mod a;\n+pub mod other;\n";
     assert_eq!(
         outside(json!([
             child("a/src/other/mod.rs"),
-            parent("a/src/lib.rs", mod_lines)
+            parent("a/src/lib.rs", other)
         ])),
         ["a/src/lib.rs", "a/src/other/mod.rs"]
     );
@@ -347,27 +358,28 @@ fn a_gate_group_is_inherited_only_for_removing_the_task_s_own_ignore_lines() {
 }
 
 #[test]
-fn mod_lines_are_declarations_attributes_comments_or_blank() {
-    for line in [
-        "mod a;",
-        "pub mod a_b;",
-        "  pub(crate) mod x1;",
-        "pub(in crate::a) mod x;",
-        "#[cfg(feature = \"github\")]",
-        "/// The scope check.",
-        "",
+fn a_declaration_is_a_plain_or_pub_mod_line() {
+    for (line, name) in [
+        ("mod a;", "a"),
+        ("pub mod a_b;", "a_b"),
+        ("  pub(crate) mod x1 ;", "x1"),
     ] {
-        assert!(is_mod_line(line), "{line:?}");
+        assert_eq!(declared_module(line), Some(name), "{line:?}");
     }
     for line in [
         "mod a",
         "pub mod a { }",
-        "pub fn a() {}",
+        "pub(in crate::a) mod x;",
+        "pub(super) mod x;",
+        "#[cfg(test)]",
         "mod ;",
         "use a::b;",
     ] {
-        assert!(!is_mod_line(line), "{line:?}");
+        assert_eq!(declared_module(line), None, "{line:?}");
     }
+    assert_eq!(module_name("a/src/scope/mod.rs"), Some("scope"));
+    assert_eq!(module_name("a/src/b/c.rs"), Some("c"));
+    assert_eq!(module_name("a/src/b/c.md"), None);
 }
 
 #[test]

@@ -22,6 +22,9 @@
 //! - **A file GitHub shows no patch for** (binary, or a diff too large to show) cannot be
 //!   screened; it is printed as unscreened and does not fail the check, whose failure means a
 //!   match was found.
+//! - **Lists GitHub cuts.** GitHub lists at most [`scope::GITHUB_FILE_LIMIT`] files and
+//!   [`COMMIT_LIMIT`] commits of a pull request. A list that reaches its limit may hide a
+//!   match, so the report says which list is incomplete and the check fails.
 
 use crate::github::settings::Api;
 use crate::github::{Client, Method, pages, pr_number};
@@ -35,6 +38,9 @@ pub const CONTEXT: &str = "sensitive-terms";
 
 /// The environment variable, and repository secret, holding the term list.
 pub const TERMS_VAR: &str = "SENSITIVE_TERMS";
+
+/// The commits GitHub lists for a pull request at most; a longer list is cut.
+pub const COMMIT_LIMIT: usize = 250;
 
 /// Where a match is. Line numbers are 1-based; a file line is its line in the new version.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -115,13 +121,16 @@ pub struct Report {
     /// The changed files whose content GitHub shows no patch for, named as in
     /// [`Location::Added`].
     pub unscreened: Vec<String>,
+    /// The lists GitHub cut, so that part of the pull request was not screened.
+    pub incomplete: Vec<String>,
 }
 
 impl Report {
-    /// Non-zero exactly when a term matches.
+    /// Non-zero when a term matches or a list GitHub cut left part of the pull request
+    /// unscreened.
     #[must_use]
     pub fn exit_code(&self) -> ExitCode {
-        if self.matches.is_empty() {
+        if self.matches.is_empty() && self.incomplete.is_empty() {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
@@ -136,6 +145,9 @@ impl fmt::Display for Report {
                 f,
                 "{CONTEXT}: {path} has no patch on GitHub; its content is not screened"
             )?;
+        }
+        for list in &self.incomplete {
+            writeln!(f, "{CONTEXT}: {list}; the rest is not screened")?;
         }
         for at in &self.matches {
             writeln!(f, "{CONTEXT}: {at} matches a term")?;
@@ -167,7 +179,14 @@ pub fn evaluate(api: &impl Api, pr: u64, terms: &[Regex]) -> Result<Report> {
             matches.push(Location::Body(i + 1));
         }
     }
-    for commit in pages(api, &format!("pulls/{pr}/commits"))? {
+    let mut incomplete = Vec::new();
+    let commits = pages(api, &format!("pulls/{pr}/commits"))?;
+    if commits.len() >= COMMIT_LIMIT {
+        incomplete.push(format!(
+            "GitHub lists at most {COMMIT_LIMIT} commits of #{pr}"
+        ));
+    }
+    for commit in commits {
         let (Some(sha), Some(message)) =
             (commit["sha"].as_str(), commit["commit"]["message"].as_str())
         else {
@@ -182,7 +201,13 @@ pub fn evaluate(api: &impl Api, pr: u64, terms: &[Regex]) -> Result<Report> {
             }
         }
     }
-    let (files, _) = scope::changed_files(api, pr)?;
+    let (files, cut) = scope::changed_files(api, pr)?;
+    if cut {
+        incomplete.push(format!(
+            "GitHub lists at most {} files of #{pr}",
+            scope::GITHUB_FILE_LIMIT
+        ));
+    }
     let mut unscreened = Vec::new();
     for (k, file) in files.iter().enumerate() {
         let path_hit = std::iter::once(&file.path)
@@ -210,6 +235,7 @@ pub fn evaluate(api: &impl Api, pr: u64, terms: &[Regex]) -> Result<Report> {
         pr,
         matches,
         unscreened,
+        incomplete,
     })
 }
 

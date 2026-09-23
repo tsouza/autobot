@@ -2,8 +2,9 @@
 # a term of the list in the `SENSITIVE_TERMS` repository secret, printing only where each
 # match is. It reads a secret, so it is never one of the ruleset's required checks (CHARTER
 # L-5); without the secret, as on pull requests from forks, it passes and says that nothing was
-# screened. The script and recipe are checked out from the default branch, so a pull request
-# cannot change the screen; the pull request's text, commits and diff are read from the GitHub
+# screened. A `pull_request` run takes this workflow file from the pull request, but it checks
+# out the default branch and runs that branch's recipe and script, so a pull request cannot
+# change the screening code. The pull request's text, commits and diff are read from the GitHub
 # API when the job runs.
 name: sensitive-terms
 

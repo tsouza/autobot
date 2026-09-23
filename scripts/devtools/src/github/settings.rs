@@ -17,8 +17,8 @@
 //! required approvals, an empty bypass list, squash as the only merge method, linear
 //! history, deletion and non-fast-forward blocked, and every required status check pinned
 //! to the GitHub Actions app ([`GITHUB_ACTIONS_APP_ID`]) with the strict up-to-date policy
-//! off, and none of the [`SECRET_CHECKS`] required (CHARTER L-5). A ruleset that breaks the
-//! policy is rejected and nothing is sent.
+//! off, and none of the [`SECRET_CHECKS`] required by any `required_status_checks` rule
+//! (CHARTER L-5). A ruleset that breaks the policy is rejected and nothing is sent.
 
 use super::{Client, Method};
 use crate::{Error, Result};
@@ -130,7 +130,10 @@ pub fn validate_ruleset(ruleset: &Value) -> Result<()> {
     if params["allowed_merge_methods"] != serde_json::json!(["squash"]) {
         return invalid("`allowed_merge_methods` must be exactly [\"squash\"]");
     }
-    if let Some(checks) = rule("required_status_checks") {
+    for checks in rules
+        .iter()
+        .filter(|r| r["type"] == "required_status_checks")
+    {
         let params = &checks["parameters"];
         if params["strict_required_status_checks_policy"] != false {
             return invalid("`strict_required_status_checks_policy` must be false");
@@ -645,6 +648,26 @@ mod tests {
                 "{err}"
             );
         }
+    }
+
+    #[test]
+    fn a_second_required_checks_rule_is_checked_too() {
+        let clean = json!({
+            "strict_required_status_checks_policy": false,
+            "required_status_checks": [{"context": "ci", "integration_id": GITHUB_ACTIONS_APP_ID}]
+        });
+        let secret = json!({
+            "strict_required_status_checks_policy": false,
+            "required_status_checks": [{"context": "judge", "integration_id": GITHUB_ACTIONS_APP_ID}]
+        });
+        let err = rejection(|r| {
+            with_checks(clean)(r);
+            with_checks(secret)(r);
+        });
+        assert!(
+            err.contains("required check \"judge\" reads a secret"),
+            "{err}"
+        );
     }
 
     #[cfg(all(feature = "judge", feature = "hooks"))]

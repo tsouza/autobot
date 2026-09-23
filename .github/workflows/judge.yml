@@ -4,8 +4,9 @@
 # backstop of each entry decides regardless of its result.
 #
 # The pull request's base commit is checked out, so the charter entries and thresholds, the
-# recipe and the judge script all come from the base: a pull request cannot change what it is
-# judged by. The pull request's title, body, linked issue and diff are read from the GitHub
+# recipe and the judge script all come from the base: a pull request cannot change the entries
+# or the code it is judged by. A `pull_request` run still takes this workflow file itself from
+# the pull request. The pull request's title, body, linked issue and diff are read from the GitHub
 # API when the job runs. Pull requests from forks get no secrets, so the job runs only for
 # branches of this repository.
 name: judge

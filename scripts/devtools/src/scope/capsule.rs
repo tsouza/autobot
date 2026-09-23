@@ -10,7 +10,8 @@
 //!   nothing and is reported ([`allowed`]).
 //! - A scope-extension comment starts with `Scope extension` (any case, after leading
 //!   whitespace and Markdown emphasis or quote marks) and names its paths and globs in
-//!   backticks; every backticked span that is a glob is one ([`extension`]).
+//!   backticks: a backticked span counts when it holds a `/`, a `.` or a `*` and is a glob, so a
+//!   word such as `scope` or `Justfile` in backticks does not ([`extension`]).
 
 use super::glob;
 use crate::markdown;
@@ -112,6 +113,7 @@ pub fn extension(comment: &str) -> Option<Vec<String>> {
             .split('`')
             .skip(1)
             .step_by(2)
+            .filter(|span| span.contains(['/', '.', '*']))
             .filter_map(glob::parse)
             .collect(),
     )
@@ -177,7 +179,7 @@ mod tests {
         );
         assert_eq!(
             got.unwrap(),
-            ["MODEL", "scripts/devtools/src/judge.rs", "crates/a/src/**"]
+            ["scripts/devtools/src/judge.rs", "crates/a/src/**"]
         );
         assert_eq!(
             extension("**Scope extension** `a/b.rs`").unwrap(),
@@ -189,5 +191,9 @@ mod tests {
         );
         assert_eq!(extension("Not a scope extension: `a/b.rs`"), None);
         assert_eq!(extension("Scope"), None);
+        assert_eq!(
+            extension("Scope extension: `a.rs`, but not `Justfile` or `scope`").unwrap(),
+            ["a.rs"]
+        );
     }
 }

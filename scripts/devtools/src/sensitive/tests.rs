@@ -126,3 +126,45 @@ fn a_failed_read_is_an_error() {
     api.0.remove("pulls/50/commits?per_page=100&page=1");
     assert!(evaluate(&api, 50, &terms(TERM).unwrap()).is_err());
 }
+
+#[test]
+fn a_list_github_cut_fails_the_check_and_says_so() {
+    let commit = |i: usize| json!({"sha": format!("{i:040x}"), "commit": {"message": "x"}});
+    let mut api = seeded();
+    for (page, range) in [(1, 0..100), (2, 100..200), (3, 200..250)] {
+        api.0.insert(
+            format!("pulls/50/commits?per_page=100&page={page}"),
+            range.map(commit).collect(),
+        );
+    }
+    let report = evaluate(&api, 50, &terms("wombat").unwrap()).unwrap();
+    assert_eq!(report.matches, []);
+    assert_eq!(
+        report.incomplete,
+        ["GitHub lists at most 250 commits of #50"]
+    );
+    assert_eq!(report.exit_code(), ExitCode::FAILURE);
+    assert!(
+        report.to_string().contains(
+            "sensitive-terms: GitHub lists at most 250 commits of #50; the rest is not screened\n"
+        ),
+        "{report}"
+    );
+
+    let file = |i: usize| json!({"filename": format!("f{i}.txt"), "status": "added", "changes": 1, "patch": "+x"});
+    let mut api = seeded();
+    for page in 0..30 {
+        api.0.insert(
+            format!("pulls/50/files?per_page=100&page={}", page + 1),
+            (page * 100..(page + 1) * 100).map(file).collect(),
+        );
+    }
+    api.0
+        .insert("pulls/50/files?per_page=100&page=31".to_owned(), json!([]));
+    let report = evaluate(&api, 50, &terms("wombat").unwrap()).unwrap();
+    assert_eq!(
+        report.incomplete,
+        ["GitHub lists at most 3000 files of #50"]
+    );
+    assert_eq!(report.exit_code(), ExitCode::FAILURE);
+}
