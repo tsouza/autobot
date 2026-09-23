@@ -17,7 +17,7 @@ The model represents bounded abstract values, hashes and finite sets; it does no
 
 ## 2. Typed correspondence
 
-The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine.
+The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine. Kinds without a record are abstracted, each as what the model keeps instead: an `Intervention` enters only as the register or adjudication action it becomes (§3); `Plan.phase` is outside the model, which admits against `plan_authority` and the verified `ACTIVATED` snapshot (F-13); a `Finding` enters only as opened by `AskJudgedQuestion` (F-42) and as linked by `LinkFindingHistorically`, which changes no other record (F-24); a `VerificationRun` enters only as the `EvidenceBundle` it records; a `RestoreRequest` is `RestoreLineage`; `PlanProposal`, `Project` and `WorkBrief` enter only as the `IntakeWrite` and `ProposalAcceptance` records that name them; the `Charter` and `ProjectCharter` kind states enter only as their `CharterRevision`s; a `CustodyPolicy` enters only as the cadence at which `CustodyCheckpoint`s occur; and an `Artifact` enters only as the digests its `CustodyCheckpoint` verifies.
 
 ```text
 \* commit, receipt, audit                                         KERNEL §1–§2
@@ -26,8 +26,8 @@ Aggregate            = [uid, kind, context_uid, domain_digest, control_digest,
                         pending_commit, control_receipt_ring]
 CommandReceipt       = [uid, command_uid, idempotency_key, target_kind, target_uid, parent_context_uid,
                         principal, expected_revision, proposed_revision, commit_sequence,
-                        input_digest, origin_metadata, issue_time, expiry_time, terminal_result,
-                        rejection_proof,         \* NONE unless terminal_result is REJECTED
+                        input_digest, origin_metadata, issue_time, expiry_time,
+                        rejection_proof,         \* NONE unless state is REJECTED
                         state_digest, policy_digest, scope_digest, schema_version, reducer_version,
                         replay_identity, state]
 RejectionProof       = [ground ∈ {passed_revision, replay_conflict, create_conflict, guard_refusal},
@@ -66,6 +66,7 @@ WorkContextRegisters = [hold_state, hold_generation,
 ManagerAuthority     = [lease_uid, epoch, holder, deadline, phase ∈ {ACTIVE, DRAINING}]
 PlanAuthority        = [active_revision, snapshot_digest, activation_receipt_uid,
                         revision_phase ∈ {ACTIVE, QUIESCING}, plan_generation]   \* absent: no active revision
+ManagerLease         = [uid, plan_uid, holder, epoch, state]   \* uid: the entry's lease_uid; an acknowledged copy of it (F-12)
 ManagerReservation   = [plan_uid, target_uid, expected_revision, command_uid,
                         phase ∈ {RESERVED, APPLYING, RESOLVED},
                         target_receipt_uid, cancellation_receipt_uid,
@@ -93,6 +94,12 @@ ProviderCapability   = [provider, operation, supports_idempotency, supports_look
                         reconciliation_method, qualified]
 
 \* plans, evidence, integration                                   KERNEL §5
+Plan                 = [uid, work_context_uid, source_proposal_uid, accepted_revision, snapshot_uid,
+                        active_revision, plan_generation, manager_epoch]   \* the last three: acknowledged copies of the registers
+Milestone            = [uid, plan_uid, plan_revision, members, final_basis_uid, accepted_bundles, state]
+Task                 = [uid, plan_uid, plan_revision, milestone_uid, obligation, repositories,
+                        acceptance_evidence, non_goals, consequence_class, dependencies,
+                        accepted_bundles, state]  \* accepted_bundles: (uid, digest) of every EvidenceBundle its acceptance adjudication references
 PlanSnapshot         = [uid, plan_uid, plan_revision, brief_digest, members, edges,
                         acceptance_policy, budget_policy, charter_revisions, graph_digest, state]
 GraphActivationReceipt = [uid, plan_uid, plan_revision, snapshot_digest, member_set_digest,
@@ -120,15 +127,30 @@ FenceSession         = [uid, task_run_uid, execution_epoch, process_fenced, work
 AgentCheckpoint      = [agent_run_uid, session_sequence, execution_epoch, context_digest,
                         scope_digest, budget_consumed, open_tool_invocations, progress_digest, state]
 ContinuationSession  = [agent_run_uid, from_session, to_session, checkpoint_uid]
+TaskRun              = [uid, task_uid, task_revision, source_basis, execution_profile, routing_pin,
+                        consequence_class, floor, capsule_digest, budget_reservation_uid,
+                        fence_state, execution_epoch, revocation_generation, state]
+AgentRun             = [uid, task_run_uid, session_sequence, identity_uid, credential_grant_uid,
+                        capsule_digest, budget_reservation_uid, continuation_deadline,
+                        fence_state, execution_epoch,   \* acknowledged copies of its TaskRun's (KERNEL §10)
+                        revocation_generation, state]
 CumulativeCounters   = [task_run_uid, attempts, repairs, spend]
 
 \* custody and restore                                            KERNEL §7
-CustodyCheckpoint    = [workspace_uid, inventory_digest, outbox_digest, artifact_digest,
+Workspace            = [uid, task_run_uid,           \* the TaskRun holding it; NONE while none does
+                        repository_uid, custody_policy_uid, artifact_commit_uid,
+                        conflict_uid,            \* NONE unless a WorkspaceConflict holds it
+                        retire_only,             \* set on entering QUARANTINED or CONFLICT; never cleared: it never returns to use
+                        state]
+ArtifactCommit       = [uid, custody_checkpoint_uid, state]
+CustodyCheckpoint    = [uid, workspace_uid,
+                        sequence,                \* +1 per checkpoint of its workspace
+                        inventory_digest, outbox_digest, artifact_digest,
                         restore_receipt, state]
 WorkspaceConflict    = [workspace_uid, owners, attribution_digest, quarantine_owner,
                         restore_mapping, state]
 RestoreLineage       = [installation_id, restore_generation, witness_generation, old_grant_expiry,
-                        revocation_generation, state]
+                        revocation_generation, state]   \* state: the RestoreRequest machine
 RestoreWitnessReceipt = [installation_id, restore_generation, witness_generation,
                         old_installation_fence_evidence, ambiguous_operation_set,
                         ambiguous_operation_set_digest, identity_mapping_digest,
@@ -150,6 +172,9 @@ CharterEntry         = [entry_id, section, mode ∈ {mechanical, review, judged,
                         statement, threshold, provenance]           \* provenance: a list of Provenance, non-empty for a proposed entry
 
 \* intake                                                         ONBOARD §1; TRUST
+Intake               = [uid, context_uid, revision, proposal_set_digest, repository_uids,
+                        verified_brief_digests, revision_principals, state]
+Repository           = [uid, intake_uid, forge_ref, external_id, forge_verified, state]   \* forge_verified: the ForgeVerified condition
 Provenance           = [source, content_digest,
                         trust_label ∈ {UNTRUSTED_REPOSITORY_CONTENT, UNTRUSTED_ISSUE_OR_PR_TEXT, INTERVIEW_ANSWER}]
 SourcedValue         = [value_digest, provenance]                     \* provenance: a non-empty list of Provenance

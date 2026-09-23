@@ -37,9 +37,8 @@
 //! - [`CommitObservation`] has no `PREPARED` variant and does not derive serde: it is the
 //!   outcome of reading, not a stored record.
 //!
-//! Open design clarifications this module depends on: the `CANCELLED` and `REPLAY_EXPIRED`
-//! observations follow the KERNEL §10 `CommandReceipt` machine as printed, which the lifecycle
-//! clarification #71 may refine.
+//! The `CANCELLED` and `REPLAY_EXPIRED` observations follow the KERNEL §10 `CommandReceipt`
+//! machine and the meaning its notes give each state.
 
 mod digest;
 mod identity;

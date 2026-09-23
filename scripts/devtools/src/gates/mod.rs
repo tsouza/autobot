@@ -29,9 +29,8 @@
 //!   carry `INVALIDATED` itself. `NOT_RUN` is never written in a record.
 //! - `just gate-status` fails only on a record it cannot read or a record directory that names
 //!   no gate; an invalidated gate is printed, not a failure.
-//! - The gate states are those of M0 §4; whether KERNEL §10 must print them is the open design
-//!   finding #319, and #226 concerns the sentence of M0 §4 stating the current gate state,
-//!   which this module derives from the records instead.
+//! - The gate states are those of the KERNEL §10 `gate` machine; #226 concerns the sentence of
+//!   M0 §4 stating the current gate state, which this module derives from the records instead.
 
 mod record;
 
