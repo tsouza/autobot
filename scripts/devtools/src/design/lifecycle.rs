@@ -763,7 +763,10 @@ mod tests {
             sources(own, "BLOCKED_UNSUPPORTED"),
             [st("REQUESTED"), st("PERMITTED")]
         );
-        assert_eq!(sources(own, "RELEASED"), [st("REQUESTED")]);
+        assert_eq!(
+            sources(own, "RELEASED"),
+            [st("UNRESOLVED"), st("REQUESTED")]
+        );
         assert_eq!(
             sources(own, "UNRESOLVED"),
             [st("RECONCILING"), st("REQUESTED")]
