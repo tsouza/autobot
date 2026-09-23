@@ -3,8 +3,9 @@
 //!
 //! [`evaluate`] reads, from the GitHub API when the check runs, the pull request's body and
 //! changed files, the task issue the body links ([`capsule::linked_issue`]), and that issue's
-//! comments. A changed path, and the previous path of a renamed file, is allowed when it
-//! matches ([`glob`]):
+//! comments. A task issue is an issue labelled with one of [`TASK_LABELS`]: a task, or a
+//! finding, which carries the same **Allowed paths** section. A changed path, and the previous
+//! path of a renamed file, is allowed when it matches ([`glob`]):
 //!
 //! - an entry of the issue's **Allowed paths** ([`capsule::allowed`]);
 //! - a glob named by a scope-extension comment on the issue ([`capsule::extension`]) whose
@@ -13,8 +14,8 @@
 //! - or an inherited path ([`inherited`]).
 //!
 //! The check fails, naming each path, when any path is allowed by none of them. It also fails
-//! when the body links no issue, the issue does not exist, is a pull request or lacks the
-//! [`TASK_LABEL`] label, and when the file list reaches GitHub's limit of
+//! when the body links no issue, the issue does not exist, is a pull request or carries none
+//! of the [`TASK_LABELS`], and when the file list reaches GitHub's limit of
 //! [`GITHUB_FILE_LIMIT`] files, past which the changed paths cannot all be read. An **Allowed
 //! paths** entry that is not a glob allows nothing and is printed.
 //!
@@ -24,7 +25,9 @@
 //!   where the line is what makes them inherited: the `mod` line of a parent module and the
 //!   `#[ignore = "awaiting #N"]` lines of a gate test group. Which `[workspace.dependencies]`
 //!   entries of the root `Cargo.toml` change, and which entry of `all_controllers()` changes,
-//!   is not read; the path is allowed.
+//!   is not read; the path is allowed. The testkit's [`INSTALLED`] registrations are read by
+//!   line, because each is one `registry.register::<Port>(make);` line: the file may only
+//!   gain such lines. Whether the port a line registers is the task's own is not read.
 //! - **Who extends a scope.** Only the associations in [`EXTENDERS`] count, because anyone
 //!   can comment on an issue of a public repository.
 //! - **When an extension takes effect.** The check runs on pull request events; a
@@ -44,8 +47,8 @@ use std::process::ExitCode;
 /// The name of the workflow job, and of the required check.
 pub const CONTEXT: &str = "scope";
 
-/// The label every task issue carries.
-pub const TASK_LABEL: &str = "type:task";
+/// The labels of the issues a pull request may close as its task: a task or a finding.
+pub const TASK_LABELS: [&str; 2] = ["type:task", "finding"];
 
 /// The comment author associations whose scope-extension comments count.
 pub const EXTENDERS: [&str; 3] = ["OWNER", "MEMBER", "COLLABORATOR"];
@@ -55,6 +58,17 @@ pub const GITHUB_FILE_LIMIT: usize = 3000;
 
 /// The module file holding the controller registry `all_controllers()`.
 pub const REGISTRY: &str = "crates/autobot-controllers/src/lib.rs";
+
+/// The module file holding the testkit's installed port registrations.
+pub const INSTALLED: &str = "crates/autobot-testkit/src/registry/installed.rs";
+
+/// The registries a task adds its own entry to: each file, and the directory under which the
+/// task's own globs must allow a changed path, the implementation the entry registers. A
+/// registered port may be implemented in any crate.
+pub const REGISTRIES: [(&str, &str); 2] = [
+    (REGISTRY, "crates/autobot-controllers/src"),
+    (INSTALLED, "crates"),
+];
 
 /// One file a pull request changes, as GitHub lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,7 +154,7 @@ pub enum NoTask {
     Missing(u64),
     /// The linked number is a pull request.
     PullRequest(u64),
-    /// The linked issue lacks [`TASK_LABEL`].
+    /// The linked issue carries none of the [`TASK_LABELS`].
     NotATask(u64),
 }
 
@@ -151,7 +165,11 @@ impl fmt::Display for NoTask {
             Self::Missing(n) => write!(f, "it links #{n}, which does not exist"),
             Self::PullRequest(n) => write!(f, "it links #{n}, which is a pull request"),
             Self::NotATask(n) => {
-                write!(f, "it links #{n}, which lacks the `{TASK_LABEL}` label")
+                let [task, finding] = TASK_LABELS;
+                write!(
+                    f,
+                    "it links #{n}, which carries neither the `{task}` nor the `{finding}` label"
+                )
             }
         }
     }
@@ -174,7 +192,10 @@ pub fn read_task(api: &impl Api, number: u64) -> Result<std::result::Result<Task
     let Some(labels) = issue["labels"].as_array() else {
         return Err(Error::Parse(format!("issues/{number}: no `labels`")));
     };
-    if !labels.iter().any(|l| l["name"] == TASK_LABEL) {
+    if !labels
+        .iter()
+        .any(|l| TASK_LABELS.iter().any(|t| l["name"] == *t))
+    {
         return Ok(Err(NoTask::NotATask(number)));
     }
     let body = issue["body"].as_str().unwrap_or_default();
@@ -255,6 +276,26 @@ fn adds_only_child_declarations(patch: &str, children: &BTreeSet<&str>) -> bool 
         })
 }
 
+/// Whether `line` is one installed registration, `registry.register::<Port>(make);`,
+/// surrounding whitespace allowed.
+fn is_registration(line: &str) -> bool {
+    line.trim()
+        .strip_prefix("registry.register::<")
+        .and_then(|rest| rest.strip_suffix(");"))
+        .and_then(|rest| rest.split_once(">("))
+        .is_some_and(|(port, make)| !port.trim().is_empty() && !make.trim().is_empty())
+}
+
+/// Whether `patch` only adds registrations to [`INSTALLED`]: it removes no line, adds at
+/// least one [`is_registration`] line, and every other line it adds is blank.
+fn adds_only_registrations(patch: &str) -> bool {
+    let lines: Vec<(char, &str)> = changed_lines(patch).collect();
+    lines.iter().any(|(_, l)| is_registration(l))
+        && lines
+            .iter()
+            .all(|(sign, l)| *sign == '+' && (is_registration(l) || l.trim().is_empty()))
+}
+
 /// The module name of the Rust file `path`: its stem, or its directory's name for `mod.rs`.
 fn module_name(path: &str) -> Option<&str> {
     let (dir, file) = path.rsplit_once('/')?;
@@ -301,7 +342,9 @@ fn in_gate_group(path: &str) -> bool {
 ///
 /// - `Cargo.lock` and the root `Cargo.toml` (its `[workspace.dependencies]` entries);
 /// - `<dir>/Cargo.toml` when the task's own globs allow a changed path under `<dir>/`;
-/// - [`REGISTRY`] when the task's own globs allow a changed path under its directory;
+/// - a file of [`REGISTRIES`] when the task's own globs allow a changed path under that
+///   registry's directory, and for [`INSTALLED`] only when it removes no line and adds only
+///   `registry.register::<Port>(make);` lines and blank lines;
 /// - the parent module of a Rust file the pull request adds under the task's own globs, when
 ///   it removes no line and adds only `mod` declarations of such files, each with the `///`
 ///   doc comments and blank lines added next to it;
@@ -322,14 +365,13 @@ pub fn inherited(path: &str, file: &ChangedFile, files: &[ChangedFile], task: &T
     {
         return true;
     }
-    if path == REGISTRY
-        && REGISTRY
-            .rsplit_once('/')
-            .is_some_and(|(dir, _)| granted_under(dir))
+    let patch = file.patch.as_deref();
+    if let Some((registry, dir)) = REGISTRIES.iter().find(|(registry, _)| *registry == path)
+        && granted_under(dir)
+        && (*registry != INSTALLED || patch.is_some_and(adds_only_registrations))
     {
         return true;
     }
-    let patch = file.patch.as_deref();
     let children: BTreeSet<&str> = files
         .iter()
         .filter(|f| {

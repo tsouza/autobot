@@ -141,16 +141,16 @@ fn a_pull_request_without_a_task_issue_fails() {
         "issues/9".to_owned(),
         json!({"labels": [], "pull_request": {"url": "x"}}),
     );
-    let mut finding = github(seeded());
-    finding.0.insert(
+    let mut unlabelled = github(seeded());
+    unlabelled.0.insert(
         "issues/9".to_owned(),
-        json!({"labels": [{"name": "finding"}], "body": "**Allowed paths**\n**/*"}),
+        json!({"labels": [{"name": "type:epic"}, {"name": "debt"}], "body": "**Allowed paths**\n**/*"}),
     );
     for (api, why) in [
         (unlinked, NoTask::Unlinked),
         (missing, NoTask::Missing(9)),
         (pull, NoTask::PullRequest(9)),
-        (finding, NoTask::NotATask(9)),
+        (unlabelled, NoTask::NotATask(9)),
     ] {
         let verdict = evaluate(&api, 40).unwrap();
         assert_eq!(verdict.task, Err(why.clone()));
@@ -398,4 +398,86 @@ fn the_workflow_runs_the_check_from_the_default_branch_and_never_cancels_a_run()
     assert_eq!(runs, ["just toolchain", "just scope \"$PR\""]);
     assert!(!WORKFLOW.contains("concurrency:"), "{WORKFLOW}");
     assert!(!WORKFLOW.contains("secrets."), "{WORKFLOW}");
+}
+
+#[test]
+fn a_finding_is_checked_against_its_own_allowed_paths() {
+    let mut api = github(seeded());
+    api.0.insert(
+        "issues/9".to_owned(),
+        json!({
+            "labels": [{"name": "finding"}, {"name": "debt"}],
+            "body": "**Objective**\nx\n\n**Allowed paths**\nCHARTER.md, .github/workflows/**\n",
+        }),
+    );
+    let verdict = evaluate(&api, 40).unwrap();
+    assert_eq!(verdict.task.as_ref().map(|t| t.number), Ok(9));
+    assert_eq!(verdict.outside, ["scripts/README.md"]);
+    assert!(!verdict.passes());
+    assert!(
+        verdict
+            .to_string()
+            .starts_with("scope: #40 closes task #9\n"),
+        "{verdict}"
+    );
+    api.0.insert(
+        FILES.to_owned(),
+        json!([file("CHARTER.md", "modified", "@@ -1 +1 @@\n-a\n+b")]),
+    );
+    assert!(evaluate(&api, 40).unwrap().passes());
+}
+
+/// The paths of `files` that a kernel task allowed `crates/autobot-kernel/src/command/**`
+/// does not allow.
+fn outside_of_kernel_task(files: Value) -> Vec<String> {
+    let mut api = github(files);
+    api.0.insert(
+        "issues/9".to_owned(),
+        json!({"labels": [{"name": "type:task"}], "body": "**Allowed paths**\ncrates/autobot-kernel/src/command/**"}),
+    );
+    evaluate(&api, 40).unwrap().outside
+}
+
+#[test]
+fn the_installed_registry_is_inherited_only_for_added_registration_lines() {
+    let own = file(
+        "crates/autobot-kernel/src/command/mod.rs",
+        "added",
+        "@@ -0,0 +1 @@\n+//! x",
+    );
+    let installed = |patch: &str| file(INSTALLED, "modified", patch);
+    let register = "@@ -6,3 +6,5 @@\n pub(super) fn install(registry: &mut Registry) {\n-    let _ = registry;\n+    registry.register::<g_commit::CommandsPort>(autobot_kernel::command::port);\n }\n";
+    let only_added = "@@ -6,2 +6,4 @@\n pub(super) fn install(registry: &mut Registry) {\n+    registry.register::<g_commit::CommandsPort>(autobot_kernel::command::port);\n+\n     let _ = registry;\n";
+    // Beside the implementation the task's own globs allow, adding the line passes.
+    assert_eq!(
+        outside_of_kernel_task(json!([own.clone(), installed(only_added)])),
+        Vec::<String>::new()
+    );
+    // Each bypass: removing a line, adding anything else, an empty or missing patch, and a
+    // registration with no change the task's own globs allow.
+    for patch in [
+        register,
+        "@@ -6,1 +6,2 @@\n pub(super) fn install(registry: &mut Registry) {\n+    other(registry);\n",
+        "@@ -6,1 +6,3 @@\n+    registry.register::<P>(make);\n+    std::process::abort();\n",
+        "@@ -6,1 +6,2 @@\n+\n",
+        "@@ -6,1 +6,2 @@\n+    registry.register::<>();\n",
+        "",
+    ] {
+        assert_eq!(
+            outside_of_kernel_task(json!([own.clone(), installed(patch)])),
+            [INSTALLED],
+            "{patch:?}"
+        );
+    }
+    assert_eq!(
+        outside_of_kernel_task(json!([
+            own,
+            {"filename": INSTALLED, "status": "modified", "changes": 1}
+        ])),
+        [INSTALLED]
+    );
+    assert_eq!(
+        outside_of_kernel_task(json!([installed(only_added)])),
+        [INSTALLED]
+    );
 }
