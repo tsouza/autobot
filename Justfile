@@ -44,6 +44,10 @@ machete:
 # Everything CI checks, locally.
 ci: fmt-check clippy test doc deny machete
 
+# Apply the ruleset and repository settings to GitHub; `--dry-run` only prints the diff.
+repo-settings *args:
+    {{rs}} scripts/repo_settings.rs {{args}}
+
 # CI job: formatting.
 ci-fmt: fmt-check
 
