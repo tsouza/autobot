@@ -32,8 +32,9 @@
 //!
 //! Choices the design leaves open:
 //!
-//! - **Model.** [`MODEL`] is `jev-latest`, the service's moving alias, until #317 pins it to
-//!   the versioned model name its first live run records; every run prints that name.
+//! - **Model.** [`MODEL`] is the versioned name `jev-1.13.0`, the model the service reported
+//!   for the moving alias `jev-latest` on the first live run, so a new model release does not
+//!   change the judgement silently; every run prints the model that answered.
 //! - **Confidence.** The confidence of a "violates" answer is `probabilities["violates"]`
 //!   when the answer carries it, otherwise the answer's `confidence`. The probability of the
 //!   chosen option is the quantity the threshold is worded in ("the confidence at or above
@@ -62,7 +63,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 /// The model the request names; see the module docs on pinning.
-pub const MODEL: &str = "jev-latest";
+pub const MODEL: &str = "jev-1.13.0";
 
 /// The service base URL when [`API_BASE_VAR`] is unset or blank.
 pub const DEFAULT_API_BASE: &str = "https://api.typesafe.ai";
