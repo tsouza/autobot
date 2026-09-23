@@ -37,14 +37,7 @@ jobs:
         env:
           PR: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ github.token }}
-      # Until the `pr-title` recipe is on the default branch, the step has nothing to run and
-      # reports a warning instead of failing.
       - if: ${{ !cancelled() }}
-        run: |
-          if just --show pr-title >/dev/null 2>&1; then
-            just pr-title "$PR_TITLE"
-          else
-            echo "::warning::the default branch has no pr-title recipe yet; title not checked"
-          fi
+        run: just pr-title "$PR_TITLE"
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
