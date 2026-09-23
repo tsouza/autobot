@@ -735,7 +735,7 @@ mod tests {
             }
         }
         let tokens: BTreeSet<String> = outside
-            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .split(|c: char| !crate::design::is_word_char(c))
             .filter(|w| w.len() >= 3 && is_state(w))
             .map(str::to_owned)
             .collect();
