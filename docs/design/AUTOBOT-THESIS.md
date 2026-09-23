@@ -5,14 +5,14 @@ Depends on: nothing. Every other document depends on this one.
 
 ## What it is
 
-AutoBot is a durable multi-agent software delivery engine. It takes an accepted milestone and converges on it with a swarm of role-specialized agents — manager, worker, reviewer, tester, integrator, and an optional task-local micro-manager — spending as little frontier-model money as the quality bar allows, never losing work and never acting on stale authority.
+AutoBot is a durable multi-agent software delivery engine. It takes an accepted milestone and converges on it with a swarm of role-specialized agents — manager, worker, reviewer, tester, integrator, and an optional task-local micro-manager — spending as little frontier-model money as the quality bar allows, and never losing work or acting on stale authority while doing so.
 
 Kubernetes custom resources are the source of truth. A Rust operator reconciles them. Everything else — forges, CI, model providers, the typed-question service, telemetry — is observed, adapted to, or projected into; none of it is authoritative.
 
 ## Ranked goals, highest first
 
-1. **Convergence to one milestone target.**
-2. **Never lose work; never act on stale authority; degrade gracefully under outage.** The precondition for running unattended; the formal methods serve this goal.
+1. **Convergence to one milestone target.** This is the product.
+2. **Never lose work; never act on stale authority; degrade gracefully under outage.** This is the precondition for running unattended, and it is what the formal methods are for.
 3. **Minimize expected total cost per accepted milestone.** Cheap-model routing is the thesis. It is a policy over the kernel, disabled (fixed routing) until the ledger it depends on is trustworthy.
 4. **Semantic judgments go to a cheap typed-question service (TypeSafe).** Every such judgment is a typed question over a deterministically pre-computed eligible set: the service picks, deterministic code decides. A model output never grants authority, scope, budget or acceptance.
 5. **Forges mirror the state of work.** GitHub, Gitea, Bitbucket and the like are projections of canonical records, never the source of truth.

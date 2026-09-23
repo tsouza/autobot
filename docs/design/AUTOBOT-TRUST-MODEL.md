@@ -5,7 +5,7 @@ Depends on: `AUTOBOT-THESIS.md` (I-2, I-5, I-6, I-7, I-8). `AUTOBOT-KERNEL.md` a
 
 ## Trusted
 
-Only these parties are trusted, each only for the stated thing.
+Trust is granted to exactly these, and each is trusted for exactly the stated thing.
 
 | Trusted party | Trusted for | Not trusted for |
 |---|---|---|
@@ -19,7 +19,7 @@ Only these parties are trusted, each only for the stated thing.
 
 ## Not trusted
 
-Every input below is data: it can inform a decision, never carry authority.
+Every input below is data. It can inform a decision; it can never carry authority.
 
 - **Agents, in every role.** Worker, reviewer, tester, integrator, micro-manager and Manager sessions are untrusted processes. The Manager's *authority* is a bounded register entry on the WorkContext (KERNEL §4), not the process that holds it. An agent-supplied actor string is never the principal; the principal is the authenticated writer.
 - **Repository content**, including build scripts, configuration and anything an agent may have written.
@@ -66,9 +66,9 @@ When a trusted party is unavailable, the affected capability stops; nothing wide
 
 ## Out of the threat model
 
-- Cluster-admin bypass of admission and RBAC, and compromised control-plane credentials: handled by containment and recovery, with no unconditional safety promise.
+- Cluster-admin bypass of admission and RBAC, and compromised control-plane credentials. These require containment and recovery, not an unconditional safety promise.
 - Loss beyond the declared custody profile: simultaneous loss of a workspace and the artifact store, zone-wide loss, or physical loss of storage that finalizers cannot prevent.
 - Provider misreporting: a forge or CI that returns a false definitive answer. AutoBot trusts an authenticated provider's *definitive* answer; it never trusts a timeout or a negative search as one.
-- Correctness of target code, quality of a model, or solvability of an arbitrary requirement. AutoBot enforces evidence discipline, not truth; tests do not define correctness.
+- Correctness of target code, quality of a model, or solvability of an arbitrary requirement. Tests do not define correctness; AutoBot enforces evidence discipline, not truth.
 
-Each of these is recovered from by procedure or declared as a limit; none is silently assumed away.
+Each of these is either recovered from by procedure or declared as a limit; none is silently assumed away.

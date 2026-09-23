@@ -16,7 +16,7 @@ Kubernetes custom resources are the source of truth; a Rust operator reconciles 
 
 ## Status
 
-Design and foundation. The first milestone, **M0-Q**, is a non-production qualification slice that runs one complete path — brief to canonical records — on Kubernetes with fake forges, fake CI and scripted agents. Progress is tracked in the [milestones](https://github.com/tsouza/autobot/milestones).
+Design and foundation. The first milestone, **M0-Q**, is a non-production qualification slice: it proves one complete path — brief to canonical records — on an existing, non-Rust repository through Kubernetes resources, using a fake forge and CI, a deterministic fake semantic judge and fault-injected fake provider adapters. Progress is tracked in the [milestones](https://github.com/tsouza/autobot/milestones).
 
 ## Design
 

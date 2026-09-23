@@ -7,7 +7,7 @@ Relies on (kernel): effect intents, `operation_key`, the dispatch ledger and the
 
 Decisions:
 
-- **A remote object is a projection.** A `MirrorBinding` maps a canonical resource UID to its remote issue, PR, comment or label with the last projected digest. Progress and decisions are recorded internally first, then projected through committed effect intents; a missing outgoing operation is regenerated from the intent after any interruption, never invented.
+- **A remote object is a projection.** A `MirrorBinding` maps a canonical resource UID to its remote issue, PR, comment or label with the last projected digest. Progress and decisions are recorded internally first and projected afterwards through committed effect intents, so a missing outgoing operation is regenerated from the intent after any interruption, never invented.
 - **Ownership of remote fields is split.** AutoBot owns its namespaced status labels and designated sections; human content and ordinary labels are human-owned and never overwritten. Exact projection echoes are suppressed without discarding real merge or CI facts.
 - **Incoming facts are `ExternalObservation`s**: authenticated, deduplicated by provider event id *and* semantic key (a provider may not expose a stable id), persisted before acknowledgement, and recovered by periodic poll and relist after watch loss. An observation records provider, remote object UID, delivery id, poll cursor, remote generation, source and base heads, branch-protection digest and observation time; it becomes state only through a controller commit.
 - **Remote text carries no authority.** A human command written in a forge is validated against actor permissions before it becomes a command; free-form text never changes an accepted contract.

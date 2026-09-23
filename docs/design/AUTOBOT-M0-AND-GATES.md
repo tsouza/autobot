@@ -33,7 +33,7 @@ Spec contracts M0 fixes: `WorkBrief.spec` (source kind, author, artifact ref, re
 
 ## 2. M0 profile — proposed limits, not design facts
 
-Each value is stated only here; other documents refer to "the profile". Each is a limit to test, not a measured capacity.
+These values are stated once, here. Any other document that needs one refers to "the profile". Each is a limit to test, not a measured capacity.
 
 | Area | Proposed value |
 |---|---|
