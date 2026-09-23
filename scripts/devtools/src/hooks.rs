@@ -3,7 +3,9 @@
 //! The deny list is the machine-local file `~/.config/autobot/deny-terms`: one
 //! case-insensitive regular expression per line, blank lines and lines starting with `#`
 //! ignored. When it is absent, every push passes. Otherwise a push fails when a pushed
-//! commit's message, or a line one of its diffs adds, matches any expression.
+//! commit's message, or a line one of its diffs adds, matches any expression. A merge
+//! commit's diff is the one `git log --remerge-diff` shows: what the recorded merge adds
+//! beyond an automatic re-merge of its parents, such as a conflict resolution.
 //!
 //! [`install`] writes a hook that runs `just hook-pre-push`, which calls [`cli`] with the
 //! hook's arguments and standard input.
@@ -117,18 +119,40 @@ pub fn pushed_lines(repo: &Path, remote: &str, update: &str) -> Result<Vec<Strin
     let log = |format: &str, patch: bool| {
         Cmd::new("git")
             .args(["log", "--no-color", "--no-ext-diff", format])
-            .args(patch.then_some("--patch"))
+            .args(
+                patch
+                    .then_some(["--patch", "--remerge-diff"])
+                    .into_iter()
+                    .flatten(),
+            )
             .args(range.iter().cloned())
             .current_dir(repo)
             .output()
     };
     let messages = log("--format=%B", false)?;
     let patches = log("--format=", true)?;
-    let added = patches
+    Ok(messages
         .lines()
-        .filter(|l| !l.starts_with("+++"))
-        .filter_map(|l| l.strip_prefix('+'));
-    Ok(messages.lines().chain(added).map(str::to_owned).collect())
+        .chain(added_lines(&patches))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// The lines a `git log --patch` output adds, without their leading `+`.
+///
+/// A file's header runs from its `diff ` line to its first `@@` hunk line; its `+++ b/<file>`
+/// line is skipped there. Inside a hunk every line starting with `+` is an added line, even
+/// one whose content itself starts with `++`.
+pub fn added_lines(patch: &str) -> impl Iterator<Item = &str> {
+    let mut in_header = false;
+    patch.lines().filter_map(move |l| {
+        if l.starts_with("diff ") {
+            in_header = true;
+        } else if l.starts_with("@@") {
+            in_header = false;
+        }
+        if in_header { None } else { l.strip_prefix('+') }
+    })
 }
 
 /// Every violation in a push, given the hook's `remote` argument, its standard input
@@ -260,6 +284,54 @@ mod tests {
             check_push(&work, "origin", &update(&work, &base), &deny)
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn added_lines_skip_file_headers_but_not_added_plus_lines() {
+        let patch = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -0,0 +1,3 @@\n+plain\n+++ x\n+++\n \
+                     ctx\n-gone\ndiff --git a/g b/g\nnew file mode 100644\n--- /dev/null\n+++ b/g\n\
+                     @@ -0,0 +1 @@\n++y\n";
+        assert_eq!(
+            added_lines(patch).collect::<Vec<_>>(),
+            vec!["plain", "++ x", "++", "+y"]
+        );
+    }
+
+    #[test]
+    fn an_added_line_starting_with_plus_plus_fails_the_push() {
+        let (_tmp, work, deny) = setup();
+        let base = git(&work, &["rev-parse", "HEAD"]);
+        commit(&work, "a", "plain\n++ forbidden-1\n", "clean");
+        let v = check_push(&work, "origin", &update(&work, &base), &deny).unwrap();
+        assert_eq!(
+            v,
+            vec![Violation {
+                pattern_line: 3,
+                text: "++ forbidden-1".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_line_added_by_a_merge_commit_fails_the_push() {
+        let (_tmp, work, deny) = setup();
+        let base = git(&work, &["rev-parse", "HEAD"]);
+        git(&work, &["checkout", "-q", "-b", "side"]);
+        commit(&work, "s", "side\n", "side");
+        git(&work, &["checkout", "-q", "-"]);
+        commit(&work, "m", "mainline\n", "mainline");
+        git(&work, &["merge", "-q", "--no-commit", "--no-ff", "side"]);
+        std::fs::write(work.join("r"), "resolved forbidden-3\n").unwrap();
+        git(&work, &["add", "r"]);
+        git(&work, &["commit", "-q", "-m", "merge side"]);
+        let v = check_push(&work, "origin", &update(&work, &base), &deny).unwrap();
+        assert_eq!(
+            v,
+            vec![Violation {
+                pattern_line: 3,
+                text: "resolved forbidden-3".into(),
+            }]
         );
     }
 

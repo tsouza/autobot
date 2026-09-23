@@ -24,7 +24,7 @@ just wt rm <issue#>    # remove the worktree and its branch
 - The slug is derived from the issue title. Each worktree builds into its own `target/`.
 - `.worktrees` may be a symlink to another volume; `just wt new` refuses when its target is missing. When the machine-local `~/.config/autobot/local.toml` sets `require_mount_uuid`, it also refuses unless the resolved directory is on the filesystem with that UUID. That file is never committed.
 - `just wt rm` refuses while the branch has commits that no remote-tracking branch contains, unless the branch tip is the head of a merged pull request (the remote branch may already be deleted and pruned). Remove the worktree once its pull request is merged. To discard unpushed work instead, run `git worktree remove <path>` and `git branch -D <branch>`.
-- `just hooks` installs a pre-push hook that rejects a push whose commit messages or added lines match an expression in the machine-local `~/.config/autobot/deny-terms` (one case-insensitive regular expression per line). Without that file every push passes. It is never committed.
+- `just hooks` installs a pre-push hook that rejects a push whose commit messages or added lines (including the lines a merge commit adds, such as a conflict resolution) match an expression in the machine-local `~/.config/autobot/deny-terms` (one case-insensitive regular expression per line). Without that file every push passes. It is never committed.
 
 ## Pull requests
 
