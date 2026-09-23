@@ -24,4 +24,11 @@ A reviewer is a fresh session that did not write the change. It tries to refute 
 6. The pull request description does not copy, paraphrase or mirror its issue. If it does, the verdict is FAIL.
 7. If `~/.config/autobot/deny-terms` exists, no line of the diff, commit messages or pull request text matches it. Never commit that list or quote its entries.
 
+Every finding is either **blocking** or **advisory**:
+
+- **Blocking:** the change is wrong for inputs the task has to handle, an acceptance item is not met, a project rule is broken, or the pull request description states something false.
+- **Advisory:** everything else, such as inputs the task's purpose does not cover (a guardrail against honest mistakes need not resist deliberate evasion unless its issue says so), style, and wording that is not false.
+
+The verdict is FAIL only when there is a blocking finding. When the only blocking findings concern the pull request description, the fix is to the description alone, and the next review checks the description against the head that was already reviewed. When the same blocking problem comes back after a fix, the reviewer names the approach as the defect instead of the next symptom.
+
 The verdict comment format is in `CONTRIBUTING.md` under Review and merge.
