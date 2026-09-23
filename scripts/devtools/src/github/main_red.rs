@@ -399,30 +399,33 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
 
-    // Recorded from GET repos/tsouza/runnerscout/actions/runs/35276703631, a push run on main
-    // that failed, keeping the fields `Run` reads plus `id`, `status` and `run_attempt`.
-    const FAILED_RUN: &str = r#"{"id":35276703631,"name":"CI","event":"push","head_branch":"main","head_sha":"47309bae54d56d0899939259a553d01e69cd2a2a","status":"completed","conclusion":"failure","html_url":"https://github.com/tsouza/runnerscout/actions/runs/35276703631","run_attempt":1}"#;
+    // A push run on main that failed, recorded from the GitHub API (GET actions/runs/35276703631)
+    // with owner and logins replaced by placeholders, keeping the fields `Run` reads plus `id`,
+    // `status` and `run_attempt`.
+    const FAILED_RUN: &str = r#"{"id":35276703631,"name":"CI","event":"push","head_branch":"main","head_sha":"47309bae54d56d0899939259a553d01e69cd2a2a","status":"completed","conclusion":"failure","html_url":"https://github.com/octo-org/other/actions/runs/35276703631","run_attempt":1}"#;
 
-    // Recorded from GET repos/tsouza/cerberus/actions/runs/34202500813, a scheduled run on
-    // main that failed, keeping the fields `Run` reads plus `id`, `status` and `run_attempt`.
-    const FAILED_SCHEDULED_RUN: &str = r#"{"id":34202500813,"name":"e2e","event":"schedule","head_branch":"main","head_sha":"2b744444f22284ae6c7e3bd925f76fef6a3281e5","status":"completed","conclusion":"failure","html_url":"https://github.com/tsouza/cerberus/actions/runs/34202500813","run_attempt":1}"#;
+    // A scheduled run on main that failed, recorded from the GitHub API (GET
+    // actions/runs/34202500813) with owner and logins replaced by placeholders, keeping the fields
+    // `Run` reads plus `id`, `status` and `run_attempt`.
+    const FAILED_SCHEDULED_RUN: &str = r#"{"id":34202500813,"name":"e2e","event":"schedule","head_branch":"main","head_sha":"2b744444f22284ae6c7e3bd925f76fef6a3281e5","status":"completed","conclusion":"failure","html_url":"https://github.com/octo-org/other/actions/runs/34202500813","run_attempt":1}"#;
     const SCHEDULED_SHA: &str = "2b744444f22284ae6c7e3bd925f76fef6a3281e5";
-    const SCHEDULED_RUN_URL: &str = "https://github.com/tsouza/cerberus/actions/runs/34202500813";
+    const SCHEDULED_RUN_URL: &str = "https://github.com/octo-org/other/actions/runs/34202500813";
 
-    // Recorded from GET repos/tsouza/autobot/milestones?state=open&per_page=100, keeping
-    // `number`, `title` and `state`.
+    // Recorded from the GitHub API (GET milestones?state=open&per_page=100), with owner and logins
+    // replaced by placeholders, keeping `number`, `title` and `state`.
     const MILESTONES: &str = r#"[{"number":1,"title":"M-1 · Foundation — repository, tooling, CI, governance","state":"open"},{"number":2,"title":"M0-Q · G-QUAL — qualification slice","state":"open"},{"number":3,"title":"M0-QF · G-FORMAL — formal qualification alongside M0","state":"open"},{"number":4,"title":"M1 · G-INTAKE — install & real intake","state":"open"},{"number":5,"title":"M2 · G-FENCE-CUSTODY — real broker, isolation & custody","state":"open"},{"number":6,"title":"M3 · G-FORGE — forge mirroring & conformance","state":"open"},{"number":7,"title":"M4 · G-OBS — observability","state":"open"},{"number":8,"title":"M5 · G-EVALUATION — evaluation ledger","state":"open"},{"number":9,"title":"M6 · G-ADAPT — adaptive routing","state":"open"},{"number":10,"title":"M7 · G-PORTABILITY — second forge & runtime","state":"open"},{"number":11,"title":"M8 · G-OPS — operational qualification","state":"open"},{"number":12,"title":"M9 · G-PROD — production qualification","state":"open"}]"#;
 
-    // Recorded from GET repos/tsouza/autobot/issues?labels=type:epic&state=open&per_page=100,
-    // keeping the M-1 epics and the M0-Q gate epic with `number`, `id`, `title`, `state`,
-    // `milestone.number`, and of `body` the first line and the plan-key line.
+    // Recorded from the GitHub API (GET issues?labels=type:epic&state=open&per_page=100), with
+    // owner and logins replaced by placeholders, keeping the M-1 epics and the M0-Q gate epic with
+    // `number`, `id`, `title`, `state`, `milestone.number`, and of `body` the first line and the
+    // plan-key line.
     const EPICS: &str = r#"[{"number":22,"id":5546503658,"title":"M0-Q qualification: target, end-to-end scenario, measurements, gate evidence","state":"open","milestone":{"number":2},"body":"Gate epic for G-QUAL.\n\n<!-- plan-key: E-M0-QUALIFICATION -->"},{"number":4,"id":5546495144,"title":"Design-set checks and the design-change process","state":"open","milestone":{"number":1},"body":"Mechanical consistency of docs/design.\n\n<!-- plan-key: E-FOUND-DESIGN -->"},{"number":3,"id":5546494859,"title":"CI workflows, required checks, review gate and dependency automation","state":"open","milestone":{"number":1},"body":"GHA -> just -> scripts. Gate lane only (no model, no secrets in required checks). A red main opens an `urgent` issue.\n\n<!-- plan-key: E-FOUND-CI -->"},{"number":2,"id":5546494552,"title":"Workspace crates, Justfile, devtools library, worktrees and sccache","state":"open","milestone":{"number":1},"body":"The nine crates with the lint policy, cargo-deny and rustfmt.\n\n<!-- plan-key: E-FOUND-TOOLING -->"}]"#;
 
     const MILESTONES_PAGE: &str = "milestones?state=open&per_page=100&page=1";
     const EPICS_PAGE: &str = "issues?labels=type:epic&state=open&per_page=100&page=1";
     const URGENT_PAGE: &str = "issues?labels=urgent&state=open&per_page=100&page=1";
     const SHA: &str = "47309bae54d56d0899939259a553d01e69cd2a2a";
-    const RUN_URL: &str = "https://github.com/tsouza/runnerscout/actions/runs/35276703631";
+    const RUN_URL: &str = "https://github.com/octo-org/other/actions/runs/35276703631";
 
     fn parse(text: &str) -> Value {
         serde_json::from_str(text).unwrap()
@@ -721,7 +724,7 @@ mod tests {
         let dir = repo_with_origin("origin", "git@github.com-alias:owner/name.git");
         let (connected, writes) = dry_run(&[], &dir);
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(connected, ["owner/name", "tsouza/runnerscout"]);
+        assert_eq!(connected, ["owner/name", "octo-org/other"]);
         assert_eq!(writes, []);
     }
 
@@ -731,8 +734,8 @@ mod tests {
         let (connected, _) = dry_run(&[("GITHUB_REPOSITORY", " other/repo ")], &dir);
         let (blank, _) = dry_run(&[("GITHUB_REPOSITORY", " ")], &dir);
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(connected, ["other/repo", "tsouza/runnerscout"]);
-        assert_eq!(blank, ["owner/name", "tsouza/runnerscout"]);
+        assert_eq!(connected, ["other/repo", "octo-org/other"]);
+        assert_eq!(blank, ["owner/name", "octo-org/other"]);
     }
 
     #[test]
@@ -757,22 +760,22 @@ mod tests {
         assert_eq!(parse_args(Vec::new()).unwrap(), None);
         assert_eq!(
             parse_args(["--dry-run".to_owned(), RUN_URL.to_owned()]).unwrap(),
-            Some(("tsouza/runnerscout".to_owned(), 35_276_703_631))
+            Some(("octo-org/other".to_owned(), 35_276_703_631))
         );
         assert_eq!(
             parse_run_url(&format!("{RUN_URL}/attempts/2")).unwrap(),
-            ("tsouza/runnerscout".to_owned(), 35_276_703_631)
+            ("octo-org/other".to_owned(), 35_276_703_631)
         );
         for args in [
             vec!["--dry-run"],
-            vec!["--dry-run", "https://github.com/tsouza/autobot/pull/1"],
+            vec!["--dry-run", "https://github.com/octo-org/autobot/pull/1"],
             vec![
                 "--dry-run",
-                "https://github.com/tsouza/autobot/actions/runs/x",
+                "https://github.com/octo-org/autobot/actions/runs/x",
             ],
             vec![
                 "--dry-run",
-                "http://github.com/tsouza/autobot/actions/runs/1",
+                "http://github.com/octo-org/autobot/actions/runs/1",
             ],
             vec!["run", RUN_URL],
         ] {

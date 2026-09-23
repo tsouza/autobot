@@ -91,14 +91,14 @@ mod tests {
     #[test]
     fn remote_repo_reads_https_ssh_and_host_alias_urls() {
         for url in [
-            "https://github.com/tsouza/autobot.git",
-            "https://github.com/tsouza/autobot/",
-            "ssh://git@github.com/tsouza/autobot.git",
-            "git@github.com:tsouza/autobot.git",
-            "git@github.com:tsouza/autobot",
-            "git@github.com-tsouza:tsouza/autobot.git\n",
+            "https://github.com/octo-org/autobot.git",
+            "https://github.com/octo-org/autobot/",
+            "ssh://git@github.com/octo-org/autobot.git",
+            "git@github.com:octo-org/autobot.git",
+            "git@github.com:octo-org/autobot",
+            "git@github.com-alias:octo-org/autobot.git\n",
         ] {
-            assert_eq!(remote_repo(url).unwrap(), "tsouza/autobot", "{url}");
+            assert_eq!(remote_repo(url).unwrap(), "octo-org/autobot", "{url}");
         }
     }
 

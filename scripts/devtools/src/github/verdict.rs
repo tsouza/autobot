@@ -213,25 +213,27 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
 
-    // Recorded from GET repos/tsouza/autobot/pulls/236, keeping `number`, `state` and `head`.
+    // Recorded from the GitHub API (GET pulls/236), with owner and logins replaced by placeholders,
+    // keeping `number`, `state` and `head`.
     const PULL: &str = r#"{"head":{"ref":"48-devtools-lib","sha":"15b7298d5a0de178405ccff640f71c2bfde55f3f"},"number":236,"state":"closed"}"#;
 
-    // Recorded from GET repos/tsouza/autobot/issues/236/comments?per_page=100, keeping
-    // `id`, `html_url`, `user.login`, `user.type`, `author_association`, `created_at` and the
-    // first line of `body`.
-    const COMMENTS: &str = r#"[{"author_association":"OWNER","body":"Review verdict: FAIL @ 2d6fe7ee926d787b7e4de9603b34753b448e3cdf","created_at":"2026-09-23T00:29:34Z","html_url":"https://github.com/tsouza/autobot/pull/236#issuecomment-5786866846","id":5786866846,"user":{"login":"tsouza","type":"User"}},{"author_association":"OWNER","body":"Review verdict: FAIL @ 0b1bef41de4192a41209204e387f98fd02813796","created_at":"2026-09-23T00:33:59Z","html_url":"https://github.com/tsouza/autobot/pull/236#issuecomment-5786921782","id":5786921782,"user":{"login":"tsouza","type":"User"}},{"author_association":"OWNER","body":"Review verdict: FAIL @ ddf67ff490f699af3920c86e83ec6ac30eaf97ce","created_at":"2026-09-23T00:38:38Z","html_url":"https://github.com/tsouza/autobot/pull/236#issuecomment-5786973062","id":5786973062,"user":{"login":"tsouza","type":"User"}},{"author_association":"OWNER","body":"Review verdict: FAIL @ 6ae0c26070bd87bf7188a39f08dad0ecf0710f45","created_at":"2026-09-23T00:43:41Z","html_url":"https://github.com/tsouza/autobot/pull/236#issuecomment-5787017374","id":5787017374,"user":{"login":"tsouza","type":"User"}},{"author_association":"OWNER","body":"Review verdict: FAIL @ c1bdd53e21c28af6bcbc8f1e16b201e795198149","created_at":"2026-09-23T00:46:38Z","html_url":"https://github.com/tsouza/autobot/pull/236#issuecomment-5787042606","id":5787042606,"user":{"login":"tsouza","type":"User"}},{"author_association":"OWNER","body":"Review verdict: PASS @ 15b7298d5a0de178405ccff640f71c2bfde55f3f","created_at":"2026-09-23T00:49:52Z","html_url":"https://github.com/tsouza/autobot/pull/236#issuecomment-5787069111","id":5787069111,"user":{"login":"tsouza","type":"User"}}]"#;
+    // Recorded from the GitHub API (GET issues/236/comments?per_page=100), with owner and logins
+    // replaced by placeholders, keeping `id`, `html_url`, `user.login`, `user.type`,
+    // `author_association`, `created_at` and the first line of `body`.
+    const COMMENTS: &str = r#"[{"author_association":"OWNER","body":"Review verdict: FAIL @ 2d6fe7ee926d787b7e4de9603b34753b448e3cdf","created_at":"2026-09-23T00:29:34Z","html_url":"https://github.com/octo-org/autobot/pull/236#issuecomment-5786866846","id":5786866846,"user":{"login":"octo-owner","type":"User"}},{"author_association":"OWNER","body":"Review verdict: FAIL @ 0b1bef41de4192a41209204e387f98fd02813796","created_at":"2026-09-23T00:33:59Z","html_url":"https://github.com/octo-org/autobot/pull/236#issuecomment-5786921782","id":5786921782,"user":{"login":"octo-owner","type":"User"}},{"author_association":"OWNER","body":"Review verdict: FAIL @ ddf67ff490f699af3920c86e83ec6ac30eaf97ce","created_at":"2026-09-23T00:38:38Z","html_url":"https://github.com/octo-org/autobot/pull/236#issuecomment-5786973062","id":5786973062,"user":{"login":"octo-owner","type":"User"}},{"author_association":"OWNER","body":"Review verdict: FAIL @ 6ae0c26070bd87bf7188a39f08dad0ecf0710f45","created_at":"2026-09-23T00:43:41Z","html_url":"https://github.com/octo-org/autobot/pull/236#issuecomment-5787017374","id":5787017374,"user":{"login":"octo-owner","type":"User"}},{"author_association":"OWNER","body":"Review verdict: FAIL @ c1bdd53e21c28af6bcbc8f1e16b201e795198149","created_at":"2026-09-23T00:46:38Z","html_url":"https://github.com/octo-org/autobot/pull/236#issuecomment-5787042606","id":5787042606,"user":{"login":"octo-owner","type":"User"}},{"author_association":"OWNER","body":"Review verdict: PASS @ 15b7298d5a0de178405ccff640f71c2bfde55f3f","created_at":"2026-09-23T00:49:52Z","html_url":"https://github.com/octo-org/autobot/pull/236#issuecomment-5787069111","id":5787069111,"user":{"login":"octo-owner","type":"User"}}]"#;
 
-    // Recorded from GET repos/tsouza/autobot/collaborators/tsouza/permission, keeping
-    // `permission`, `role_name` and `user.login`.
+    // Recorded from the GitHub API (GET collaborators/octo-owner/permission), with owner and logins
+    // replaced by placeholders, keeping `permission`, `role_name` and `user.login`.
     const OWNER_PERMISSION: &str =
-        r#"{"permission":"admin","role_name":"admin","user":{"login":"tsouza"}}"#;
+        r#"{"permission":"admin","role_name":"admin","user":{"login":"octo-owner"}}"#;
 
-    // Recorded from GET repos/tsouza/autobot/collaborators/octocat/permission, same fields.
+    // Recorded from the GitHub API (GET collaborators/octo-reader/permission), with owner and
+    // logins replaced by placeholders, same fields.
     const READ_PERMISSION: &str =
-        r#"{"permission":"read","role_name":"read","user":{"login":"octocat"}}"#;
+        r#"{"permission":"read","role_name":"read","user":{"login":"octo-reader"}}"#;
 
     const HEAD: &str = "15b7298d5a0de178405ccff640f71c2bfde55f3f";
-    const PASS_URL: &str = "https://github.com/tsouza/autobot/pull/236#issuecomment-5787069111";
+    const PASS_URL: &str = "https://github.com/octo-org/autobot/pull/236#issuecomment-5787069111";
     const COMMENTS_PAGE_1: &str = "issues/236/comments?per_page=100&page=1";
 
     fn parse(text: &str) -> Value {
@@ -252,11 +254,11 @@ mod tests {
             responses.insert("pulls/236".to_owned(), pull);
             responses.insert(COMMENTS_PAGE_1.to_owned(), comments);
             responses.insert(
-                "collaborators/tsouza/permission".to_owned(),
+                "collaborators/octo-owner/permission".to_owned(),
                 parse(OWNER_PERMISSION),
             );
             responses.insert(
-                "collaborators/octocat/permission".to_owned(),
+                "collaborators/octo-reader/permission".to_owned(),
                 parse(READ_PERMISSION),
             );
             Self {
@@ -300,7 +302,7 @@ mod tests {
         json!({
             "author_association": association,
             "body": body,
-            "html_url": format!("https://github.com/tsouza/autobot/pull/236#issuecomment-{login}"),
+            "html_url": format!("https://github.com/octo-org/autobot/pull/236#issuecomment-{login}"),
             "user": {"login": login, "type": "User"},
         })
     }
@@ -351,7 +353,7 @@ mod tests {
         // Drop the owner's PASS: the owner's latest verdict is then a FAIL for another SHA.
         let pass = format!("Review verdict: PASS @ {HEAD}");
         for (login, association) in [
-            ("octocat", "COLLABORATOR"),
+            ("octo-reader", "COLLABORATOR"),
             ("stranger", "NONE"),
             ("stranger", "CONTRIBUTOR"),
         ] {
@@ -366,7 +368,7 @@ mod tests {
         // A read-only collaborator is looked up and rejected; an outsider is never looked up.
         let api = FakeRepo::with_comments(|c| {
             c.push(comment(
-                "octocat",
+                "octo-reader",
                 "COLLABORATOR",
                 "Review verdict: FAIL @ x",
             ));
@@ -374,7 +376,7 @@ mod tests {
         });
         assert_eq!(evaluate(&api, 236).unwrap().state, State::Success);
         let gets = api.gets.borrow();
-        assert!(gets.contains(&"collaborators/octocat/permission".to_owned()));
+        assert!(gets.contains(&"collaborators/octo-reader/permission".to_owned()));
         assert!(!gets.iter().any(|g| g.contains("stranger")), "{gets:?}");
     }
 
@@ -382,7 +384,7 @@ mod tests {
     fn later_fail_overrides_an_earlier_pass() {
         let api = FakeRepo::with_comments(|c| {
             c.push(comment(
-                "tsouza",
+                "octo-owner",
                 "OWNER",
                 &format!("Review verdict: FAIL @ {HEAD}\n\n## Defects\n1. x"),
             ));
@@ -395,7 +397,11 @@ mod tests {
     #[test]
     fn malformed_verdict_overrides_an_earlier_pass() {
         let api = FakeRepo::with_comments(|c| {
-            c.push(comment("tsouza", "OWNER", "Review verdict: FAIL @ 15b7298"));
+            c.push(comment(
+                "octo-owner",
+                "OWNER",
+                "Review verdict: FAIL @ 15b7298",
+            ));
         });
         let status = evaluate(&api, 236).unwrap();
         assert_eq!(status.state, State::Failure);
@@ -405,9 +411,9 @@ mod tests {
     #[test]
     fn comments_that_are_not_verdicts_do_not_count() {
         let api = FakeRepo::with_comments(|c| {
-            c.push(comment("tsouza", "OWNER", "LGTM"));
+            c.push(comment("octo-owner", "OWNER", "LGTM"));
             c.push(comment(
-                "tsouza",
+                "octo-owner",
                 "OWNER",
                 &format!("Note\nReview verdict: FAIL @ {HEAD}"),
             ));
@@ -437,7 +443,7 @@ mod tests {
     fn verdicts_on_later_pages_are_read() {
         let mut api = FakeRepo::with_comments(|c| {
             c.truncate(1);
-            c.resize(PAGE_SIZE, comment("tsouza", "OWNER", "chatter"));
+            c.resize(PAGE_SIZE, comment("octo-owner", "OWNER", "chatter"));
         });
         api.responses.insert(
             "issues/236/comments?per_page=100&page=2".to_owned(),

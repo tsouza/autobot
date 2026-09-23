@@ -1,8 +1,7 @@
 //! A minimal GitHub REST and GraphQL client.
 //!
 //! The token comes from the first non-empty value of `GITHUB_TOKEN` and `GH_TOKEN`; when both
-//! are unset or empty, it is read from `<cli> auth token`, where `<cli>` is `AUTOBOT_GH_CLI` if
-//! set, otherwise `gh`.
+//! are unset or empty, creating a client fails.
 //!
 //! The repository is resolved once, by [`repository`]: `GITHUB_REPOSITORY` when it is set
 //! and not blank (the value is trimmed), otherwise the repository the `origin` remote points at.
@@ -17,7 +16,6 @@ pub mod main_red;
 pub mod settings;
 pub mod verdict;
 
-use crate::process::Cmd;
 use crate::{Error, Result, git};
 use serde_json::Value;
 use settings::Api;
@@ -69,24 +67,17 @@ pub fn pr_number(args: impl IntoIterator<Item = String>, script: &str) -> Result
     }
 }
 
-/// Resolves the API token from an environment lookup and a CLI fallback.
+/// Resolves the API token from an environment lookup: the first non-empty (after trimming)
+/// value of `GITHUB_TOKEN` and `GH_TOKEN`, trimmed.
 ///
 /// # Errors
-/// Fails if the CLI fails or prints an empty token.
-pub fn resolve_token(
-    env: impl Fn(&str) -> Option<String>,
-    cli_token: impl FnOnce(&str) -> Result<String>,
-) -> Result<String> {
+/// Fails if both are unset or empty.
+pub fn resolve_token(env: impl Fn(&str) -> Option<String>) -> Result<String> {
     let set = |key: &str| env(key).filter(|v| !v.trim().is_empty());
-    if let Some(token) = set("GITHUB_TOKEN").or_else(|| set("GH_TOKEN")) {
-        return Ok(token.trim().to_owned());
-    }
-    let cli = set("AUTOBOT_GH_CLI").unwrap_or_else(|| "gh".to_owned());
-    let token = cli_token(&cli)?.trim().to_owned();
-    if token.is_empty() {
-        return Err(Error::Token(format!("`{cli} auth token` printed no token")));
-    }
-    Ok(token)
+    set("GITHUB_TOKEN")
+        .or_else(|| set("GH_TOKEN"))
+        .map(|token| token.trim().to_owned())
+        .ok_or_else(|| Error::Token("set `GITHUB_TOKEN` or `GH_TOKEN`".to_owned()))
 }
 
 /// Resolves the `owner/name` of the repository: `env` (the value of `GITHUB_REPOSITORY`)
@@ -131,10 +122,7 @@ impl Client {
     /// # Errors
     /// Fails if no token can be found.
     pub fn new(repo: impl Into<String>) -> Result<Self> {
-        let token = resolve_token(
-            |key| std::env::var(key).ok(),
-            |cli| Cmd::new(cli).args(["auth", "token"]).output(),
-        )?;
+        let token = resolve_token(|key| std::env::var(key).ok())?;
         Ok(Self {
             agent: ureq::Agent::new_with_defaults(),
             token,
@@ -260,12 +248,12 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::collections::BTreeMap;
 
-    // Recorded from `automerge::PULL_REQUEST_ID` on tsouza/autobot with number 236, and with
+    // Recorded from `automerge::PULL_REQUEST_ID` with number 236, and with
     // number 99999, which does not exist; shared with the `automerge` tests.
     pub(super) const FOUND: &str = r#"{"data":{"repository":{"pullRequest":{"id":"PR_kwDOUmSub88AAAABEq1tqw","number":236}}}}"#;
     pub(super) const NOT_FOUND: &str = r#"{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],"locations":[{"line":1,"column":91}],"message":"Could not resolve to a PullRequest with the number of 99999."}]}"#;
 
-    const ALIAS_REMOTE: &str = "git@github.com-tsouza:tsouza/autobot.git\n";
+    const ALIAS_REMOTE: &str = "git@github.com-alias:octo-org/autobot.git\n";
 
     #[test]
     fn resolve_repo_prefers_the_environment_variable() {
@@ -284,13 +272,13 @@ mod tests {
     #[test]
     fn resolve_repo_falls_back_to_ssh_https_and_host_alias_remotes() {
         for url in [
-            "git@github.com:tsouza/autobot.git",
-            "https://github.com/tsouza/autobot",
+            "git@github.com:octo-org/autobot.git",
+            "https://github.com/octo-org/autobot",
             ALIAS_REMOTE,
         ] {
             for env in [None, Some(String::new()), Some("  ".to_owned())] {
                 let got = resolve_repo(env.clone(), || Ok(url.to_owned())).unwrap();
-                assert_eq!(got, "tsouza/autobot", "{url} with {env:?}");
+                assert_eq!(got, "octo-org/autobot", "{url} with {env:?}");
             }
         }
     }

@@ -174,19 +174,20 @@ mod tests {
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
 
-    // Recorded from GET repos/tsouza/autobot/pulls/248, keeping `number`, `state`, `title`, the
-    // label names and `head`.
+    // Recorded from the GitHub API (GET pulls/248), with owner and logins replaced by placeholders,
+    // keeping `number`, `state`, `title`, the label names and `head`.
     const PULL_248: &str = r#"{"number":248,"state":"closed","title":"feat(ci): add the review-gate commit status bound to the head SHA","labels":[{"name":"human-lane"},{"name":"area:ci"}],"head":{"ref":"54-review-gate","sha":"f1c9c9b525e8602a2873e56a544643705e72ef3f"}}"#;
 
-    // Recorded from GET repos/tsouza/autobot/pulls/248/files?per_page=100&page=1, keeping
-    // `filename`, `status` and `previous_filename`.
+    // Recorded from the GitHub API (GET pulls/248/files?per_page=100&page=1), with owner and logins
+    // replaced by placeholders, keeping `filename`, `status` and `previous_filename`.
     const FILES_248: &str = r#"[{"filename":".github/rulesets/main.json","status":"modified"},{"filename":".github/workflows/review-gate.yml","status":"added"},{"filename":"Justfile","status":"modified"},{"filename":"scripts/devtools/src/github/mod.rs","status":"modified"},{"filename":"scripts/devtools/src/github/verdict.rs","status":"added"},{"filename":"scripts/review_gate.rs","status":"added"}]"#;
 
-    // Recorded from GET repos/tsouza/autobot/pulls/237, same fields as PULL_248.
+    // Recorded from the GitHub API (GET pulls/237), with owner and logins replaced by placeholders,
+    // same fields as PULL_248.
     const PULL_237: &str = r#"{"number":237,"state":"closed","title":"docs(design): record the owner rulings on intake authority, kind closure, model width and gate evidence","labels":[{"name":"design"},{"name":"human-lane"},{"name":"design-change"}],"head":{"ref":"223-design-rulings","sha":"6b6bcf0485ea97ded8315b2ce4dbf2e26676a934"}}"#;
 
-    // Recorded from GET repos/tsouza/autobot/pulls/237/files?per_page=100&page=1, same fields
-    // as FILES_248.
+    // Recorded from the GitHub API (GET pulls/237/files?per_page=100&page=1), with owner and logins
+    // replaced by placeholders, same fields as FILES_248.
     const FILES_237: &str = r#"[{"filename":"docs/design/AUTOBOT-FORMAL-SURFACE.md","status":"modified"},{"filename":"docs/design/AUTOBOT-KERNEL.md","status":"modified"},{"filename":"docs/design/AUTOBOT-M0-AND-GATES.md","status":"modified"}]"#;
 
     const WORKFLOW: &str = include_str!("../../../../.github/workflows/labels.yml");

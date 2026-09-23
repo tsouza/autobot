@@ -14,4 +14,4 @@ A script is invoked as `rust-script --force --debug scripts/<name>.rs` with `RUS
 
 The default feature set is empty. Crates that use the library as a dev-dependency set `default-features = false` and enable none of these features. The workspace lint, test and doc recipes build with `--all-features`, so every feature goes through the gates.
 
-The GitHub client reads its token from the first non-empty of `GITHUB_TOKEN` and `GH_TOKEN`, and otherwise from `<cli> auth token`, where `<cli>` is the `AUTOBOT_GH_CLI` environment variable (default `gh`).
+The GitHub client reads its token from the first non-empty of `GITHUB_TOKEN` and `GH_TOKEN`; set one of them before running a script that calls the GitHub API.
