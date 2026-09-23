@@ -184,10 +184,9 @@ impl Driver for Outage<'_> {
 /// The kind of the objects `op` reads or writes.
 fn target_kind(op: &StoreOp) -> &Kind {
     match op {
-        StoreOp::Get { key }
-        | StoreOp::Create { key, .. }
-        | StoreOp::UpdateStatus { key, .. }
-        | StoreOp::Delete { key, .. } => &key.kind,
+        StoreOp::Get { key } | StoreOp::Create { key, .. } | StoreOp::UpdateStatus { key, .. } => {
+            &key.kind
+        }
         StoreOp::List { kind, .. } | StoreOp::Watch { kind, .. } => kind,
     }
 }
