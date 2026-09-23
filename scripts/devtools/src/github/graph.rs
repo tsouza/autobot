@@ -11,9 +11,9 @@
 //! - unless it is an epic (`type:epic`), its parent is an epic in the same milestone;
 //! - it carries exactly one of `type:epic`, `type:task` and `finding`, and no priority label
 //!   (`priority…`, `prio:…`, `prio/…` or `p0`…`p9`; `urgent` is not one);
-//! - if the paths under its **Allowed paths** touch `.github/workflows/`, `.github/rulesets/`
-//!   or `docs/design/`, it carries `human-lane`;
-//! - an epic has a non-empty `## Acceptance` section and is blocked only by epics;
+//! - if the paths under its **Allowed paths** lie in, or above, `.github/workflows/`,
+//!   `.github/rulesets/` or `docs/design/`, it carries `human-lane`;
+//! - an epic has a non-empty `## Acceptance` section (outside fenced code) and is blocked only by epics;
 //! - it has at most 100 sub-issues and at most 50 blockers;
 //! - no blocker sits in a later milestone;
 //! - the blocked-by graph is acyclic, and every edge except those between two gate epics is
@@ -380,15 +380,33 @@ fn capsule_section(body: &str, name: &str) -> Option<String> {
     )
 }
 
-/// Whether an Allowed paths text names a path under the human-lane areas.
+/// Whether an Allowed paths text names a path under, or an ancestor of, the human-lane areas.
+///
+/// A token is cut at its first glob character (`*`, `?` or `[`). The remaining literal
+/// touches an area when it lies inside the area (`docs/design/x.md`), is the area itself,
+/// or is a directory above it (`.github`, `.github/**`, `docs/`). A literal that stops
+/// part-way through a path segment before a glob (`.github/work*`) touches every area it is
+/// a prefix of. A token that is only a glob (`*`, `**`) never matches, since it cannot be told
+/// apart from a Markdown bullet or bold marker in the capsule text.
 fn touches_human_lane(paths: &str) -> bool {
     paths
         .split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '`'))
         .any(|token| {
+            let (literal, glob) = match token.find(['*', '?', '[']) {
+                Some(i) => (&token[..i], true),
+                None => (token, false),
+            };
+            let dir = literal.trim_end_matches('/');
+            let below = |outer: &str, inner: &str| {
+                !outer.is_empty()
+                    && inner
+                        .strip_prefix(outer)
+                        .is_some_and(|r| r.is_empty() || r.starts_with('/'))
+            };
             HUMAN_LANE_PATHS.iter().any(|p| {
-                token
-                    .strip_prefix(p)
-                    .is_some_and(|r| r.is_empty() || r.starts_with('/'))
+                below(p, literal)
+                    || below(dir, p)
+                    || (glob && !literal.is_empty() && p.starts_with(literal))
             })
         })
 }
@@ -406,16 +424,19 @@ fn is_priority_label(label: &str) -> bool {
 
 /// Whether the first exact `## Acceptance` heading in `body` has a non-empty section.
 ///
-/// The section is read from that heading onwards, so an earlier heading that only starts
-/// with `Acceptance` (such as `## Acceptance evidence`) is neither checked nor counted.
+/// Headings are found with [`markdown::section`], so a heading inside a fenced code block is
+/// never taken for the section. An earlier heading that only starts with `Acceptance` (such as
+/// `## Acceptance evidence`) is skipped, and the search resumes on the line after it.
 fn has_acceptance(body: &str) -> bool {
-    let mut offset = 0;
-    for line in body.split_inclusive('\n') {
-        if markdown::heading_of(line.trim_end()) == Some((2, "Acceptance")) {
-            return markdown::section(&body[offset..], "Acceptance")
-                .is_some_and(|s| !s.trim().is_empty());
+    let mut rest = body;
+    while let Some(section) = markdown::section(rest, "Acceptance") {
+        // `section` borrows from `rest` and starts right after its heading line.
+        let start = section.as_ptr() as usize - rest.as_ptr() as usize;
+        let heading = rest[..start].trim_end().lines().last().unwrap_or_default();
+        if markdown::heading_of(heading.trim_end()) == Some((2, "Acceptance")) {
+            return !section.trim().is_empty();
         }
-        offset += line.len();
+        rest = &rest[start..];
     }
     false
 }
@@ -1083,6 +1104,21 @@ mod tests {
     }
 
     #[test]
+    fn fenced_acceptance_heading_is_ignored() {
+        let mut fx = Fixture::recorded();
+        // The only `## Acceptance` is quoted inside a code block: the epic has none.
+        fx.issue(23)["body"] =
+            json!("Turns the M1 epics into tasks.\n```\n## Acceptance\nfoo\n```\n");
+        // A fenced `## Acceptance` with content hides nothing: the real one is empty.
+        fx.issue(5)["body"] =
+            json!("Owns the rulings.\n~~~~\n## Acceptance\nfoo\n~~~~\n## Acceptance\n\n");
+        assert_eq!(
+            rules(&fx.lint()),
+            vec![(5, Rule::Acceptance), (23, Rule::Acceptance)]
+        );
+    }
+
+    #[test]
     fn redundant_task_edge_is_rejected() {
         let mut fx = Fixture::recorded();
         // #222 → #203 is already implied by #222 → #204 → #203.
@@ -1160,6 +1196,31 @@ mod tests {
             rules(&fx.lint()),
             vec![(63, Rule::HumanLane), (223, Rule::HumanLane)]
         );
+    }
+
+    #[test]
+    fn ancestor_of_a_human_lane_area_needs_human_lane() {
+        let mut fx = Fixture::recorded();
+        fx.issue(204)["body"] = json!("**Allowed paths**\n.github/**, Justfile");
+        fx.issue(222)["body"] = json!("**Allowed paths**\n- docs/");
+        fx.issue(224)["body"] = json!("**Allowed paths**\n.github/work*.yml");
+        assert_eq!(
+            rules(&fx.lint()),
+            vec![
+                (204, Rule::HumanLane),
+                (222, Rule::HumanLane),
+                (224, Rule::HumanLane)
+            ]
+        );
+    }
+
+    #[test]
+    fn paths_beside_the_human_lane_areas_do_not_need_it() {
+        let mut fx = Fixture::recorded();
+        fx.issue(204)["body"] =
+            json!("**Allowed paths**\n* .github/ISSUE_TEMPLATE/**, docs/designs.md, **, scripts/*");
+        fx.issue(222)["body"] = json!("**Allowed paths**\n.github/workflows-notes.md");
+        assert_eq!(rules(&fx.lint()), vec![]);
     }
 
     #[test]
