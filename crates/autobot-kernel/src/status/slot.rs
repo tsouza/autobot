@@ -1,5 +1,6 @@
 //! The pending commit slot of the domain lane.
 
+use super::AuditEnvelope;
 use crate::types::{CommitSequence, ControlRevision, Digest, StateRevision, Uid};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,10 +20,9 @@ pub enum PendingCommitState {
 
 /// The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.
 ///
-/// The slot names its command's receipt, prepared before the commit, by `receipt_uid`, binds
-/// its audit event by `audit_digest`, and holds its effect intents. KERNEL §1 has the slot hold
-/// the exact receipt and audit envelope so that a new process can rebuild both from it;
-/// whether these fields suffice to rebuild a domain event is open in #329.
+/// The slot names its command.s receipt, prepared before the commit, by `receipt_uid`, holds
+/// the full [`AuditEnvelope`] of the commit, so a new process rebuilds the audit event from the
+/// slot alone, and holds its effect intents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PendingCommit {
     /// The UID of the committed command.
@@ -41,8 +41,8 @@ pub struct PendingCommit {
     pub proposed_revision: StateRevision,
     /// The aggregate's `control_revision` when the commit landed.
     pub control_revision_at_commit: ControlRevision,
-    /// The digest of the commit's audit event.
-    pub audit_digest: Digest,
+    /// The envelope of the commit's audit event.
+    pub audit_envelope: AuditEnvelope,
     /// The effect intents of the commit, in effect-index order.
     pub effect_intents: Vec<SlotEffectIntent>,
     /// The slot's state.

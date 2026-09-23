@@ -1,7 +1,9 @@
 use super::*;
 use crate::error::RingError;
 use crate::profile::{ControlRing, Profile};
-use crate::types::{CommitSequence, ControlRevision, Digest, StateRevision};
+use crate::types::{
+    CommitSequence, ControlRevision, Digest, Lane, PassedRevision, RejectionProof, StateRevision,
+};
 use schemars::{JsonSchema, schema_for};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -34,6 +36,24 @@ fn m0_ring() -> ControlRing {
         .control_ring
 }
 
+/// An audit envelope of a commit at `sequence` on `lane`.
+fn audit(lane: Lane, sequence: u64) -> AuditEnvelope {
+    AuditEnvelope {
+        aggregate_uid: "agg-1".parse().expect("uid"),
+        commit_sequence: seq(sequence),
+        lane,
+        state_revision: srev(3),
+        control_revision: crev(2),
+        source_uid: "src".parse().expect("uid"),
+        event_type: "HoldRequested".to_owned(),
+        state_digest: digest(7),
+        actor: "operator".parse().expect("principal"),
+        causation_id: "cause".to_owned(),
+        correlation_id: "corr".to_owned(),
+        schema_version: 1,
+    }
+}
+
 fn slot() -> PendingCommit {
     PendingCommit {
         command_uid: "cmd-1".parse().expect("uid"),
@@ -44,7 +64,7 @@ fn slot() -> PendingCommit {
         expected_revision: srev(2),
         proposed_revision: srev(3),
         control_revision_at_commit: crev(2),
-        audit_digest: digest(3),
+        audit_envelope: audit(Lane::Domain, 5),
         effect_intents: vec![SlotEffectIntent {
             effect_index: 0,
             installation_lineage: "install-a".to_owned(),
@@ -66,14 +86,7 @@ fn receipt(sequence: u64, revision: u64) -> ControlReceipt {
         commit_sequence: seq(sequence),
         before_control_digest: digest(5),
         after_control_digest: digest(6),
-        audit_envelope: AuditEnvelope {
-            state_revision: srev(3),
-            source_uid: "src".parse().expect("uid"),
-            event_type: "HoldRequested".to_owned(),
-            causation_id: "cause".to_owned(),
-            correlation_id: "corr".to_owned(),
-            schema_version: 1,
-        },
+        audit_envelope: audit(Lane::Control, sequence),
         principal: "operator".parse().expect("principal"),
         state: ControlReceiptState::Unpublished,
     }
@@ -123,13 +136,26 @@ fn properties<T: JsonSchema>() -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// The fields of FORMAL §2 record `name`, in order.
+/// The fields of FORMAL §2 record `name`, in order; a record written `Base ⊕ [...]` has the
+/// fields of `Base` first.
 fn formal_fields(name: &str) -> Vec<String> {
-    let start = FORMAL
+    let (start, base) = FORMAL
         .lines()
-        .position(|l| {
-            l.strip_prefix(name)
-                .is_some_and(|rest| rest.trim_start().starts_with("= ["))
+        .enumerate()
+        .find_map(|(i, l)| {
+            let rest = l
+                .strip_prefix(name)?
+                .trim_start()
+                .strip_prefix('=')?
+                .trim_start();
+            if rest.starts_with('[') {
+                Some((i, None))
+            } else {
+                let (base, tail) = rest.split_once('⊕')?;
+                tail.trim_start()
+                    .starts_with('[')
+                    .then(|| (i, Some(base.trim().to_owned())))
+            }
         })
         .unwrap_or_else(|| panic!("FORMAL §2 has no record {name}"));
     let mut body = String::new();
@@ -157,9 +183,13 @@ fn formal_fields(name: &str) -> Vec<String> {
         }
     }
     fields.push(current);
-    fields
+    let own = fields
         .iter()
-        .map(|f| f.split('∈').next().unwrap_or_default().trim().to_owned())
+        .map(|f| f.split('∈').next().unwrap_or_default().trim().to_owned());
+    base.map(|b| formal_fields(&b))
+        .unwrap_or_default()
+        .into_iter()
+        .chain(own)
         .collect()
 }
 
@@ -256,23 +286,63 @@ fn a_slot_effect_intent_covers_the_formal_effect_intent_record() {
 }
 
 #[test]
-fn a_control_receipt_and_its_envelope_cover_the_formal_event_record() {
-    let mut fields = properties::<ControlReceipt>();
-    fields.extend(properties::<AuditEnvelope>());
+fn the_audit_envelope_has_exactly_the_formal_fields() {
+    let formal: BTreeSet<String> = formal_fields("AuditEnvelope").into_iter().collect();
+    assert_eq!(formal.len(), 12);
+    assert_eq!(properties::<AuditEnvelope>(), formal);
+}
+
+#[test]
+fn the_audit_envelope_and_its_digest_are_the_formal_event_record() {
+    let mut fields = properties::<AuditEnvelope>();
+    fields.insert("event_digest".to_owned());
     let formal: BTreeSet<String> = formal_fields("AutoBotEvent").into_iter().collect();
-    let elsewhere = [
-        "aggregate_uid",
-        "lane",
-        "actor",
-        "state_digest",
-        "event_digest",
+    assert_eq!(fields, formal);
+}
+
+#[test]
+fn a_slot_effect_intent_is_the_formal_record_without_its_derived_key() {
+    let formal: BTreeSet<String> = formal_fields("EffectIntentRecord").into_iter().collect();
+    let mut props = properties::<SlotEffectIntent>();
+    assert!(props.remove("installation_lineage"));
+    props.insert("operation_key".to_owned());
+    assert_eq!(props, formal);
+}
+
+#[test]
+fn the_rejection_proof_grounds_cover_the_formal_record() {
+    let passed = PassedRevision::new(
+        crate::types::LaneRevision::State(srev(1)),
+        crate::types::LaneRevision::State(srev(2)),
+        seq(4),
+    )
+    .expect("valid proof");
+    let proofs = [
+        RejectionProof::PassedRevision(passed),
+        RejectionProof::ReplayConflict {
+            existing_receipt_uid: "rcpt-1".parse().expect("uid"),
+            bound_digest: digest(8),
+        },
+        RejectionProof::CreateConflict {
+            observed_uid: "obj-1".parse().expect("uid"),
+            observed_commit_sequence: seq(4),
+        },
+        RejectionProof::GuardRefusal {
+            guard_id: "phase-active".to_owned(),
+            read_revision: crate::types::LaneRevision::Control(crev(1)),
+        },
     ];
-    for field in &formal {
-        assert!(
-            fields.contains(field) || elsewhere.contains(&field.as_str()),
-            "AutoBotEvent.{field} has no home"
-        );
+    let mut fields = BTreeSet::new();
+    for proof in &proofs {
+        let json = serde_json::to_value(proof).expect("serializes");
+        fields.extend(json.as_object().expect("an object").keys().cloned());
     }
+    // FORMAL §2 holds the expected revision on the receipt; the passed-revision proof keeps it
+    // to check itself.
+    assert!(fields.remove("expected_revision"));
+    let formal: BTreeSet<String> = formal_fields("RejectionProof").into_iter().collect();
+    assert_eq!(fields, formal);
+    assert!(formal_fields("CommandReceipt").contains(&"rejection_proof".to_owned()));
 }
 
 #[test]

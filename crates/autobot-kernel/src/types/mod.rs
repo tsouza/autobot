@@ -29,19 +29,17 @@
 //! - [`Digest`] owns the `sha256:` text form, its parser and its JSON schema, which
 //!   [`ProfileDigest`](crate::profile::ProfileDigest) wraps. It carries digests and computes
 //!   none.
-//! - A [`RejectionProof`] records the two facts KERNEL §2 requires of a rejection: the target's
-//!   revision in the command's lane was read past the expected one, and the same read, at the
-//!   recorded commit sequence, found neither a pending slot nor a receipt matching the
-//!   command. It is serializable so that a receipt can record it.
+//! - A [`RejectionProof`] has one shape per rejection ground of KERNEL §2, tagged by `ground`.
+//!   Its passed-revision shape, [`PassedRevision`], also keeps the expected revision, which
+//!   FORMAL §2 holds on the receipt, so that the proof checks on its own that the observed
+//!   revision is past it on the same lane. A guard identifier is text. It is serializable so
+//!   that a receipt can record it.
 //! - [`CommitObservation`] has no `PREPARED` variant and does not derive serde: it is the
 //!   outcome of reading, not a stored record.
 //!
 //! Open design clarifications this module depends on: the `CANCELLED` and `REPLAY_EXPIRED`
 //! observations follow the KERNEL §10 `CommandReceipt` machine as printed, which the lifecycle
-//! clarification #71 may refine; and KERNEL §2 states a proof only for a rejection about a
-//! revision, so a rejection with other grounds, such as a replay key bound to another payload
-//! or principal, or a create command, which pins no expected revision, has no
-//! [`RejectionProof`] shape until the design gives it one (#328).
+//! clarification #71 may refine.
 
 mod digest;
 mod identity;
@@ -50,7 +48,7 @@ mod revision;
 
 pub use digest::Digest;
 pub use identity::{Namespace, ObjectName, ObjectRef, Principal, Uid};
-pub use observation::{CommitObservation, RejectionProof};
+pub use observation::{CommitObservation, PassedRevision, RejectionProof};
 pub use revision::{CommitSequence, ControlRevision, Lane, LaneRevision, StateRevision};
 
 #[cfg(test)]
