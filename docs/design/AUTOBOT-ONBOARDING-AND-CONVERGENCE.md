@@ -35,7 +35,7 @@ A milestone is accepted when all of the following hold at one plan revision, and
 - every member `TaskRun`'s expected records are `RECORDED` or `GAP` (I-9);
 - the acceptance adjudication lists required, optional, missing, rejected and expired evidence, and any no-test exception carries its named no-test approver, rationale, compensating evidence, residual risk and expiry — visible as an exception, never as a passing test.
 
-A task is accepted the same way, by the Task controller: its required evidence `RECORDED` and unexpired for the exact candidate, that candidate scope-clean at its last checkpoint, and every required `VerificationRun` `PASSED` or covered by a recorded exception. A milestone accepted this way is *operationally* accepted; its cost may still be pending or censored (KERNEL §8), and defects remain open through the maturity window the profile sets. Operational acceptance and economic settlement are separate states; neither is inferred from the other.
+A task is accepted the same way, by the Task controller: its required evidence `RECORDED` and unexpired for the exact candidate, that candidate scope-clean at its last checkpoint, and every required `VerificationRun` `PASSED` or covered by a recorded exception. A milestone accepted this way is *operationally* accepted; its cost may still be pending or censored (KERNEL §8), and defects remain open through the maturity window the profile sets, because absence of a report is not proof of quality. Operational acceptance and economic settlement are separate states; neither is inferred from the other.
 
 ## 4. Stop conditions
 
@@ -61,7 +61,7 @@ Every task carries one **consequence class**, assigned at proposal by determinis
 | `COMPATIBILITY_RISK` | Public interfaces, schemas, wire formats, dependencies, build and CI configuration — anything a consumer could observe. | The tier `WorkContext.spec` names as the `COMPATIBILITY_RISK` floor, or higher. | Independent reviewer at the fixed review tier; compatibility checks required in evidence. |
 | `SECURITY_OR_DATA_INTEGRITY` | Authentication, authorization, secrets, cryptography, migrations, destructive data operations, deployment. | The highest tier of the `WorkContext.spec` tier order. | Separately configured reviewer; security checks required; no no-test exception without human approval. |
 
-The floor is a constraint the router (an extension) minimizes above. Repository and path policy may raise a task's class or floor; a typed-question judgment may raise them and can never lower them (I-8). A `TaskRun` pins its class, its floor and its routing pin at admission, and none changes for the life of the attempt. Review, repair and escalation costs are attributed to the strategy that caused them.
+The floor is a constraint the router (an extension) minimizes above. Repository and path policy may raise a task's class or floor; a typed-question judgment may raise them and can never lower them (I-8). A `TaskRun` pins its class, its floor and its routing pin at admission, and none changes for the life of the attempt. Review, repair and escalation costs are attributed to the strategy that caused them, so a floor is never "saved" by choosing a cheaper worker and paying for it in review.
 
 ## 6. Degraded modes and what each forbids
 

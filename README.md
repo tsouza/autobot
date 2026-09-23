@@ -32,6 +32,14 @@ The design lives in [`docs/design/`](docs/design/). Read it in this order:
 8. [M0 and gates](docs/design/AUTOBOT-M0-AND-GATES.md)
 9. [Extensions](docs/design/extensions/)
 
+## Building
+
+The toolchain is pinned in `rust-toolchain.toml`; `rustup` installs it on first use.
+
+```sh
+cargo build --locked
+```
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.

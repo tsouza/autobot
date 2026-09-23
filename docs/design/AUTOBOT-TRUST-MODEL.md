@@ -71,4 +71,4 @@ When a trusted party is unavailable, the affected capability stops; nothing wide
 - Provider misreporting: a forge or CI that returns a false definitive answer. AutoBot trusts an authenticated provider's *definitive* answer; it never trusts a timeout or a negative search as one.
 - Correctness of target code, quality of a model, or solvability of an arbitrary requirement. AutoBot enforces evidence discipline, not truth; tests do not define correctness.
 
-Each of these is recovered from by procedure or declared as a limit.
+Each of these is recovered from by procedure or declared as a limit; none is silently assumed away.

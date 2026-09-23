@@ -25,7 +25,7 @@ Cost pulls toward weak models; safety pulls toward strong ones. The principle: *
 
 - A task's **consequence class** — `REVERSIBLE` → `COMPATIBILITY_RISK` → `SECURITY_OR_DATA_INTEGRITY` — sets a **floor on the worker tier**. Repository and path policy can raise the floor; a typed-question judgment can only raise it, never lower it.
 - **Reviewers are never routed below the fixed review tier** and are never the worker's model or session. Review is always present, so minimizing worker cost is minimizing total cost.
-- The router minimizes expected total cost **above the floor**, and every review, repair and escalation cost is attributed to the strategy that caused it.
+- The router minimizes expected total cost **above the floor**, and every review, repair and escalation cost is attributed to the strategy that caused it. A strategy that is cheap up front and expensive to repair is an expensive strategy.
 
 ## Invariants the core exists to make true
 

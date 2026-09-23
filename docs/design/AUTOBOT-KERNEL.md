@@ -3,7 +3,7 @@
 Authority for: the authority protocol — how state commits, how effects are admitted and sent, how the Manager is serialized, how plans activate and are superseded, how attempts are identified and fenced, how work is kept and restored, how outcomes and costs are recorded, how sessions continue — and, in §10, every lifecycle state machine in AutoBot.
 Depends on: `AUTOBOT-THESIS.md` (I-1 … I-9), `AUTOBOT-TRUST-MODEL.md`.
 
-The kernel is a set of rules over Kubernetes custom resources. There is no cross-resource transaction, no lease token that authorizes anything, no controller-local mutex, and no journal that can reconstruct an aggregate. Each section heading names the invariants it serves.
+The kernel is a set of rules over Kubernetes custom resources. There is no cross-resource transaction, no lease token that authorizes anything, no controller-local mutex, and no journal that can reconstruct an aggregate. Each rule names the invariant it serves.
 
 ## 1. Aggregates and commit lanes — I-1
 

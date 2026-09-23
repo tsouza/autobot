@@ -40,7 +40,7 @@ Kubernetes gives atomicity on one resource and nothing wider. Every rule is buil
 - **Releasing the entry on a currency failure.** If an operation went back to `REQUESTED` and its entry stayed, the entry would never be removed. Each fence between acceptance and send would leak one entry until the full ledger refused every acceptance in the context.
 - **2a before 2b.** Recording the entry's `SEND_ATTEMPTED` before the operation's `send_attempt` lets recovery tell every crash position apart:
   - before 2a: never sent;
-  - between 2a and 2b: treated as sent, no resend;
+  - between 2a and 2b: the entry says `SEND_ATTEMPTED` and no `send_attempt` exists, so the send is unknown and handled as row 2 of the §3.3 recovery table;
   - after 2b: sent or unknown.
   The reverse order would allow a present `send_attempt` next to an `ACCEPTED_NOT_SENT` entry, which recovery could not read.
 - **Order of the release writes.** The entry is removed, then the permit is invalidated. These are two resources and there is no transaction between them, so the order is fixed and the intermediate state has a defined recovery reading.
