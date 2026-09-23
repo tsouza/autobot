@@ -39,6 +39,18 @@ pub enum StoreOp {
         /// The new status.
         status: Box<Status>,
     },
+    /// Delete an object, on the condition that its UID is `uid` and its resource version is
+    /// still `resource_version`. Answered by [`StoreResult::Object`], the object as it was when
+    /// deleted, [`StoreResult::Conflict`], [`StoreResult::NotFound`] or
+    /// [`StoreResult::Uncertain`].
+    Delete {
+        /// The object to delete.
+        key: ObjectKey,
+        /// The UID the object must have.
+        uid: Uid,
+        /// The resource version the object must still have.
+        resource_version: ResourceVersion,
+    },
     /// List every object of one kind in one namespace: a relist. Answered by
     /// [`StoreResult::Listed`] or [`StoreResult::Unavailable`].
     List {
@@ -68,6 +80,7 @@ impl StoreOp {
             Self::Get { .. } => OpKind::Get,
             Self::Create { .. } => OpKind::Create,
             Self::UpdateStatus { .. } => OpKind::UpdateStatus,
+            Self::Delete { .. } => OpKind::Delete,
             Self::List { .. } => OpKind::List,
             Self::Watch { .. } => OpKind::Watch,
         }
@@ -83,6 +96,8 @@ pub enum OpKind {
     Create,
     /// [`StoreOp::UpdateStatus`].
     UpdateStatus,
+    /// [`StoreOp::Delete`].
+    Delete,
     /// [`StoreOp::List`].
     List,
     /// [`StoreOp::Watch`].
@@ -93,7 +108,7 @@ impl OpKind {
     /// Whether the operation writes.
     #[must_use]
     pub fn is_write(self) -> bool {
-        matches!(self, Self::Create | Self::UpdateStatus)
+        matches!(self, Self::Create | Self::UpdateStatus | Self::Delete)
     }
 }
 
@@ -111,13 +126,13 @@ pub struct WatchEvent {
 /// The result of one [`StoreOp`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreResult {
-    /// The object read, created or written.
+    /// The object read, created, written or deleted.
     Object(Box<Object>),
     /// No object has the key.
     NotFound,
     /// A create found the name taken.
     AlreadyExists,
-    /// A status update found another UID or resource version, and did not apply.
+    /// A status update or delete found another UID or resource version, and did not apply.
     Conflict,
     /// A write timed out or its acknowledgement was lost: it may or may not have applied.
     Uncertain,

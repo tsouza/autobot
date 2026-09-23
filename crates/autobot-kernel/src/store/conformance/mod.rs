@@ -23,12 +23,24 @@
 //!   `lane_mismatch`, `overflow` or `uninitialized`.
 //! - `clear`: clear the pending slot of `command`, expecting `cleared`, `not_held` or
 //!   `uninitialized`.
+//! - `delete`: delete `object` behind the tombstone `tombstone` (default `tombstone-<object>`)
+//!   with `spec`, reading the create receipt `receipt` (default `create-<object>`), expecting
+//!   `deleted`, `refused`, `tombstone_taken`, `tombstone_vanished`, `tombstone_is_target`,
+//!   `not_found` or `replaced`.
+//!   The create receipt is terminal when it is the object named by the target's create
+//!   receipt UID and its domain fields name a terminal `CommandReceipt` state of KERNEL §10:
+//!   `COMMITTED`, `REJECTED`, `CANCELLED` or `REPLAY_EXPIRED`.
 //! - `read`: read `object` and keep what was read under `label`.
 //! - `write`: write back the status read under `from`, conditioned on the resource version
-//!   read then and on the UID read, or on `uid` when given, expecting `updated` or `conflict`.
+//!   read then and on the UID read, or on `uid` when given, expecting `updated`, `conflict` or
+//!   `not_found`.
+//! - `remove`: delete the object read under `from`, conditioned on the resource version read
+//!   then and on the UID read, or on `uid` when given, expecting `removed`, `conflict` or
+//!   `not_found`.
 //! - `check`: read `object` and compare each field given: `state_revision`,
 //!   `control_revision`, `commit_sequence`, `domain`, `control`, `slot` (`none`, `occupied`
-//!   or `cleared`), `slot_command` and `ring_entries`.
+//!   or `cleared`), `slot_command`, `ring_entries` and `create_receipt`, the create receipt UID
+//!   of the object's origin; with `absent`, expect no object under the name instead.
 //! - `inject`: arm `fault` in the driver for the next step that is not an `inject`. That step
 //!   fails unless the driver reports, through [`ScriptRun::fired`], that the fault fired while
 //!   it ran, and a fault reported without being armed fails the step it fires in.
@@ -61,7 +73,7 @@ pub const KIND: &str = "ConformanceProbe";
 pub const NAMESPACE: &str = "conformance";
 
 /// The embedded suite, one TOML document per script.
-const SUITE: [&str; 13] = [
+const SUITE: [&str; 16] = [
     include_str!("stale_resource_version.toml"),
     include_str!("uid_precondition.toml"),
     include_str!("uncertain_write.toml"),
@@ -71,6 +83,9 @@ const SUITE: [&str; 13] = [
     include_str!("control_lane.toml"),
     include_str!("crash_between_writes.toml"),
     include_str!("lost_create_ack.toml"),
+    include_str!("delete_after_terminal_create_receipt.toml"),
+    include_str!("delete_preconditions.toml"),
+    include_str!("uncertain_delete.toml"),
     include_str!("watch_drop.toml"),
     include_str!("watch_duplicate.toml"),
     include_str!("watch_reorder.toml"),
@@ -136,10 +151,14 @@ pub enum ScriptStep {
     Commit(CommitStep),
     /// Clear a command's pending slot.
     Clear(ClearStep),
+    /// Delete an object behind its tombstone.
+    Delete(DeleteStep),
     /// Read an object and keep it under a label.
     Read(ReadStep),
     /// Write back a labelled read, conditioned on its resource version.
     Write(WriteStep),
+    /// Delete a labelled read, conditioned on its resource version.
+    Remove(RemoveStep),
     /// Read an object and compare fields.
     Check(CheckStep),
     /// Arm a fault in the driver.
@@ -219,6 +238,23 @@ pub struct ClearStep {
     pub expect: String,
 }
 
+/// A `delete` step.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteStep {
+    /// The object's name.
+    pub object: String,
+    /// The create receipt's name; `create-<object>` when absent.
+    pub receipt: Option<String>,
+    /// The tombstone's name; `tombstone-<object>` when absent.
+    pub tombstone: Option<String>,
+    /// The tombstone's encoded spec.
+    #[serde(default)]
+    pub spec: String,
+    /// The expected outcome.
+    pub expect: String,
+}
+
 /// A `read` step.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -236,6 +272,18 @@ pub struct WriteStep {
     /// The label of the read to write back.
     pub from: String,
     /// The UID to condition the write on instead of the one read.
+    pub uid: Option<String>,
+    /// The expected result.
+    pub expect: String,
+}
+
+/// A `remove` step.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveStep {
+    /// The label of the read to delete.
+    pub from: String,
+    /// The UID to condition the delete on instead of the one read.
     pub uid: Option<String>,
     /// The expected result.
     pub expect: String,
@@ -263,6 +311,11 @@ pub struct CheckStep {
     pub slot_command: Option<String>,
     /// The expected number of ring entries.
     pub ring_entries: Option<usize>,
+    /// The expected create receipt UID of the object's origin.
+    pub create_receipt: Option<String>,
+    /// Whether no object is expected under the name.
+    #[serde(default)]
+    pub absent: bool,
 }
 
 /// An `inject` step.

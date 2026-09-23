@@ -1,0 +1,76 @@
+name = "uncertain-delete"
+summary = "A delete whose tombstone write and target delete both report UNCERTAIN, the delete landing only after the next read, is resolved by reading and ends deleted; a crash after the tombstone write is completed by a fresh protocol for the same request."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "create"
+object = "create-a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "create-a"
+domain = "COMMITTED"
+expect = "initialized"
+
+[[steps]]
+do = "inject"
+fault = { kind = "write_timeout", applied = true }
+
+[[steps]]
+do = "inject"
+fault = { kind = "late_write" }
+
+[[steps]]
+do = "delete"
+object = "a"
+expect = "deleted"
+
+[[steps]]
+do = "check"
+object = "a"
+absent = true
+
+[[steps]]
+do = "check"
+object = "tombstone-a"
+create_receipt = "create-a"
+
+[[steps]]
+do = "create"
+object = "b"
+expect = "created"
+
+[[steps]]
+do = "create"
+object = "create-b"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "create-b"
+domain = "REJECTED"
+expect = "initialized"
+
+[[steps]]
+do = "inject"
+fault = { kind = "crash", after_writes = 1 }
+
+[[steps]]
+do = "delete"
+object = "b"
+expect = "deleted"
+
+[[steps]]
+do = "check"
+object = "b"
+absent = true
+
+[[steps]]
+do = "check"
+object = "tombstone-b"
+create_receipt = "create-b"

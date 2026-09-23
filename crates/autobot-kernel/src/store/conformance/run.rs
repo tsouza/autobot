@@ -5,9 +5,9 @@ use crate::profile::ControlRing;
 use crate::status::{PendingCommitState, StatusEnvelope};
 use crate::store::{
     Change, ClearOutcome, ClearSlot, Commit, CommitOutcome, CommitRequest, ControlChange, Create,
-    CreateOutcome, DomainChange, EventFields, GuardRefusal, Initialize, InitializeOutcome, Kind,
-    Missing, Object, ObjectKey, Origin, Pin, Protocol, ProtocolError, Status, Step, StoreOp,
-    StoreResult, Transition, Triggers,
+    CreateOutcome, Delete, DeleteOutcome, DeleteRequest, DomainChange, EventFields, GuardRefusal,
+    Initialize, InitializeOutcome, Kind, Missing, Object, ObjectKey, Origin, Pin, Protocol,
+    ProtocolError, Status, Step, StoreOp, StoreResult, Transition, Triggers,
 };
 use crate::types::{
     ControlRevision, Lane, LaneRevision, Namespace, ObjectName, ObjectRef, Principal,
@@ -88,6 +88,10 @@ enum Machine {
         protocol: ClearSlot,
         expect: String,
     },
+    Delete {
+        protocol: Delete<fn(&Object, &Object) -> bool>,
+        expect: String,
+    },
     Single {
         op: StoreOp,
         result: Option<StoreResult>,
@@ -102,7 +106,11 @@ enum Machine {
 /// What a single-operation step does with its result.
 enum Then {
     Label(String),
-    Expect(String),
+    /// Compare the result with `expect`, naming an applied write `applied`.
+    Expect {
+        expect: String,
+        applied: &'static str,
+    },
     Check(CheckStep),
 }
 
@@ -303,6 +311,13 @@ impl<'s> ScriptRun<'s> {
                 let outcome = done(&mut protocol)?;
                 compare(&expect, clear_name(&outcome), &outcome)
             }
+            Machine::Delete {
+                mut protocol,
+                expect,
+            } => {
+                let outcome = done(&mut protocol)?;
+                compare(&expect, delete_name(&outcome), &outcome)
+            }
             Machine::Single { result, then, .. } => {
                 let result = result.ok_or("no result")?;
                 match then {
@@ -313,16 +328,20 @@ impl<'s> ScriptRun<'s> {
                         }
                         other => Err(format!("read returned {}", other.name())),
                     },
-                    Then::Expect(expect) => {
+                    Then::Expect { expect, applied } => {
                         let name = match &result {
-                            StoreResult::Object(_) => "updated",
+                            StoreResult::Object(_) => applied,
+                            StoreResult::NotFound => "not_found",
                             StoreResult::Conflict => "conflict",
                             other => other.name(),
                         };
                         compare(&expect, name, &result)
                     }
                     Then::Check(check) => match result {
-                        StoreResult::Object(object) => check_object(&check, &object),
+                        StoreResult::NotFound if check.absent => Ok(()),
+                        StoreResult::Object(object) if !check.absent => {
+                            check_object(&check, &object)
+                        }
                         other => Err(format!("check read returned {}", other.name())),
                     },
                 }
@@ -391,6 +410,26 @@ impl<'s> ScriptRun<'s> {
                 protocol: ClearSlot::new(key(&s.object)?, self.uid(&s.object)?, parse(&s.command)?),
                 expect: s.expect.clone(),
             },
+            ScriptStep::Delete(s) => {
+                let named = |given: &Option<String>, prefix: &str| {
+                    given
+                        .clone()
+                        .unwrap_or_else(|| format!("{prefix}-{}", s.object))
+                };
+                let request = DeleteRequest {
+                    target: key(&s.object)?,
+                    uid: self.uid(&s.object)?,
+                    create_receipt: key(&named(&s.receipt, "create"))?,
+                    create_receipt_uid: parse(&named(&s.receipt, "create"))?,
+                    tombstone: key(&named(&s.tombstone, "tombstone"))?,
+                    tombstone_spec: s.spec.clone(),
+                    check: terminal_create_receipt as fn(&Object, &Object) -> bool,
+                };
+                Machine::Delete {
+                    protocol: Delete::new(request),
+                    expect: s.expect.clone(),
+                }
+            }
             ScriptStep::Read(s) => Machine::Single {
                 op: StoreOp::Get {
                     key: key(&s.object)?,
@@ -418,7 +457,31 @@ impl<'s> ScriptRun<'s> {
                         status: Box::new(status),
                     },
                     result: None,
-                    then: Then::Expect(s.expect.clone()),
+                    then: Then::Expect {
+                        expect: s.expect.clone(),
+                        applied: "updated",
+                    },
+                }
+            }
+            ScriptStep::Remove(s) => {
+                let read = self
+                    .labels
+                    .get(&s.from)
+                    .ok_or_else(|| format!("no read labelled {}", s.from))?;
+                Machine::Single {
+                    op: StoreOp::Delete {
+                        key: read.key.clone(),
+                        uid: match &s.uid {
+                            Some(uid) => parse(uid)?,
+                            None => read.uid.clone(),
+                        },
+                        resource_version: read.resource_version.clone(),
+                    },
+                    result: None,
+                    then: Then::Expect {
+                        expect: s.expect.clone(),
+                        applied: "removed",
+                    },
                 }
             }
             ScriptStep::Check(s) => Machine::Single {
@@ -500,6 +563,7 @@ impl Machine {
             Self::Initialize { protocol, .. } => op(protocol),
             Self::Commit { protocol, .. } => op(protocol),
             Self::Clear { protocol, .. } => op(protocol),
+            Self::Delete { protocol, .. } => op(protocol),
             Self::Single { op, result, .. } => result.is_none().then(|| op.clone()),
             Self::Watch { done, .. } => {
                 if *done {
@@ -522,6 +586,7 @@ impl Machine {
             Self::Initialize { protocol, .. } => protocol.resume(result),
             Self::Commit { protocol, .. } => protocol.resume(result),
             Self::Clear { protocol, .. } => protocol.resume(result),
+            Self::Delete { protocol, .. } => protocol.resume(result),
             Self::Single { result: slot, .. } => {
                 *slot = Some(result);
                 Ok(())
@@ -613,6 +678,31 @@ fn clear_name(outcome: &ClearOutcome) -> &'static str {
     }
 }
 
+/// The script name of a delete outcome.
+fn delete_name(outcome: &DeleteOutcome) -> &'static str {
+    match outcome {
+        DeleteOutcome::Deleted(_) => "deleted",
+        DeleteOutcome::Refused { .. } => "refused",
+        DeleteOutcome::TombstoneTaken(_) => "tombstone_taken",
+        DeleteOutcome::TombstoneVanished => "tombstone_vanished",
+        DeleteOutcome::TombstoneIsTarget => "tombstone_is_target",
+        DeleteOutcome::Missing(missing) => missing_name(missing),
+    }
+}
+
+/// The terminal states of a `CommandReceipt` (KERNEL §10).
+const TERMINAL_RECEIPT_STATES: [&str; 4] = ["COMMITTED", "REJECTED", "CANCELLED", "REPLAY_EXPIRED"];
+
+/// Whether the script object `receipt` is the terminal create receipt of `target`: it is named
+/// by the target's create receipt UID and its domain fields name a terminal state.
+fn terminal_create_receipt(target: &Object, receipt: &Object) -> bool {
+    receipt.key.name.as_str() == target.origin.create_receipt_uid.as_str()
+        && receipt
+            .status
+            .as_ref()
+            .is_some_and(|s| TERMINAL_RECEIPT_STATES.contains(&s.domain.as_str()))
+}
+
 /// The script name of a missing target.
 fn missing_name(missing: &Missing) -> &'static str {
     match missing {
@@ -683,6 +773,11 @@ fn check_object(check: &CheckStep, object: &Object) -> Result<(), String> {
         envelope
             .and_then(|e| e.control_receipt_ring.as_ref())
             .map(|r| r.entries().len().to_string()),
+    );
+    expect(
+        "create_receipt",
+        check.create_receipt.clone(),
+        Some(object.origin.create_receipt_uid.to_string()),
     );
     if differences.is_empty() {
         Ok(())

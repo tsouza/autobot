@@ -679,3 +679,294 @@ fn created(op: StoreOp) -> StoreResult {
         status: None,
     }))
 }
+
+/// A receipt check that accepts a receipt whose domain fields are `TERMINAL`.
+fn terminal(_: &Object, receipt: &Object) -> bool {
+    receipt
+        .status
+        .as_ref()
+        .is_some_and(|s| s.domain == "TERMINAL")
+}
+
+/// The delete of `a`, reading the receipt `create-a` and writing the tombstone `tombstone-a`.
+fn delete_a() -> Delete<fn(&Object, &Object) -> bool> {
+    Delete::new(DeleteRequest {
+        target: key("a"),
+        uid: uid("uid-a"),
+        create_receipt: key("create-a"),
+        create_receipt_uid: uid("create-a"),
+        tombstone: key("tombstone-a"),
+        tombstone_spec: "delete a".to_owned(),
+        check: terminal as fn(&Object, &Object) -> bool,
+    })
+}
+
+/// The create receipt of `a` with `domain` as its domain fields.
+fn receipt(domain: &str) -> Box<Object> {
+    let mut receipt = object(1, Some(status(false)));
+    receipt.key = key("create-a");
+    receipt.uid = uid("uid-create-a");
+    if let Some(s) = &mut receipt.status {
+        s.domain = domain.to_owned();
+    }
+    Box::new(receipt)
+}
+
+/// The tombstone of `a` that `op`, a create, writes, as the store would return it.
+fn tombstone_from(op: StoreOp) -> Box<Object> {
+    let StoreOp::Create {
+        key: k,
+        spec,
+        origin,
+    } = op
+    else {
+        panic!("expected the tombstone create, got {op:?}");
+    };
+    Box::new(Object {
+        key: k,
+        uid: uid("uid-tombstone-a"),
+        resource_version: ResourceVersion::from(9),
+        origin,
+        spec,
+        status: None,
+    })
+}
+
+/// Steps `p` through reading `a` at resource version `rv` and its terminal receipt, to the
+/// tombstone create, which it answers; returns the tombstone.
+fn delete_to_tombstone(p: &mut Delete<fn(&Object, &Object) -> bool>, rv: u64) -> Box<Object> {
+    assert!(is_get(&expect_op(p)));
+    p.resume(StoreResult::Object(boxed(rv, None)))
+        .expect("target");
+    assert_eq!(
+        expect_op(p),
+        StoreOp::Get {
+            key: key("create-a")
+        }
+    );
+    p.resume(StoreResult::Object(receipt("TERMINAL")))
+        .expect("receipt");
+    let tombstone = tombstone_from(expect_op(p));
+    p.resume(StoreResult::Object(tombstone.clone()))
+        .expect("tombstone");
+    tombstone
+}
+
+/// The delete `op` of `a`, expected at resource version `rv`.
+fn assert_delete_at(op: &StoreOp, rv: u64) {
+    assert_eq!(
+        *op,
+        StoreOp::Delete {
+            key: key("a"),
+            uid: uid("uid-a"),
+            resource_version: ResourceVersion::from(rv),
+        }
+    );
+}
+
+#[test]
+fn a_delete_writes_nothing_while_the_create_receipt_is_absent_or_not_terminal() {
+    let mut p = delete_a();
+    expect_op(&mut p);
+    p.resume(StoreResult::Object(boxed(1, None)))
+        .expect("target");
+    expect_op(&mut p);
+    p.resume(StoreResult::NotFound).expect("no receipt");
+    assert_eq!(
+        expect_done(&mut p),
+        DeleteOutcome::Refused {
+            create_receipt: None
+        }
+    );
+
+    let mut p = delete_a();
+    expect_op(&mut p);
+    p.resume(StoreResult::Object(boxed(1, None)))
+        .expect("target");
+    expect_op(&mut p);
+    p.resume(StoreResult::Object(receipt("PREPARED")))
+        .expect("receipt");
+    assert_eq!(
+        expect_done(&mut p),
+        DeleteOutcome::Refused {
+            create_receipt: Some(receipt("PREPARED"))
+        }
+    );
+}
+
+#[test]
+fn a_delete_writes_the_tombstone_with_the_target_s_origin_before_deleting_the_target() {
+    let mut p = delete_a();
+    assert!(is_get(&expect_op(&mut p)));
+    p.resume(StoreResult::Object(boxed(3, None)))
+        .expect("target");
+    expect_op(&mut p);
+    p.resume(StoreResult::Object(receipt("TERMINAL")))
+        .expect("receipt");
+    let create = expect_op(&mut p);
+    assert_eq!(
+        create,
+        StoreOp::Create {
+            key: key("tombstone-a"),
+            spec: "delete a".to_owned(),
+            origin: origin(),
+        }
+    );
+    let tombstone = tombstone_from(create);
+    p.resume(StoreResult::Object(tombstone.clone()))
+        .expect("tombstone");
+    assert_delete_at(&expect_op(&mut p), 3);
+    p.resume(StoreResult::Object(boxed(3, None)))
+        .expect("deleted");
+    assert_eq!(expect_done(&mut p), DeleteOutcome::Deleted(tombstone));
+}
+
+#[test]
+fn a_conflicting_or_uncertain_delete_reads_again_and_deletes_the_same_incarnation() {
+    let mut p = delete_a();
+    let tombstone = delete_to_tombstone(&mut p, 3);
+    assert_delete_at(&expect_op(&mut p), 3);
+    p.resume(StoreResult::Conflict).expect("conflict");
+    assert!(is_get(&expect_op(&mut p)));
+    p.resume(StoreResult::Object(boxed(4, None)))
+        .expect("reread");
+    assert_delete_at(&expect_op(&mut p), 4);
+    p.resume(StoreResult::Uncertain).expect("uncertain");
+    assert!(is_get(&expect_op(&mut p)));
+    p.resume(StoreResult::NotFound).expect("gone");
+    assert_eq!(expect_done(&mut p), DeleteOutcome::Deleted(tombstone));
+
+    let mut p = delete_a();
+    delete_to_tombstone(&mut p, 3);
+    expect_op(&mut p);
+    p.resume(StoreResult::Uncertain).expect("uncertain");
+    expect_op(&mut p);
+    let mut recreated = object(5, None);
+    recreated.uid = uid("uid-a-again");
+    p.resume(StoreResult::Object(Box::new(recreated)))
+        .expect("reread");
+    assert_eq!(
+        expect_done(&mut p),
+        DeleteOutcome::Missing(Missing::Replaced {
+            uid: uid("uid-a-again")
+        })
+    );
+}
+
+#[test]
+fn a_delete_finding_its_target_absent_ends_deleted_only_with_its_tombstone() {
+    let mut p = delete_a();
+    expect_op(&mut p);
+    p.resume(StoreResult::NotFound).expect("absent");
+    assert_eq!(
+        expect_op(&mut p),
+        StoreOp::Get {
+            key: key("tombstone-a")
+        }
+    );
+    let mut tombstone = object(2, None);
+    tombstone.key = key("tombstone-a");
+    tombstone.spec = "delete a".to_owned();
+    p.resume(StoreResult::Object(Box::new(tombstone.clone())))
+        .expect("tombstone");
+    assert_eq!(
+        expect_done(&mut p),
+        DeleteOutcome::Deleted(Box::new(tombstone))
+    );
+
+    let mut p = delete_a();
+    expect_op(&mut p);
+    p.resume(StoreResult::NotFound).expect("absent");
+    expect_op(&mut p);
+    p.resume(StoreResult::NotFound).expect("no tombstone");
+    assert_eq!(
+        expect_done(&mut p),
+        DeleteOutcome::Missing(Missing::NotFound)
+    );
+}
+
+#[test]
+fn a_delete_whose_tombstone_name_holds_another_origin_leaves_the_target() {
+    let mut p = delete_a();
+    expect_op(&mut p);
+    p.resume(StoreResult::Object(boxed(1, None)))
+        .expect("target");
+    expect_op(&mut p);
+    p.resume(StoreResult::Object(receipt("TERMINAL")))
+        .expect("receipt");
+    expect_op(&mut p);
+    p.resume(StoreResult::AlreadyExists).expect("exists");
+    assert_eq!(
+        expect_op(&mut p),
+        StoreOp::Get {
+            key: key("tombstone-a")
+        }
+    );
+    let mut other = object(2, None);
+    other.key = key("tombstone-a");
+    other.origin.context_uid = uid("another-context");
+    p.resume(StoreResult::Object(Box::new(other.clone())))
+        .expect("read");
+    assert_eq!(
+        expect_done(&mut p),
+        DeleteOutcome::TombstoneTaken(Box::new(other))
+    );
+}
+
+#[test]
+fn a_delete_refuses_a_result_that_does_not_answer_its_operation() {
+    let mut p = delete_a();
+    let get = expect_op(&mut p);
+    assert_eq!(
+        p.resume(StoreResult::Conflict),
+        Err(ProtocolError::Unexpected {
+            op: OpKind::Get,
+            result: "Conflict"
+        })
+    );
+    assert_eq!(expect_op(&mut p), get);
+    p.resume(StoreResult::Unavailable).expect("unavailable");
+    assert_eq!(expect_op(&mut p), get);
+}
+
+#[test]
+fn a_delete_finding_its_target_absent_and_another_object_under_the_tombstone_name_is_taken() {
+    let mut foreign = object(2, None);
+    foreign.key = key("tombstone-a");
+    foreign.spec = "delete a".to_owned();
+    foreign.origin.create_receipt_uid = uid("create-of-another-target");
+    let mut other_spec = object(2, None);
+    other_spec.key = key("tombstone-a");
+    other_spec.spec = "another delete".to_owned();
+    for found in [foreign, other_spec] {
+        let mut p = delete_a();
+        expect_op(&mut p);
+        p.resume(StoreResult::NotFound).expect("absent");
+        assert_eq!(
+            expect_op(&mut p),
+            StoreOp::Get {
+                key: key("tombstone-a")
+            }
+        );
+        p.resume(StoreResult::Object(Box::new(found.clone())))
+            .expect("read");
+        assert_eq!(
+            expect_done(&mut p),
+            DeleteOutcome::TombstoneTaken(Box::new(found))
+        );
+    }
+}
+
+#[test]
+fn a_delete_whose_tombstone_key_is_the_target_s_is_refused_before_any_operation() {
+    let mut p = Delete::new(DeleteRequest {
+        target: key("a"),
+        uid: uid("uid-a"),
+        create_receipt: key("create-a"),
+        create_receipt_uid: uid("create-a"),
+        tombstone: key("a"),
+        tombstone_spec: "delete a".to_owned(),
+        check: terminal as fn(&Object, &Object) -> bool,
+    });
+    assert_eq!(expect_done(&mut p), DeleteOutcome::TombstoneIsTarget);
+}

@@ -1,0 +1,80 @@
+name = "delete-after-terminal-create-receipt"
+summary = "A delete is refused, and writes nothing, while its target's create receipt is absent or not terminal; once the receipt is terminal the delete leaves a tombstone that keeps the target's origin and removes the target, a watch and a relist report the removal, and a replay of the delete resolves to the same tombstone."
+
+[[steps]]
+do = "create"
+object = "a"
+spec = "payload"
+expect = "created"
+
+[[steps]]
+do = "delete"
+object = "a"
+expect = "refused"
+
+[[steps]]
+do = "create"
+object = "create-a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "create-a"
+domain = "PREPARED"
+expect = "initialized"
+
+[[steps]]
+do = "delete"
+object = "a"
+expect = "refused"
+
+[[steps]]
+do = "check"
+object = "a"
+create_receipt = "create-a"
+
+[[steps]]
+do = "check"
+object = "tombstone-a"
+absent = true
+
+[[steps]]
+do = "commit"
+object = "create-a"
+command = "settle-create-a"
+lane = "DOMAIN"
+pin = 0
+fields = "COMMITTED"
+expect = "committed"
+
+[[steps]]
+do = "relist"
+expect = ["a", "create-a"]
+
+[[steps]]
+do = "delete"
+object = "a"
+expect = "deleted"
+
+[[steps]]
+do = "check"
+object = "a"
+absent = true
+
+[[steps]]
+do = "check"
+object = "tombstone-a"
+create_receipt = "create-a"
+
+[[steps]]
+do = "poll"
+expect = ["a", "tombstone-a"]
+
+[[steps]]
+do = "delete"
+object = "a"
+expect = "deleted"
+
+[[steps]]
+do = "relist"
+expect = ["a"]
