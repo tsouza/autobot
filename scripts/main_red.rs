@@ -1,6 +1,7 @@
 #!/usr/bin/env rust-script
-//! Opens, or comments on, the `urgent` issue for a gate-lane workflow run that failed on a
-//! push to main; `--dry-run <run-url>` prints what it would do for that run instead.
+//! Opens, or comments on, the `urgent` issue for a gate-lane workflow run on main, from a
+//! push or the nightly schedule, that failed; `--dry-run <run-url>` prints what it would do for
+//! that run instead.
 //!
 //! ```cargo
 //! [dependencies]
