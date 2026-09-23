@@ -18,6 +18,10 @@ Kubernetes custom resources are the source of truth; a Rust operator reconciles 
 
 Design and foundation. The first milestone, **M0-Q**, is a non-production qualification slice: it proves one complete path — brief to canonical records — on an existing, non-Rust repository through Kubernetes resources, using a fake forge and CI, a deterministic fake semantic judge and fault-injected fake provider adapters. Progress is tracked in the [milestones](../../milestones).
 
+## Charter
+
+The laws, rules, conventions and vocabulary every change follows are in [CHARTER.md](CHARTER.md).
+
 ## Design
 
 The design lives in [`docs/design/`](docs/design/). Read it in this order:
