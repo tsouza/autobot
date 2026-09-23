@@ -38,8 +38,8 @@
 //!   when the answer carries it, otherwise the answer's `confidence`. The probability of the
 //!   chosen option is the quantity the threshold is worded in ("the confidence at or above
 //!   which a violates answer blocks"); `confidence` is the service's own summary and is the
-//!   fallback only. A `confidence` or any option's probability that is not a number in `0..=1`,
-//!   or another option at least as probable as "violates", makes the answer malformed.
+//!   fallback only. The single invariant an answer must meet to block is stated on
+//!   [`decide`]; every answer that does not meet it falls back.
 //! - **Size limit.** The service documents no limit, so the state is capped at
 //!   [`STATE_LIMIT`] bytes. An oversized state, or a changed file whose patch GitHub omits,
 //!   means the judged input would be incomplete: every entry abstains and the service is not
@@ -326,8 +326,8 @@ pub enum Reason {
     NoKey,
     /// The call failed or the response was not JSON.
     Transport(String),
-    /// The charter, the pull request, its files or its linked issue could not be read; the service was not
-    /// called.
+    /// The charter, the pull request, its files or its linked issue could not be read; the
+    /// service was not called.
     Unavailable(String),
 }
 
@@ -369,7 +369,11 @@ fn unit(value: &Value) -> Option<f64> {
     value.as_f64().filter(|v| (0.0..=1.0).contains(v))
 }
 
-/// The decision for `entry` given its `answer`, if the response had one.
+/// How far above 1 the probabilities of an answer may sum, for floating-point rounding.
+const SUM_TOLERANCE: f64 = 1e-9;
+
+/// The decision for `entry` given its `answer`, if the response had one, under the invariant
+/// stated on [`decide`].
 fn decide_one(entry: &Entry, answer: Option<&Value>) -> Outcome {
     let malformed = |why: &str| Outcome::Backstop(Reason::Malformed(why.to_owned()));
     let Some(answer) = answer else {
@@ -379,40 +383,63 @@ fn decide_one(entry: &Entry, answer: Option<&Value>) -> Outcome {
         return malformed("`type` is not \"choice\"");
     }
     match answer["choice"].as_str() {
-        Some(COMPLIES) => Outcome::Backstop(Reason::Complies),
-        Some(UNSURE) => Outcome::Backstop(Reason::Unsure),
-        Some(VIOLATES) => {
-            let probabilities = match &answer["probabilities"] {
-                Value::Null => None,
-                Value::Object(p) if p.values().all(|v| unit(v).is_some()) => Some(p),
-                _ => return malformed("`probabilities` holds a value that is not from 0 to 1"),
-            };
-            let summary = &answer["confidence"];
-            if !summary.is_null() && unit(summary).is_none() {
-                return malformed("`confidence` is not from 0 to 1");
-            }
-            let violates = probabilities.and_then(|p| p.get(VIOLATES));
-            let Some(confidence) = unit(violates.unwrap_or(summary)) else {
-                return malformed("no confidence from 0 to 1 for \"violates\"");
-            };
-            let contradicted = violates.is_some()
-                && probabilities.is_some_and(|p| {
-                    p.iter()
-                        .any(|(k, v)| k != VIOLATES && unit(v).is_some_and(|v| v >= confidence))
-                });
-            if contradicted {
-                malformed("another option is at least as probable as the chosen \"violates\"")
-            } else if confidence >= entry.threshold {
-                Outcome::Blocks(confidence)
-            } else {
-                Outcome::Backstop(Reason::LowConfidence(confidence))
-            }
-        }
-        _ => malformed("`choice` is not complies, violates or unsure"),
+        Some(COMPLIES) => return Outcome::Backstop(Reason::Complies),
+        Some(UNSURE) => return Outcome::Backstop(Reason::Unsure),
+        Some(VIOLATES) => {}
+        _ => return malformed("`choice` is not complies, violates or unsure"),
+    }
+    let empty = Map::new();
+    let probabilities = match &answer["probabilities"] {
+        Value::Null => &empty,
+        Value::Object(p) => p,
+        _ => return malformed("`probabilities` is not an object"),
+    };
+    let Some(values) = probabilities
+        .values()
+        .map(unit)
+        .collect::<Option<Vec<f64>>>()
+    else {
+        return malformed("`probabilities` holds a value that is not a number from 0 to 1");
+    };
+    if values.iter().sum::<f64>() > 1.0 + SUM_TOLERANCE {
+        return malformed("`probabilities` sum above 1");
+    }
+    let summary = &answer["confidence"];
+    if !summary.is_null() && unit(summary).is_none() {
+        return malformed("`confidence` is not a number from 0 to 1");
+    }
+    let Some(c) = unit(probabilities.get(VIOLATES).unwrap_or(summary)) else {
+        return malformed("no confidence from 0 to 1 for \"violates\"");
+    };
+    let rival = probabilities
+        .iter()
+        .any(|(key, p)| key != VIOLATES && unit(p).is_none_or(|p| p >= c));
+    if rival {
+        return malformed("another option is at least as probable as the chosen \"violates\"");
+    }
+    if c >= entry.threshold {
+        Outcome::Blocks(c)
+    } else {
+        Outcome::Backstop(Reason::LowConfidence(c))
     }
 }
 
 /// The decision for each of `entries` given the service's `response`.
+///
+/// The one invariant: an answer blocks only if **all** of these hold, where `c` is
+/// `probabilities["violates"]` when that key is present and `confidence` otherwise:
+///
+/// 1. `type` is `"choice"` and `choice` is `"violates"`;
+/// 2. `probabilities` is absent or an object whose every value, under whatever key, is a
+///    number in `0..=1`, and those values sum to at most 1;
+/// 3. `confidence` is absent or a number in `0..=1`;
+/// 4. `c` is a number in `0..=1` and at least the entry's threshold;
+/// 5. every key of `probabilities` other than `"violates"`, known option or not, has a
+///    probability strictly below `c`.
+///
+/// Anything else never blocks: a missing answer, "complies" and "unsure" fall back as such, a
+/// "violates" that meets every condition but the threshold falls back as low confidence, and
+/// every other shape is malformed.
 #[must_use]
 pub fn decide(entries: &[Entry], response: &Value) -> Vec<Outcome> {
     let answers = response["answers"].as_object();
@@ -799,48 +826,126 @@ mod tests {
         }
     }
 
-    #[test]
-    fn confidence_is_used_only_when_probabilities_lack_violates() {
-        let answer = r#"{"type":"choice","choice":"violates","confidence":0.95}"#;
-        let report = judge_l1(&Canned::answering(&response(answer)));
-        assert_eq!(report.outcomes[0].1, Outcome::Blocks(0.95));
-        // `confidence` alone would block; the probability of "violates" decides.
-        let answer = r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.6,"complies":0.3},"confidence":0.95}"#;
-        let report = judge_l1(&Canned::answering(&response(answer)));
-        assert_eq!(
-            report.outcomes[0].1,
-            Outcome::Backstop(Reason::LowConfidence(0.6))
-        );
+    /// What the invariant of `decide_one` requires for an answer to `L-1` (threshold 0.8).
+    #[derive(Debug)]
+    enum Expect {
+        Blocks(f64),
+        Low(f64),
+        Malformed,
     }
 
     #[test]
-    fn a_malformed_answer_falls_back() {
-        for answer in [
-            r#"{"type":"choice","choice":"yes","confidence":0.99}"#,
-            r#"{"type":"boolean","choice":"violates","confidence":0.99}"#,
-            r#"{"choice":"violates","confidence":0.99}"#,
-            r#"{"type":"choice","choice":"violates"}"#,
-            r#"{"type":"choice","choice":"violates","confidence":1.5}"#,
-            r#"{"type":"choice","choice":"violates","probabilities":{"violates":"0.99"},"confidence":0.99}"#,
-            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9,"complies":0.95}}"#,
-            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9,"complies":2.0}}"#,
-            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9,"complies":"0.05"}}"#,
-            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9,"unsure":-0.1}}"#,
-            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.5,"complies":0.5}}"#,
-            r#"{"type":"choice","choice":"violates","probabilities":[0.9],"confidence":0.9}"#,
-            r#"{"type":"choice","choice":"violates","probabilities":{"violates":0.9},"confidence":1.5}"#,
-            r#""violates""#,
-        ] {
-            let report = judge_l1(&Canned::answering(&response(answer)));
-            assert!(
-                matches!(
-                    report.outcomes[0].1,
-                    Outcome::Backstop(Reason::Malformed(_))
-                ),
-                "{answer}: {:?}",
-                report.outcomes[0].1
-            );
-            assert!(!report.blocks(), "{answer}");
+    fn only_answers_meeting_the_block_invariant_block() {
+        use Expect::{Blocks, Low, Malformed};
+        let v = |rest: &str| format!(r#"{{"type":"choice","choice":"violates"{rest}}}"#);
+        let table = [
+            // The confidence used: probabilities["violates"] when present, else `confidence`.
+            (v(r#","probabilities":{"violates":0.9}"#), Blocks(0.9)),
+            (
+                v(r#","probabilities":{"violates":0.9,"complies":0.1}"#),
+                Blocks(0.9),
+            ),
+            (v(r#","confidence":0.95"#), Blocks(0.95)),
+            (v(r#","probabilities":{},"confidence":0.9"#), Blocks(0.9)),
+            (
+                v(r#","probabilities":{"complies":0.05},"confidence":0.9"#),
+                Blocks(0.9),
+            ),
+            (
+                v(r#","probabilities":{"violates":0.8},"confidence":0.8"#),
+                Blocks(0.8),
+            ),
+            (
+                v(r#","probabilities":{"violates":0.6,"complies":0.3},"confidence":0.95"#),
+                Low(0.6),
+            ),
+            (
+                v(r#","probabilities":{"violates":0.7},"confidence":0.9"#),
+                Low(0.7),
+            ),
+            (v(r#","confidence":0.79"#), Low(0.79)),
+            // Another option, known or not, at least as probable as the confidence used.
+            (
+                v(r#","probabilities":{"complies":0.95},"confidence":0.9"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"unsure":0.9},"confidence":0.9"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"violates":0.9,"complies":0.95}"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"violates":0.5,"complies":0.5}"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"violates":0.9,"other":0.95}"#),
+                Malformed,
+            ),
+            // A probability, under any key, that is not a number from 0 to 1, or a sum above 1.
+            (
+                v(r#","probabilities":{"violates":0.9,"complies":2.0}"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"violates":0.9,"complies":"0.05"}"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"violates":0.9,"unsure":-0.1}"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"violates":0.9,"other":null}"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"violates":"0.99"},"confidence":0.99"#),
+                Malformed,
+            ),
+            (
+                v(r#","probabilities":{"violates":0.9,"complies":0.85}"#),
+                Malformed,
+            ),
+            (v(r#","probabilities":[0.9],"confidence":0.9"#), Malformed),
+            // A `confidence` that is not a number from 0 to 1, or no confidence at all.
+            (v(r#","confidence":1.5"#), Malformed),
+            (
+                v(r#","probabilities":{"violates":0.9},"confidence":1.5"#),
+                Malformed,
+            ),
+            (v(r#","confidence":"0.9""#), Malformed),
+            (v(""), Malformed),
+            (v(r#","probabilities":{"complies":0.05}"#), Malformed),
+            // Not a "violates" choice question.
+            (
+                r#"{"type":"choice","choice":"yes","confidence":0.99}"#.to_owned(),
+                Malformed,
+            ),
+            (
+                r#"{"type":"boolean","choice":"violates","confidence":0.99}"#.to_owned(),
+                Malformed,
+            ),
+            (
+                r#"{"choice":"violates","confidence":0.99}"#.to_owned(),
+                Malformed,
+            ),
+            (r#""violates""#.to_owned(), Malformed),
+        ];
+        for (answer, expect) in table {
+            let report = judge_l1(&Canned::answering(&response(&answer)));
+            let got = &report.outcomes[0].1;
+            let ok = match expect {
+                Blocks(c) => *got == Outcome::Blocks(c) && report.blocks(),
+                Low(c) => *got == Outcome::Backstop(Reason::LowConfidence(c)) && !report.blocks(),
+                Malformed => {
+                    matches!(got, Outcome::Backstop(Reason::Malformed(_))) && !report.blocks()
+                }
+            };
+            assert!(ok, "{answer}: expected {expect:?}, got {got:?}");
         }
         let report = judge_l1(&Canned::answering(r#"{"model":"m","answers":[]}"#));
         assert!(matches!(

@@ -1,9 +1,10 @@
 //! The `judged` entries of a charter.
 //!
-//! An entry table is a pipe table whose header names an `Id`, a `Mode` and a `Threshold`
-//! column; its second column is the entry's statement. A row whose Mode cell is `judged`
-//! (backticks optional) is a judged entry, and its Threshold cell holds the decimal
-//! confidence, from 0 to 1, at or above which a "violates" answer blocks.
+//! An entry table is a pipe table whose header names an `Id` and a `Mode` column; its second
+//! column is the entry's statement. A row whose Mode cell is `judged` (backticks optional) is a
+//! judged entry. Its table must also have a `Threshold` column, whose cell holds the decimal
+//! confidence, from 0 to 1, at or above which a "violates" answer blocks; a judged row without
+//! one is an error.
 
 use crate::markdown::tables;
 use crate::{Error, Result};
