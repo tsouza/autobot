@@ -1,0 +1,15 @@
+# Extension — TypeSafe decision policy
+
+Intent: route frequent semantic judgments — classification, ambiguity, relevance, duplication, drift, strategy fit, finding severity — to a cheap typed-question service, not a frontier model; no answer carries authority (THESIS goal 4, I-8).
+Gate: the typed-question and abstention contract with a deterministic fake judge at **M0-Q**; the real service, per-class fallback policy, trust labels and calibration at **G-INTAKE**; use in routing at **G-ADAPT**.
+
+Relies on (kernel): the eligible-set rule and the `Decision` record (KERNEL §1, F-31); the conservative branch under an unavailable judge (ONBOARD §6, F-35); the floor that a judgment may only raise (ONBOARD §5).
+
+Decisions:
+
+- **Every judgment is a typed question over a pre-computed eligible set.** Deterministic code computes the facts and eligible options; the service selects or ranks within them; deterministic code decides and admits. The service never receives a live budget, authorization or hold to "consider"; those are rechecked after the answer.
+- **Inputs carry trust labels** — `CANONICAL_AUTOBOT_FACT`, `AUTHENTICATED_PROVIDER_OBSERVATION`, `UNTRUSTED_REPOSITORY_CONTENT`, `UNTRUSTED_ISSUE_OR_PR_TEXT`, `UNTRUSTED_CI_OUTPUT`, `DERIVED_STATISTIC`, `DERIVED_FALLBACK_DECISION` — and each question class declares which it accepts. A malformed, contradictory, schema-invalid or injection-affected answer is rejected or abstained.
+- **Outage fallback is closed and pinned per question class** in a `DecisionPolicy` revision: `ABSTAIN` (the default — the class's conservative branch: hold the decision, create a `Decision` for Manager or human resolution, or take the fixed baseline), `DETERMINISTIC_RULE` (a versioned rule over canonical facts and derived statistics only, selecting within the eligible set), or `STRONGER_REASONER` (a pinned provider, model, version and prompt policy answering the same typed question on the same evidence, charged to a per-context fallback escrow and refused into `ABSTAIN` when it is exhausted). There is no free-form "stronger reasoning" path. Every fallback decision records its kind, policy revision, rule or model identity, evidence digest and cost, and is excluded from calibration cohorts.
+- **Confidence is a distribution summary, not a probability of success.** Each question class is calibrated on AutoBot outcomes; unfamiliar or low-evidence work triggers information gathering or the fallback, never a guess. Answers are cached only with exact evidence, policy, taxonomy, question and model versions.
+- **The decision layer is metered**; its cost and latency are part of strategy evaluation.
+- **The service is external and shared-weight**; AutoBot owns its learned tables and policies. The micro-manager's drift assessment is one question class; its unavailability means deterministic controls only.
