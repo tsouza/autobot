@@ -58,6 +58,10 @@ dependencies = [
 [[package]]
 name = "autobot-fakes"
 version = "0.0.0"
+dependencies = [
+ "autobot-adapters",
+ "autobot-kernel",
+]
 
 [[package]]
 name = "autobot-kernel"
