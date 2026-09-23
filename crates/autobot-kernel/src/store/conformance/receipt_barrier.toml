@@ -1,0 +1,77 @@
+name = "receipt-barrier"
+summary = "A domain commit waits while another command's pending slot is unresolved, and proceeds once the reconciliation-only CAS has cleared it, which changes no revision."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c1"
+lane = "DOMAIN"
+pin = 0
+fields = "one"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c2"
+lane = "DOMAIN"
+pin = 1
+fields = "two"
+expect = "barrier"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c1"
+lane = "DOMAIN"
+pin = 0
+fields = "one"
+expect = "committed"
+
+[[steps]]
+do = "clear"
+object = "a"
+command = "c1"
+expect = "cleared"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 1
+commit_sequence = 1
+slot = "cleared"
+slot_command = "c1"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c2"
+lane = "DOMAIN"
+pin = 1
+fields = "two"
+expect = "committed"
+
+[[steps]]
+do = "clear"
+object = "a"
+command = "c1"
+expect = "not_held"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 2
+commit_sequence = 2
+domain = "two"
+slot = "occupied"
+slot_command = "c2"

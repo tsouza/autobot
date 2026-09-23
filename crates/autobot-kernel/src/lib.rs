@@ -7,4 +7,5 @@
 pub mod error;
 pub mod profile;
 pub mod status;
+pub mod store;
 pub mod types;

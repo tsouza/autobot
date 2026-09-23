@@ -1,0 +1,63 @@
+name = "control-between-read-and-write"
+summary = "A control commit that lands between a domain commit's read and its write fails that write on the resource version; the domain commit reads again and its guard refuses the new control state."
+
+[[steps]]
+do = "create"
+object = "context"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "context"
+control_lane = true
+control = "RUNNING"
+expect = "initialized"
+
+[[steps]]
+do = "commit"
+object = "context"
+command = "accept"
+lane = "DOMAIN"
+fields = "accepted"
+require_control = "RUNNING"
+expect = "refused"
+interleave = { object = "context", command = "hold", lane = "CONTROL", fields = "FREEZE_PENDING", expect = "committed" }
+
+[[steps]]
+do = "check"
+object = "context"
+state_revision = 0
+control_revision = 1
+commit_sequence = 1
+domain = ""
+control = "FREEZE_PENDING"
+slot = "none"
+ring_entries = 1
+
+[[steps]]
+do = "commit"
+object = "context"
+command = "resume"
+lane = "CONTROL"
+pin = 1
+fields = "RUNNING"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "context"
+command = "accept"
+lane = "DOMAIN"
+fields = "accepted"
+require_control = "RUNNING"
+expect = "committed"
+
+[[steps]]
+do = "check"
+object = "context"
+state_revision = 1
+control_revision = 2
+commit_sequence = 3
+domain = "accepted"
+control = "RUNNING"
+slot_command = "accept"

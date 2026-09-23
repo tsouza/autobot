@@ -1,0 +1,44 @@
+name = "lost-create-ack"
+summary = "A create whose acknowledgement is lost is resolved by reading its name, never by a generated name; the name then holds one object, and a create with another payload finds it taken."
+
+[[steps]]
+do = "inject"
+fault = { kind = "lost_create_ack" }
+
+[[steps]]
+do = "create"
+object = "a"
+spec = "payload"
+expect = "created"
+
+[[steps]]
+do = "create"
+object = "a"
+spec = "payload"
+expect = "created"
+
+[[steps]]
+do = "create"
+object = "a"
+spec = "other payload"
+expect = "taken"
+
+[[steps]]
+do = "create"
+object = "a"
+receipt = "another-receipt"
+spec = "payload"
+expect = "taken"
+
+[[steps]]
+do = "inject"
+fault = { kind = "write_timeout", applied = false }
+
+[[steps]]
+do = "create"
+object = "b"
+expect = "created"
+
+[[steps]]
+do = "relist"
+expect = ["a", "b"]

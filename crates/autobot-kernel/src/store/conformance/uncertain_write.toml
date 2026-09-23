@@ -1,0 +1,78 @@
+name = "uncertain-write"
+summary = "A commit whose write reports UNCERTAIN reads the object and commits exactly once, whether or not that write applied."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "inject"
+fault = { kind = "write_timeout", applied = true }
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c1"
+lane = "DOMAIN"
+pin = 0
+fields = "one"
+expect = "committed"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 1
+commit_sequence = 1
+domain = "one"
+slot_command = "c1"
+
+[[steps]]
+do = "clear"
+object = "a"
+command = "c1"
+expect = "cleared"
+
+[[steps]]
+do = "inject"
+fault = { kind = "write_timeout", applied = false }
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c2"
+lane = "DOMAIN"
+pin = 1
+fields = "two"
+expect = "committed"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 2
+commit_sequence = 2
+domain = "two"
+slot = "occupied"
+slot_command = "c2"
+
+[[steps]]
+do = "inject"
+fault = { kind = "write_timeout", applied = true }
+
+[[steps]]
+do = "clear"
+object = "a"
+command = "c2"
+expect = "cleared"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 2
+commit_sequence = 2
+slot = "cleared"
