@@ -420,6 +420,7 @@ impl<'s> ScriptRun<'s> {
                     target: key(&s.object)?,
                     uid: self.uid(&s.object)?,
                     create_receipt: key(&named(&s.receipt, "create"))?,
+                    create_receipt_uid: parse(&named(&s.receipt, "create"))?,
                     tombstone: key(&named(&s.tombstone, "tombstone"))?,
                     tombstone_spec: s.spec.clone(),
                     check: terminal_create_receipt as fn(&Object, &Object) -> bool,
@@ -684,6 +685,7 @@ fn delete_name(outcome: &DeleteOutcome) -> &'static str {
         DeleteOutcome::Refused { .. } => "refused",
         DeleteOutcome::TombstoneTaken(_) => "tombstone_taken",
         DeleteOutcome::TombstoneVanished => "tombstone_vanished",
+        DeleteOutcome::TombstoneIsTarget => "tombstone_is_target",
         DeleteOutcome::Missing(missing) => missing_name(missing),
     }
 }

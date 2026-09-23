@@ -694,6 +694,7 @@ fn delete_a() -> Delete<fn(&Object, &Object) -> bool> {
         target: key("a"),
         uid: uid("uid-a"),
         create_receipt: key("create-a"),
+        create_receipt_uid: uid("create-a"),
         tombstone: key("tombstone-a"),
         tombstone_spec: "delete a".to_owned(),
         check: terminal as fn(&Object, &Object) -> bool,
@@ -865,6 +866,7 @@ fn a_delete_finding_its_target_absent_ends_deleted_only_with_its_tombstone() {
     );
     let mut tombstone = object(2, None);
     tombstone.key = key("tombstone-a");
+    tombstone.spec = "delete a".to_owned();
     p.resume(StoreResult::Object(Box::new(tombstone.clone())))
         .expect("tombstone");
     assert_eq!(
@@ -925,4 +927,46 @@ fn a_delete_refuses_a_result_that_does_not_answer_its_operation() {
     assert_eq!(expect_op(&mut p), get);
     p.resume(StoreResult::Unavailable).expect("unavailable");
     assert_eq!(expect_op(&mut p), get);
+}
+
+#[test]
+fn a_delete_finding_its_target_absent_and_another_object_under_the_tombstone_name_is_taken() {
+    let mut foreign = object(2, None);
+    foreign.key = key("tombstone-a");
+    foreign.spec = "delete a".to_owned();
+    foreign.origin.create_receipt_uid = uid("create-of-another-target");
+    let mut other_spec = object(2, None);
+    other_spec.key = key("tombstone-a");
+    other_spec.spec = "another delete".to_owned();
+    for found in [foreign, other_spec] {
+        let mut p = delete_a();
+        expect_op(&mut p);
+        p.resume(StoreResult::NotFound).expect("absent");
+        assert_eq!(
+            expect_op(&mut p),
+            StoreOp::Get {
+                key: key("tombstone-a")
+            }
+        );
+        p.resume(StoreResult::Object(Box::new(found.clone())))
+            .expect("read");
+        assert_eq!(
+            expect_done(&mut p),
+            DeleteOutcome::TombstoneTaken(Box::new(found))
+        );
+    }
+}
+
+#[test]
+fn a_delete_whose_tombstone_key_is_the_target_s_is_refused_before_any_operation() {
+    let mut p = Delete::new(DeleteRequest {
+        target: key("a"),
+        uid: uid("uid-a"),
+        create_receipt: key("create-a"),
+        create_receipt_uid: uid("create-a"),
+        tombstone: key("a"),
+        tombstone_spec: "delete a".to_owned(),
+        check: terminal as fn(&Object, &Object) -> bool,
+    });
+    assert_eq!(expect_done(&mut p), DeleteOutcome::TombstoneIsTarget);
 }

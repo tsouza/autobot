@@ -79,6 +79,13 @@
 //!   status write; after a conflict it reads again and deletes the same incarnation at the
 //!   resource version read. The create receipt is not read again: a terminal receipt cannot
 //!   be rewritten.
+//! - A target found absent is deleted only when the object under the tombstone name is the
+//!   request's own tombstone, with the request's create receipt UID and tombstone spec; any
+//!   other object there ends [`DeleteOutcome::TombstoneTaken`], as on the path that finds the
+//!   target. A request whose tombstone key is the target's key is refused before any read.
+//! - The tombstone is written with no status: its encoding as the terminal `CommandReceipt` of
+//!   the delete (KERNEL §2), its terminal result included, is deferred to the command path
+//!   (#86).
 //! - The store contract writes the tombstone's spec as the caller encodes it; what a replayed
 //!   create does on finding a tombstone is the command path's (#86): [`Create`] itself still
 //!   creates on a free name.

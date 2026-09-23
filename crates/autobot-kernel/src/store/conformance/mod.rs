@@ -25,7 +25,8 @@
 //!   `uninitialized`.
 //! - `delete`: delete `object` behind the tombstone `tombstone` (default `tombstone-<object>`)
 //!   with `spec`, reading the create receipt `receipt` (default `create-<object>`), expecting
-//!   `deleted`, `refused`, `tombstone_taken`, `tombstone_vanished`, `not_found` or `replaced`.
+//!   `deleted`, `refused`, `tombstone_taken`, `tombstone_vanished`, `tombstone_is_target`,
+//!   `not_found` or `replaced`.
 //!   The create receipt is terminal when it is the object named by the target's create
 //!   receipt UID and its domain fields name a terminal `CommandReceipt` state of KERNEL §10:
 //!   `COMMITTED`, `REJECTED`, `CANCELLED` or `REPLAY_EXPIRED`.

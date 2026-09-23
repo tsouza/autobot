@@ -223,6 +223,51 @@ fn the_suite_fails_a_driver_that_ignores_delete_conditions() {
     );
 }
 
+/// A driver that ignores only the UID condition of deletes.
+fn run_ignoring_delete_uids(script: &Script) -> Result<(), Failure> {
+    let mut store = MemStore::new();
+    let mut script_run = ScriptRun::new(script, ring());
+    loop {
+        match script_run.step() {
+            Action::Done(result) => return result,
+            Action::Arm(fault) => store.arm(fault),
+            Action::Op(StoreOp::Delete {
+                key,
+                uid,
+                resource_version,
+            }) => {
+                let uid = store
+                    .object(&key)
+                    .map_or(uid, |current| current.uid.clone());
+                let op = StoreOp::Delete {
+                    key,
+                    uid,
+                    resource_version,
+                };
+                if let Execution::Result(result) = store.execute(op) {
+                    script_run.resume(result);
+                }
+            }
+            Action::Op(op) => {
+                if let Execution::Result(result) = store.execute(op) {
+                    script_run.resume(result);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_suite_fails_a_driver_that_ignores_only_the_delete_uid() {
+    let failure = run_ignoring_delete_uids(&script("delete-preconditions"))
+        .expect_err("a delete for another incarnation must be caught");
+    assert!(failure.message.contains("expected conflict"), "{failure}");
+    assert_eq!(
+        failure.step, 6,
+        "the foreign UID is the refused delete that fails"
+    );
+}
+
 #[test]
 fn a_delete_removes_the_object_and_records_a_watch_event() {
     let mut store = MemStore::new();

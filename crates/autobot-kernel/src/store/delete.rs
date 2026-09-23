@@ -36,7 +36,10 @@ pub struct DeleteRequest<C> {
     pub uid: Uid,
     /// The key of the target's create receipt.
     pub create_receipt: ObjectKey,
-    /// The key of the tombstone: the delete command's receipt.
+    /// The UID of the target's create receipt, which the target's origin records.
+    pub create_receipt_uid: Uid,
+    /// The key of the tombstone: the delete command's receipt. A key equal to `target` is
+    /// refused.
     pub tombstone: ObjectKey,
     /// The tombstone's encoded spec.
     pub tombstone_spec: String,
@@ -48,15 +51,20 @@ pub struct DeleteRequest<C> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeleteOutcome {
     /// The target is gone and this tombstone, which carries the target's origin, holds the
-    /// tombstone name; in this call or an earlier one.
+    /// tombstone name; in this call or an earlier one. A target found absent is deleted only
+    /// when the object under the tombstone name has the request's create receipt UID in its
+    /// origin and the request's tombstone spec.
     Deleted(Box<Object>),
     /// The target's create receipt is not terminal, or is absent: nothing was written.
     Refused {
         /// The create receipt as read, if one was found.
         create_receipt: Option<Box<Object>>,
     },
-    /// The tombstone name holds an object with another origin: the target is untouched.
+    /// The tombstone name holds an object with another origin, or, with the target absent,
+    /// another create receipt UID or spec: the target is untouched by this delete.
     TombstoneTaken(Box<Object>),
+    /// The request names the target's own key as the tombstone: nothing was read or written.
+    TombstoneIsTarget,
     /// The tombstone name was taken when the tombstone was created and empty when read: the
     /// target is untouched.
     TombstoneVanished,
@@ -97,7 +105,8 @@ enum Next {
 /// read. A conflicting or `UNCERTAIN` delete is followed by a read of the target: the same
 /// incarnation is deleted again at the resource version read, and an absent target is
 /// deleted. A fresh protocol for the same request that finds the target absent reads the
-/// tombstone and ends [`DeleteOutcome::Deleted`] when it is there.
+/// tombstone and ends [`DeleteOutcome::Deleted`] only when it is the request's own: its origin
+/// names the request's create receipt UID and its spec is the request's tombstone spec.
 pub struct Delete<C: ReceiptCheck> {
     request: DeleteRequest<C>,
     next: Next,
@@ -109,8 +118,12 @@ impl<C: ReceiptCheck> Delete<C> {
     #[must_use]
     pub fn new(request: DeleteRequest<C>) -> Self {
         Self {
+            next: if request.tombstone == request.target {
+                Next::Done(DeleteOutcome::TombstoneIsTarget)
+            } else {
+                Next::ReadTarget
+            },
             request,
-            next: Next::ReadTarget,
             waiting: None,
         }
     }
@@ -152,6 +165,18 @@ impl<C: ReceiptCheck> Delete<C> {
         }
     }
 
+    /// The outcome of finding `found` under the tombstone name with the target absent: the
+    /// request's own tombstone, or another object.
+    fn found_absent(&self, found: Box<Object>) -> DeleteOutcome {
+        if found.origin.create_receipt_uid == self.request.create_receipt_uid
+            && found.spec == self.request.tombstone_spec
+        {
+            DeleteOutcome::Deleted(found)
+        } else {
+            DeleteOutcome::TombstoneTaken(found)
+        }
+    }
+
     /// The state `outcome` of the tombstone's create leads to.
     fn tombstone_created(target: Box<Object>, outcome: CreateOutcome) -> Next {
         match outcome {
@@ -174,9 +199,11 @@ impl<C: ReceiptCheck> Delete<C> {
                 self.receipt_read(target, None)
             }
             (Next::Delete { tombstone, .. }, StoreResult::Object(_) | StoreResult::NotFound)
-            | (Next::Reread { tombstone }, StoreResult::NotFound)
-            | (Next::ReadTombstone, StoreResult::Object(tombstone)) => {
+            | (Next::Reread { tombstone }, StoreResult::NotFound) => {
                 Next::Done(DeleteOutcome::Deleted(tombstone))
+            }
+            (Next::ReadTombstone, StoreResult::Object(found)) => {
+                Next::Done(self.found_absent(found))
             }
             (Next::Delete { tombstone, .. }, StoreResult::Conflict | StoreResult::Uncertain) => {
                 Next::Reread { tombstone }
