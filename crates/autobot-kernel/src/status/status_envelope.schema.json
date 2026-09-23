@@ -1,0 +1,443 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StatusEnvelope",
+  "description": "The common part of every aggregate's status.\n\nA kind's status embeds it with `#[serde(flatten)]` beside its own fields, so its fields\nappear at the top level of the status.",
+  "type": "object",
+  "properties": {
+    "commit_sequence": {
+      "description": "The sequence of the last commit of either lane.",
+      "$ref": "#/$defs/CommitSequence"
+    },
+    "conditions": {
+      "description": "The aggregate's conditions.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Condition"
+      }
+    },
+    "control_receipt_ring": {
+      "description": "The control-receipt ring; present exactly on an aggregate with a control lane.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ControlReceiptRing"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "control_revision": {
+      "description": "The control lane's revision; zero on an aggregate without a control lane.",
+      "$ref": "#/$defs/ControlRevision"
+    },
+    "last_receipt_ref": {
+      "description": "The receipt of the last command committed on the aggregate; absent before the first.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ObjectRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observedGeneration": {
+      "description": "The `metadata.generation` of the spec the owning controller last acted on; absent until\nit first has.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int64"
+    },
+    "pending_commit": {
+      "description": "The pending commit slot; absent until the first domain commit installs it.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PendingCommit"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "state_revision": {
+      "description": "The domain lane's revision.",
+      "$ref": "#/$defs/StateRevision"
+    }
+  },
+  "required": [
+    "state_revision",
+    "control_revision",
+    "commit_sequence"
+  ],
+  "$defs": {
+    "AuditEnvelope": {
+      "description": "The parts of a control commit's `AutoBotEvent` that neither its receipt nor its aggregate\nholds.\n\nWith the receipt they give every field of the event: `aggregate_uid` is the aggregate's\nUID, `lane` is `CONTROL`, `commit_sequence` and `control_revision` are the receipt's, `actor`\nis its principal, `state_digest` is its after-control digest, and `event_digest` is computed\nover the event.",
+      "type": "object",
+      "properties": {
+        "causation_id": {
+          "description": "The identifier of what caused the event.",
+          "type": "string"
+        },
+        "correlation_id": {
+          "description": "The identifier that correlates the event with others.",
+          "type": "string"
+        },
+        "event_type": {
+          "description": "The event's type.",
+          "type": "string"
+        },
+        "schema_version": {
+          "description": "The schema version of the event.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "source_uid": {
+          "description": "The UID of the event's source.",
+          "$ref": "#/$defs/Uid"
+        },
+        "state_revision": {
+          "description": "The aggregate's `state_revision` when the commit landed.",
+          "$ref": "#/$defs/StateRevision"
+        }
+      },
+      "required": [
+        "state_revision",
+        "source_uid",
+        "event_type",
+        "causation_id",
+        "correlation_id",
+        "schema_version"
+      ]
+    },
+    "CommitSequence": {
+      "type": "integer",
+      "format": "int64",
+      "maximum": 9223372036854775807,
+      "minimum": 0
+    },
+    "Condition": {
+      "description": "One condition of an aggregate, in the form of the Kubernetes `metav1.Condition`.\n\n`last_transition_time` is carried as text: the kernel does not interpret time.",
+      "type": "object",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "When the status last changed, in RFC 3339.",
+          "type": "string"
+        },
+        "message": {
+          "description": "A human-readable account of the transition.",
+          "type": "string"
+        },
+        "observedGeneration": {
+          "description": "The `metadata.generation` the condition was set from.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "reason": {
+          "description": "Why the status last changed, in `CamelCase`.",
+          "type": "string"
+        },
+        "status": {
+          "description": "Whether the condition holds.",
+          "$ref": "#/$defs/ConditionStatus"
+        },
+        "type": {
+          "description": "The condition's type, in `CamelCase`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "status",
+        "lastTransitionTime",
+        "reason",
+        "message"
+      ]
+    },
+    "ConditionStatus": {
+      "description": "Whether a condition holds.",
+      "oneOf": [
+        {
+          "description": "It holds.",
+          "type": "string",
+          "const": "True"
+        },
+        {
+          "description": "It does not hold.",
+          "type": "string",
+          "const": "False"
+        },
+        {
+          "description": "It cannot be determined.",
+          "type": "string",
+          "const": "Unknown"
+        }
+      ]
+    },
+    "ControlReceipt": {
+      "description": "The receipt of one control commit, the FORMAL §2 `ControlReceipt` record.\n\nThe control commit appends it to the ring in the same write, so the receipt is durable\nwithout a second write. With its [`AuditEnvelope`] it holds every field of its audit event;\nthe envelope's untyped text fields are open in #329.",
+      "type": "object",
+      "properties": {
+        "after_control_digest": {
+          "description": "The aggregate's control digest after the commit.",
+          "$ref": "#/$defs/Digest"
+        },
+        "audit_envelope": {
+          "description": "The parts of the audit event the rest of the receipt does not hold.",
+          "$ref": "#/$defs/AuditEnvelope"
+        },
+        "before_control_digest": {
+          "description": "The aggregate's control digest before the commit.",
+          "$ref": "#/$defs/Digest"
+        },
+        "commit_sequence": {
+          "description": "The commit's sequence on the aggregate.",
+          "$ref": "#/$defs/CommitSequence"
+        },
+        "control_revision": {
+          "description": "The `control_revision` the commit produced.",
+          "$ref": "#/$defs/ControlRevision"
+        },
+        "control_uid": {
+          "description": "The UID of the control command.",
+          "$ref": "#/$defs/Uid"
+        },
+        "principal": {
+          "description": "The authenticated writer of the control command.",
+          "$ref": "#/$defs/Principal"
+        },
+        "state": {
+          "description": "The receipt's publication state.",
+          "$ref": "#/$defs/ControlReceiptState"
+        }
+      },
+      "required": [
+        "control_uid",
+        "control_revision",
+        "commit_sequence",
+        "before_control_digest",
+        "after_control_digest",
+        "audit_envelope",
+        "principal",
+        "state"
+      ]
+    },
+    "ControlReceiptRing": {
+      "description": "The bounded ring of control receipts of an aggregate with a control lane.\n\nEntries are in commit order: each entry's commit sequence and control revision are past the\nprevious entry's, which deserialization checks. The bound is the profile's\n[`ControlRing::entries`]: the ring is full when it holds that many unpublished receipts.\nPublished entries are kept while there is room and give way, oldest first, to new receipts.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ControlReceipt"
+      }
+    },
+    "ControlReceiptState": {
+      "description": "The state of a control receipt in the ring.",
+      "oneOf": [
+        {
+          "description": "The receipt's audit event is not yet published. The initial state.",
+          "type": "string",
+          "const": "UNPUBLISHED"
+        },
+        {
+          "description": "The receipt's audit event is published.",
+          "type": "string",
+          "const": "PUBLISHED"
+        }
+      ]
+    },
+    "ControlRevision": {
+      "type": "integer",
+      "format": "int64",
+      "maximum": 9223372036854775807,
+      "minimum": 0
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "Namespace": {
+      "type": "string",
+      "maxLength": 63,
+      "minLength": 1,
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "ObjectName": {
+      "type": "string",
+      "maxLength": 253,
+      "minLength": 1,
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+    },
+    "ObjectRef": {
+      "description": "A reference to one object: its namespace, name and UID.\n\nThe UID pins the reference to one incarnation of the name: an object deleted and created\nagain under the same name is a different object.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The object's name.",
+          "$ref": "#/$defs/ObjectName"
+        },
+        "namespace": {
+          "description": "The object's namespace.",
+          "$ref": "#/$defs/Namespace"
+        },
+        "uid": {
+          "description": "The object's UID.",
+          "$ref": "#/$defs/Uid"
+        }
+      },
+      "required": [
+        "namespace",
+        "name",
+        "uid"
+      ]
+    },
+    "PendingCommit": {
+      "description": "The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.\n\nThe slot names its command's receipt, prepared before the commit, by `receipt_uid`, binds\nits audit event by `audit_digest`, and holds its effect intents. KERNEL §1 has the slot hold\nthe exact receipt and audit envelope so that a new process can rebuild both from it;\nwhether these fields suffice to rebuild a domain event is open in #329.",
+      "type": "object",
+      "properties": {
+        "after_digest": {
+          "description": "The aggregate's domain digest after the commit.",
+          "$ref": "#/$defs/Digest"
+        },
+        "audit_digest": {
+          "description": "The digest of the commit's audit event.",
+          "$ref": "#/$defs/Digest"
+        },
+        "before_digest": {
+          "description": "The aggregate's domain digest before the commit.",
+          "$ref": "#/$defs/Digest"
+        },
+        "command_uid": {
+          "description": "The UID of the committed command.",
+          "$ref": "#/$defs/Uid"
+        },
+        "commit_sequence": {
+          "description": "The commit's sequence on the aggregate.",
+          "$ref": "#/$defs/CommitSequence"
+        },
+        "control_revision_at_commit": {
+          "description": "The aggregate's `control_revision` when the commit landed.",
+          "$ref": "#/$defs/ControlRevision"
+        },
+        "effect_intents": {
+          "description": "The effect intents of the commit, in effect-index order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SlotEffectIntent"
+          }
+        },
+        "expected_revision": {
+          "description": "The `state_revision` the command pinned.",
+          "$ref": "#/$defs/StateRevision"
+        },
+        "proposed_revision": {
+          "description": "The `state_revision` the commit produced.",
+          "$ref": "#/$defs/StateRevision"
+        },
+        "receipt_uid": {
+          "description": "The UID of the command's receipt.",
+          "$ref": "#/$defs/Uid"
+        },
+        "state": {
+          "description": "The slot's state.",
+          "$ref": "#/$defs/PendingCommitState"
+        }
+      },
+      "required": [
+        "command_uid",
+        "receipt_uid",
+        "commit_sequence",
+        "before_digest",
+        "after_digest",
+        "expected_revision",
+        "proposed_revision",
+        "control_revision_at_commit",
+        "audit_digest",
+        "effect_intents",
+        "state"
+      ]
+    },
+    "PendingCommitState": {
+      "description": "The state of an aggregate's pending commit slot.",
+      "oneOf": [
+        {
+          "description": "The slot's receipt and audit event are written and verified; the next domain commit may\nproceed. The initial state.",
+          "type": "string",
+          "const": "CLEARED"
+        },
+        {
+          "description": "A domain commit installed the slot and its receipt barrier holds.",
+          "type": "string",
+          "const": "OCCUPIED"
+        },
+        {
+          "description": "A new process is reconstructing the slot's receipt and audit event.",
+          "type": "string",
+          "const": "REPAIRING"
+        }
+      ]
+    },
+    "Principal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "SlotEffectIntent": {
+      "description": "One effect intent as a pending commit holds it.\n\nIt holds the fields of the FORMAL §2 `EffectIntent` record that the commit decides. The\nrest follow from it: `aggregate_uid` is the UID of the aggregate whose slot holds the\nintent, `committed_revision` is the slot's `proposed_revision`, `uid` and `operation_key`\nare derived from those and the fields here, and `state` belongs to the `EffectIntent`\nobject materialized from it.",
+      "type": "object",
+      "properties": {
+        "contract_revision": {
+          "description": "The revision of the provider contract the intent is written against.",
+          "type": "string"
+        },
+        "desired_outcome": {
+          "description": "The outcome the effect is to produce.",
+          "type": "string"
+        },
+        "effect_index": {
+          "description": "The position of the intent among the commit's intents.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "installation_lineage": {
+          "description": "The installation lineage the intent's operation key binds.",
+          "type": "string"
+        },
+        "payload_digest": {
+          "description": "The digest of the intent's payload.",
+          "$ref": "#/$defs/Digest"
+        },
+        "provider_binding": {
+          "description": "The provider binding that is to carry out the effect.",
+          "type": "string"
+        },
+        "target_identity": {
+          "description": "The identity of the effect's target at the provider.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_index",
+        "installation_lineage",
+        "payload_digest",
+        "provider_binding",
+        "desired_outcome",
+        "target_identity",
+        "contract_revision"
+      ]
+    },
+    "StateRevision": {
+      "type": "integer",
+      "format": "int64",
+      "maximum": 9223372036854775807,
+      "minimum": 0
+    },
+    "Uid": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
