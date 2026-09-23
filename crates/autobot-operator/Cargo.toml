@@ -4,6 +4,7 @@ description = "The AutoBot operator binary."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [[bin]]
