@@ -627,15 +627,7 @@ fn background(set: &DesignSet, out: &mut Vec<Violation>) {
 /// Link targets on one line of Markdown outside code: inline links, autolinks and
 /// reference definitions.
 fn link_targets(line: &str) -> Vec<String> {
-    let mut plain = String::new();
-    let mut in_code = false;
-    for c in line.chars() {
-        if c == '`' {
-            in_code = !in_code;
-        } else if !in_code {
-            plain.push(c);
-        }
-    }
+    let plain = strip_code_spans(line);
     let mut targets = Vec::new();
     let trimmed = plain.trim_start();
     if trimmed.starts_with('[')
@@ -662,6 +654,47 @@ fn link_targets(line: &str) -> Vec<String> {
         rest = &after[end..];
     }
     targets
+}
+
+/// `line` without its CommonMark code spans: a backtick run opens a span that the next
+/// run of the same length closes, and a run with no such closer is literal text.
+fn strip_code_spans(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let run_at = |i: usize| bytes[i..].iter().take_while(|&&b| b == b'`').count();
+    let mut plain = String::new();
+    let mut i = 0;
+    let mut copied = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let open = run_at(i);
+        let mut j = i + open;
+        let mut close = None;
+        while j < bytes.len() {
+            if bytes[j] == b'`' {
+                let run = run_at(j);
+                if run == open {
+                    close = Some(j + run);
+                    break;
+                }
+                j += run;
+            } else {
+                j += 1;
+            }
+        }
+        match close {
+            Some(end) => {
+                plain.push_str(&line[copied..i]);
+                copied = end;
+                i = end;
+            }
+            None => i += open,
+        }
+    }
+    plain.push_str(&line[copied..]);
+    plain
 }
 
 /// Where a link target from `file` points inside the set, or why it leaves it.
@@ -996,6 +1029,23 @@ mod tests {
         let got = check(&set).unwrap();
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0].message, "the link `gone.md` resolves to no file");
+        // A code span closes only on a backtick run of its own length, and an unmatched
+        // run is literal, so neither hides the link after it.
+        for (line, target) in [
+            ("``a`b`` [hid](nowhere.md)", "nowhere.md"),
+            ("it's a `stray backtick [x](gone.md)", "gone.md"),
+        ] {
+            set.insert("extensions/sample.md", &format!("# S\n\n{line}\n"));
+            let got = check(&set).unwrap();
+            assert_eq!(got.len(), 1, "{line}: {got:?}");
+            assert_eq!(
+                got[0].message,
+                format!("the link `{target}` resolves to no file")
+            );
+        }
+        // A double-backtick span that holds a single backtick still hides its link.
+        set.insert("extensions/sample.md", "# S\n\n`` a ` [k](x.md) ``\n");
+        assert_eq!(check(&set).unwrap(), []);
     }
 
     #[test]
