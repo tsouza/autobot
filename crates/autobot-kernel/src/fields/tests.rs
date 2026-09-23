@@ -2,8 +2,8 @@ use super::*;
 use crate as autobot_kernel;
 use crate::profile::{ControlRing, Profile};
 use crate::status::{
-    AuditEnvelope, ControlReceipt, ControlReceiptState, PendingCommit, PendingCommitState,
-    StatusEnvelope,
+    AuditEnvelope, Condition, ConditionStatus, ControlReceipt, ControlReceiptState, PendingCommit,
+    PendingCommitState, StatusEnvelope,
 };
 use crate::types::{CommitSequence, ControlRevision, Digest, StateRevision};
 use serde::Serialize;
@@ -286,10 +286,7 @@ fn work_context_partition_is_kernel_section_1() {
     assert_eq!(
         paths_in::<WorkContextStatus>(Domain),
         [
-            "observed_generation",
-            "conditions",
             "state_revision",
-            "last_receipt_ref",
             "admission_sequence",
             "manager_authority[*]",
             "manager_authority[*].lease_uid",
@@ -321,24 +318,19 @@ fn other_kind_partition_is_kernel_section_1() {
         paths_in::<TaskStatus>(Reconciliation),
         clause_for("Task").reconciliation
     );
-    assert_eq!(
-        paths_in::<TaskStatus>(Domain),
-        [
-            "observed_generation",
-            "conditions",
-            "state_revision",
-            "last_receipt_ref",
-            "state",
-        ]
-    );
+    assert_eq!(paths_in::<TaskStatus>(Domain), ["state_revision", "state",]);
 }
 
 #[test]
-fn slot_body_and_ring_entries_are_structural() {
+/// The envelope's bookkeeping is structural as #365 decides; so are the slot body and ring entries.
+fn bookkeeping_slot_body_and_ring_entries_are_structural() {
     assert_eq!(
         paths_in::<TaskStatus>(Structural),
         [
+            "observed_generation",
+            "conditions",
             "commit_sequence",
+            "last_receipt_ref",
             "pending_commit",
             "pending_commit.command_uid",
             "pending_commit.receipt_uid",
@@ -616,6 +608,43 @@ fn installing_the_first_slot_and_ring_touches_their_classes() {
     let mut after = before.clone();
     after.envelope.control_receipt_ring = Some(Default::default());
     assert_eq!(classify(&before, &after), set(&[Structural]));
+}
+
+#[test]
+fn a_control_commit_setting_a_condition_is_a_control_write() {
+    let before = run();
+    let mut after = before.clone();
+    after.envelope.control_revision = crev(1);
+    after.envelope.commit_sequence = seq(1);
+    after.envelope.conditions.push(Condition {
+        type_: "ControlRingFull".to_owned(),
+        status: ConditionStatus::True,
+        observed_generation: None,
+        last_transition_time: "2026-01-01T00:00:00Z".to_owned(),
+        reason: "UnpublishedReceipts".to_owned(),
+        message: "the control-receipt ring is full".to_owned(),
+    });
+    let touched = classify(&before, &after);
+    assert_eq!(touched, set(&[Control, Structural]));
+    assert_eq!(touched.write(), Ok(Write::Control));
+
+    let mut condition_only = before.clone();
+    condition_only.envelope.conditions = after.envelope.conditions.clone();
+    assert_eq!(
+        classify(&before, &condition_only).write(),
+        Err(RejectedWrite::StructuralOnly)
+    );
+}
+
+#[test]
+fn removing_the_slot_touches_its_classes() {
+    let before = work_context();
+    let mut after = before.clone();
+    after.envelope.pending_commit = None;
+    assert_eq!(
+        classify(&before, &after),
+        set(&[Structural, Reconciliation])
+    );
 }
 
 #[test]

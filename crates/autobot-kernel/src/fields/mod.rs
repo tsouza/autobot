@@ -25,24 +25,27 @@
 //! | `TaskRun`, `AgentRun` | `fence_state`, `execution_epoch`, `revocation_generation` | `pending_commit.state`, `control_receipt_ring[*].state` |
 //! | every other kind | none | `pending_commit.state`, `control_receipt_ring[*].state` where a ring exists |
 //!
-//! Every kind also has `control_revision` as a control field and `commit_sequence` as a
-//! structural one (below). Everything else is domain.
+//! Every kind also has `control_revision` as a control field and `commit_sequence`,
+//! `last_receipt_ref`, `observed_generation` and `conditions` as structural ones (below).
+//! Everything else is domain.
 //!
 //! Choices this module makes where the design is open:
 //!
-//! - KERNEL §1 names `state_revision`, `control_revision` and `commit_sequence` among no class,
-//!   so its "everything else is domain" would make them domain, yet a control commit increments
-//!   `control_revision` and `commit_sequence` while preserving every domain field. Following
-//!   FORMAL F-4, "a control commit changes only control fields and `control_revision`",
-//!   `state_revision` is domain, `control_revision` is control, and `commit_sequence`, which
-//!   both lanes increment and neither digest can cover, is structural.
+//! - The envelope's counters and bookkeeping follow the decision in #365: `state_revision` is
+//!   domain, `control_revision` is control, and `commit_sequence`, `last_receipt_ref`,
+//!   `observed_generation` and `conditions` are structural, so either lane's commit may write
+//!   them and they are in neither digest. A control commit may therefore set a condition, such
+//!   as the ring-full degraded condition. `control_revision` is control on every kind; that a
+//!   kind without a control lane never changes it is left to admission (#327).
 //! - A value added to or removed from a container, or an `Option` becoming present or absent,
 //!   touches the container's shape class and the class of every part of the value: a new
 //!   `manager_authority` entry touches domain and control, as #301 reads KERNEL §1.
 //! - `Vec` elements are compared by position; `BTreeMap` values by key.
-//! - A write that touches structural parts and neither domain nor control fields is rejected:
-//!   the slot body is installed only by a domain commit and ring entries are appended only by a
-//!   control commit, and a reconciliation-only CAS writes nothing but reconciliation fields.
+//! - A write that touches structural parts and neither domain nor control fields is rejected,
+//!   including one that changes only a condition: every commit also advances its own lane's
+//!   revision, the slot body is installed only by a domain commit, ring entries are appended
+//!   only by a control commit, and a reconciliation-only CAS writes nothing but reconciliation
+//!   fields.
 //! - Whether a reconciliation-only write appends a `dispatch_ledger` entry, which KERNEL §1
 //!   forbids, is outside the classes: the whole ledger is one reconciliation field.
 //! - Paths name fields by their Rust names, which KERNEL §1 prints; a flattened field adds no

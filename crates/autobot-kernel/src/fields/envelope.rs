@@ -50,12 +50,12 @@ macro_rules! record_classes {
 
 record_classes! {
     StatusEnvelope {
-        observed_generation: Domain,
-        conditions: Domain,
+        observed_generation: Structural,
+        conditions: Structural,
         state_revision: Domain,
         control_revision: Control,
         commit_sequence: Structural,
-        last_receipt_ref: Domain,
+        last_receipt_ref: Structural,
     }
     nested {
         pending_commit: Structural as Option<PendingCommit>,
