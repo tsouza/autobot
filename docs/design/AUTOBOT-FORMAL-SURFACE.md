@@ -27,31 +27,46 @@ Aggregate            = [uid, kind, context_uid, domain_digest, control_digest,
 CommandReceipt       = [uid, command_uid, idempotency_key, target_kind, target_uid, parent_context_uid,
                         principal, expected_revision, proposed_revision, commit_sequence,
                         input_digest, origin_metadata, issue_time, expiry_time, terminal_result,
+                        rejection_proof,         \* NONE unless terminal_result is REJECTED
                         state_digest, policy_digest, scope_digest, schema_version, reducer_version,
                         replay_identity, state]
+RejectionProof       = [ground ∈ {passed_revision, replay_conflict, create_conflict, guard_refusal},
+                        observed_revision,                            \* passed revision
+                        observed_commit_sequence,                     \* passed revision, create conflict
+                        existing_receipt_uid, bound_digest,           \* replay conflict
+                        observed_uid,                                 \* create conflict
+                        guard_id, read_revision]                      \* guard refusal
+AuditEnvelope        = [aggregate_uid, commit_sequence, lane ∈ {DOMAIN, CONTROL}, state_revision,
+                        control_revision, source_uid, event_type, state_digest,
+                        actor, causation_id, correlation_id, schema_version]
+EffectIntentRecord   = [operation_key, effect_index, payload_digest,
+                        provider_binding,        \* [provider, operation]: the key of its ProviderCapability
+                        desired_outcome, target_identity, contract_revision]
 PendingCommit        = [command_uid, receipt_uid, commit_sequence, before_digest, after_digest,
                         expected_revision, proposed_revision, control_revision_at_commit,
-                        audit_digest, effect_intents, state ∈ {OCCUPIED, REPAIRING, CLEARED}]
+                        audit_envelope,          \* AuditEnvelope: rebuilds the event with no other read
+                        effect_intents,          \* ordered, bounded list of EffectIntentRecord
+                        state ∈ {OCCUPIED, REPAIRING, CLEARED}]
 ControlReceipt       = [control_uid, control_revision, commit_sequence, before_control_digest,
-                        after_control_digest, audit_envelope, principal,
+                        after_control_digest, audit_envelope, principal,   \* audit_envelope: AuditEnvelope
                         state ∈ {UNPUBLISHED, PUBLISHED}]         \* ring, bounded
 CreateIdentity       = [receipt_uid, context_uid, target_kind, parent_uid, target_name, input_digest]
-AutoBotEvent         = [aggregate_uid, commit_sequence, lane ∈ {DOMAIN, CONTROL}, state_revision,
-                        control_revision, source_uid, event_type, event_digest, state_digest,
-                        actor, causation_id, correlation_id, schema_version]
+AutoBotEvent         = AuditEnvelope ⊕ [event_digest]
 ProjectionState      = [aggregate_uid, applied_commit_sequence, late_event_buffer,
                         gap ∈ {NONE, OPEN, PERMANENT}, integrity ∈ {OK, DIGEST_CONFLICT}, stalled]
 
 \* dispatch registers                                             KERNEL §3–§4
-WorkContextRegisters = [hold_state, hold_generation, admission_sequence,
+WorkContextRegisters = [hold_state, hold_generation,
+                        hold_causes,             \* set of Intervention uid (HOLD or KILL_SWITCH)
+                        admission_sequence,
                         manager_authority,       \* plan_uid → ManagerAuthority
                         plan_authority,          \* plan_uid → PlanAuthority
                         integration_authority,   \* basis_uid → [basis_generation, state]
                         dispatch_authority_generation, dispatch_ledger, active_manager_transaction]
 ManagerAuthority     = [lease_uid, epoch, holder, deadline, phase ∈ {ACTIVE, DRAINING}]
 PlanAuthority        = [active_revision, snapshot_digest, activation_receipt_uid,
-                        revision_phase ∈ {ACTIVE, QUIESCING, NONE}, plan_generation]
-ManagerReservation   = [target_uid, expected_revision, command_uid,
+                        revision_phase ∈ {ACTIVE, QUIESCING}, plan_generation]   \* absent: no active revision
+ManagerReservation   = [plan_uid, target_uid, expected_revision, command_uid,
                         phase ∈ {RESERVED, APPLYING, RESOLVED},
                         target_receipt_uid, cancellation_receipt_uid,
                         terminal_state ∈ {COMMITTED, CANCELLED, REJECTED, NONE}]
@@ -65,9 +80,8 @@ DispatchLedgerEntry  = [operation_uid, operation_key, permit_uid, acceptance_seq
                         send_state ∈ {ACCEPTED_NOT_SENT, SEND_ATTEMPTED, ACKNOWLEDGED}]
 
 \* effects                                                        KERNEL §3.3
-EffectIntent         = [uid, operation_key, installation_lineage, aggregate_uid, committed_revision,
-                        effect_index, payload_digest, provider_binding, desired_outcome,
-                        target_identity, contract_revision, state]
+EffectIntent         = EffectIntentRecord ⊕ [uid, installation_lineage, aggregate_uid,
+                        committed_revision, state]
 ExternalOperation    = [uid, operation_key, attempt_index, provider, remote_identity, source_head,
                         base_head, capability_digest, permit_uid,
                         send_attempt,            \* NONE | [attempt_index, started_at, acceptance_sequence]
@@ -167,15 +181,31 @@ DetectAuditGap · DeclarePermanentGap · RejectDigestConflict
 ReserveCreateIdentity · AtomicCreate · RecoverCreateByName
 
 \* WorkContext registers and permits (each a CAS by the Context controller, on WorkContext or AdmissionStamp)
-RequestHold · PropagateHold · EnforceHold · ReleaseHold
-DrainManager · ReserveManagerTransaction
-ResolveReservedCommand · CancelReservedCommand      (CAS on the reserved command's target by its owning controller; the slot is then released through a Context command)
-AdvanceManagerEpoch         domain; precondition phase = DRAINING ∧ slot empty
+RequestHold                 control; applies a HOLD or KILL_SWITCH: adds it to hold_causes; from RUNNING also RUNNING → FREEZE_PENDING (the cut), else hold_state unchanged
+PropagateHold               control; FREEZE_PENDING → PROPAGATING; after every ISSUED permit of the context is INVALIDATED
+EnforceHold                 control; PROPAGATING → ENFORCED; precondition dispatch_ledger empty
+ReleaseHold                 control; applies a RESUME in ENFORCED or RELEASING: removes only the cause it answers; ENFORCED → RELEASING when hold_causes becomes empty
+CompleteHoldRelease         control; RELEASING → RUNNING; precondition hold_causes empty; after every permit ISSUED under an earlier hold_generation is INVALIDATED
+InstallManagerAuthority     domain; creates manager_authority[plan] with epoch 1 and deadline now + lease duration, phase unwritten (reads ACTIVE, KERNEL §1); precondition no entry for the plan ∧ fewer entries than the profile's plans
+RenewManagerAuthority       domain; deadline := now + lease duration; precondition holder, lease_uid, epoch match ∧ phase = ACTIVE ∧ now < deadline
+DrainManager                control; phase := DRAINING; precondition deadline passed ∨ takeover requested
+ReserveManagerTransaction   domain; slot := RESERVED for the command; precondition holder, lease_uid, epoch match ∧ phase = ACTIVE ∧ now < deadline ∧ slot empty (absent or RESOLVED)
+ClaimManagerTransaction     domain; RESERVED → APPLYING; precondition the slot holds the command ∧ phase = ACTIVE ∧ epoch = the command's epoch
+ResolveReservedCommand · CancelReservedCommand      (CAS on the reserved command's target by its owning controller, only while the slot is APPLYING for that command; the cancel consumes the reserved expected revision)
+ReleaseManagerTransaction   domain; → RESOLVED with a non-empty terminal_state and the receipt that proves it; from RESERVED only as CANCELLED, with no target write
+AdvanceManagerEpoch         domain; sets holder, lease_uid, epoch := e+1, deadline; precondition phase = DRAINING ∧ slot empty
 ResumeManager               control; precondition epoch = e+1
-ActivatePlanRevision · QuiescePlan · ResumePlanRevision · SupersedePlanRevision   (plan_generation+1 each)
-InvalidatePlanPermits
-ReserveIntegrationBasis · InvalidateIntegrationBasis                                (basis_generation+1)
-AdvanceDispatchAuthorityGeneration
+ActivatePlanRevision        domain; first activation: creates plan_authority[plan] = (R, snapshot, receipt, ACTIVE, 1); precondition no entry ∧ manager_authority[plan] present
+QuiescePlan                 domain; revision_phase := QUIESCING; precondition ACTIVE
+ResumePlanRevision          domain; revision_phase := ACTIVE, same revision; precondition QUIESCING
+SupersedePlanRevision       domain; plan_authority[plan] := (R2, snapshot, receipt, ACTIVE, plan_generation+1); precondition QUIESCING at R1 ∧ R2 ≠ R1
+                            (ActivatePlanRevision, QuiescePlan, ResumePlanRevision, SupersedePlanRevision: plan_generation+1 each)
+InvalidatePlanPermits       after QuiescePlan: every ISSUED permit pinning the plan at an earlier plan_generation → INVALIDATED
+RetirePlanAuthority         domain; removes plan_authority[plan] and manager_authority[plan]; precondition the Plan terminal ∧ manager_authority[plan].phase = ACTIVE ∧ no RESERVED or APPLYING slot for the plan
+ReserveIntegrationBasis     domain; basis_generation+1, state := RESERVED; refuses a new basis when the entries equal the profile's bases
+InvalidateIntegrationBasis  domain; basis_generation+1, state := INVALIDATED
+RetireIntegrationBasis      domain; removes integration_authority[basis]; precondition the IntegrationBasis terminal ∧ state = INVALIDATED
+AdvanceDispatchAuthorityGeneration   control; dispatch_authority_generation := the witness_generation of a recorded RestoreWitnessReceipt
 IssueAdmissionStamp · InvalidateAdmissionStamp
 AcceptDispatch              preconditions = registers; admission_sequence+1; ledger append
 RejectStalePermit
@@ -245,7 +275,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 - F-1 *Idempotency.* One replay identity commits at most one payload to at most one aggregate revision; a differing payload or principal under the same key is rejected.
 - F-2 *Receipt durability.* Every committed command has exactly one `COMMITTED` receipt whose identity no later revision can erase; a `PREPARED` receipt never implies commitment.
 - F-3 *Receipt barrier.* No domain commit lands on an aggregate whose pending slot is `OCCUPIED` or `REPAIRING`; a slot is cleared only after its receipt and event are verified.
-- F-4 *Lane separation.* A control commit changes only control fields and `control_revision`, preserves the slot and every domain field, appends its receipt in the same CAS; a reconciliation-only CAS changes only reconciliation fields and no revision; `commit_sequence` is strictly increasing across both lanes; a full ring refuses rather than drops.
+- F-4 *Lane separation.* A domain commit changes no control field; a control commit changes only control fields, `control_revision` among them, preserves the slot and every domain field, and appends its receipt in the same CAS; either lane may also write the structural fields `commit_sequence`, `last_receipt_ref`, `observedGeneration` and `conditions`, which are in neither digest; a reconciliation-only CAS changes only reconciliation fields and no revision; `commit_sequence` is strictly increasing across both lanes; a full ring refuses rather than drops.
 - F-5 *Create identity.* A create resolves to one object with origin metadata equal to its receipt; a lost acknowledgement never produces a second object.
 - F-6 *Projection order.* A projection applies event k only after every event < k; a same-identity different-digest event is rejected and quarantined; a gap is visible until repaired or declared permanent.
 
@@ -254,7 +284,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 - F-8 *Hold.* Only permits accepted before `RequestHold` complete; every permit issued under a previous `RUNNING` generation fails after `ReleaseHold`.
 - F-9 *Plan generation.* No permit pinning `(revision R, generation g)` is accepted unless the register holds `(R, ACTIVE, g)`; every `ActivatePlanRevision`, `QuiescePlan`, `ResumePlanRevision` and `SupersedePlanRevision` changes the generation, so no permit issued before any of them is accepted after it — including a permit issued before a quiesce and presented after a resume of the same revision; and no permit is issued while the register phase is not `ACTIVE`.
 - F-10 *Basis.* A merge permit pinning generation g is not accepted after `InvalidateIntegrationBasis` advanced it.
-- F-11 *Manager epoch.* A target commits a Manager command only against the reservation held for that command, taken while `phase = ACTIVE` at the epoch the command pins, and not yet resolved or cancelled; a reservation is taken only while `phase = ACTIVE`; no permit is accepted between `AdvanceManagerEpoch` and `ResumeManager`; after `ResumeManager` no permit pinning the old epoch is accepted; a reservation is released only with a recorded terminal receipt.
+- F-11 *Manager epoch.* A target commits a Manager command only against the reservation held for that command, taken and claimed while `phase = ACTIVE` at the epoch the command pins, not yet resolved or cancelled, and only while that epoch is still the register's epoch; a reservation is taken and claimed only while `phase = ACTIVE`; no permit is accepted between `AdvanceManagerEpoch` and `ResumeManager`; after `ResumeManager` no permit pinning the old epoch is accepted; a reservation is released only with a recorded terminal receipt.
 - F-12 *Register acknowledgement.* No `Plan`, `IntegrationBasis` or `ManagerLease` status claims a revision, generation or epoch the register does not hold; only the Context controller writes `WorkContext` status.
 - F-13 *Graph activation.* No member is ready or admitted before a verified `ACTIVATED` snapshot and matching register.
 - F-14 *Routing pin.* A `TaskRun`'s routing pin, consequence class and floor never change; a permit's pin equals its `TaskRun`'s.
