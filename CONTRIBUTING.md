@@ -9,7 +9,7 @@
 
 ## Findings
 
-Anything outside a task's scope is reported, never fixed in passing. A finding is an issue labelled `finding` plus one of `design`, `bug` or `debt`, filed as a sub-issue of the epic that owns its scope and placed in that epic's milestone. A `design` finding also carries `needs-decision`. There is no backlog milestone.
+Anything outside a task's scope is reported, never fixed in passing. A finding is an issue in the capsule format labelled `finding` plus one of `design`, `bug` or `debt`, filed as a sub-issue of the epic that owns its scope and placed in that epic's milestone. A `design` finding also carries `needs-decision`. There is no backlog milestone.
 
 ## Worktrees and branches
 
@@ -30,19 +30,19 @@ The branch name is `<issue#>-<slug>`. Remove the worktree once its pull request 
 
 ## Review and merge
 
-- A fresh reviewer session, never the author's, reviews every pull request against its task issue and posts one comment whose first line is exactly:
+- A fresh reviewer session, never the author's, reviews every pull request against its task issue (checklist in `AGENTS.md`) and posts one comment whose first line is exactly:
 
   ```text
   Review verdict: PASS @ <full-head-sha>
   ```
 
   or `Review verdict: FAIL @ <full-head-sha>`, followed by what was checked and, for a FAIL, each defect with file and line.
-- The verdict binds to that head SHA only. Any new push needs a new verdict.
-- `main` merges only through pull requests with squash. Auto-merge is enabled on a pull request only after a PASS verdict names its current head SHA; GitHub performs the merge.
+- The verdict binds to that head SHA only. Any new push needs a new verdict. The `review-gate` check reads this first line.
+- `main` merges only through pull requests with squash, and GitHub performs every merge through auto-merge. Until `review-gate` is a required check, auto-merge is enabled on a pull request only after a PASS verdict names its current head SHA: with no required checks, enabling auto-merge merges immediately.
 
 ## Lanes
 
-- Tasks that touch `.github/workflows/**`, the repository ruleset or settings, or `docs/design/**` carry `human-lane`. They are done in owner-supervised sessions; autonomous loops skip them.
+- Tasks that touch `.github/workflows/**`, the repository ruleset or `docs/design/**` carry `human-lane`. They are done only in sessions the owner supervises; unsupervised agents and autonomous loops skip them.
 - `docs/design/` changes only through pull requests labelled `design-change`. Implementation work that finds the design wrong files a `design` finding instead of editing it.
 
 ## Tests
