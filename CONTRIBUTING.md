@@ -26,6 +26,19 @@ just wt rm <issue#>    # remove the worktree and its branch
 - `just wt rm` refuses while the branch has commits that no remote-tracking branch contains, unless the branch tip is the head of a merged pull request (the remote branch may already be deleted and pruned). Remove the worktree once its pull request is merged. To discard unpushed work instead, run `git worktree remove <path>` and `git branch -D <branch>`.
 - `just hooks` installs a pre-push hook that rejects a push whose commit messages or added lines (including the lines a merge commit adds, such as a conflict resolution) match an expression in the machine-local `~/.config/autobot/deny-terms` (one case-insensitive regular expression per line). Without that file every push passes. It is never committed.
 
+## Build cache
+
+Local builds share one sccache server and one cache directory across every worktree. The repository configures no compiler wrapper and exports no `CARGO_*` variable; each machine sets `[build] rustc-wrapper = "sccache"` in its home Cargo configuration (`~/.cargo/config.toml`). Each worktree keeps its own `target/`, and incremental compilation stays on.
+
+sccache's key for a Rust compilation includes its working directory, its `CARGO_*` environment variables and the compiler version, and `SCCACHE_BASEDIRS` does not apply to Rust. Dependency crates build from the shared registry, so a second worktree at the same commit gets them from the cache, apart from crates whose compilation depends on build-script output under the worktree's own `target/`, which miss once per worktree. Workspace crates build from the worktree path with incremental compilation, which sccache does not cache, so every worktree compiles them itself.
+
+```sh
+just doctor            # tool versions, the wrapper, the server, volumes, Justfile exports
+just doctor --measure  # also the sccache hit split: dependencies, then workspace
+```
+
+`just doctor` checks that rust-script, just, cargo-nextest, cargo-deny, cargo-machete and sccache run; that the effective rustc wrapper is sccache from the home Cargo configuration; that the sccache server is running; that its cache directory and `.worktrees`, followed through symlinks, are on the volume `require_mount_uuid` names in `~/.config/autobot/local.toml`, when it names one; and that the Justfile exports no `CARGO_*` variable. `--measure` builds into `target/doctor`, emptied first: it zeroes the sccache counters, builds the non-workspace packages of the resolve and prints the counters as the dependency split, then zeroes them, builds the workspace and prints the workspace split. The counters are the shared server's, so builds running elsewhere at the same time are included.
+
 ## Pull requests
 
 - **Title:** Conventional Commits (`feat(kernel): …`, `fix(docs): …`, `chore: …`). Merges are squash-only, so the title becomes the commit on `main`.

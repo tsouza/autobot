@@ -5,6 +5,8 @@
 
 pub mod cargo;
 pub mod design;
+#[cfg(feature = "doctor")]
+pub mod doctor;
 pub mod git;
 #[cfg(feature = "github")]
 pub mod github;
