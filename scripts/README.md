@@ -8,7 +8,7 @@ A script is invoked as `rust-script --force --debug scripts/<name>.rs` with `RUS
 
 | Feature | Dependency | Gates | Used by |
 | --- | --- | --- | --- |
-| `github` | `ureq` | the `github` module (the GitHub API client), `worktree::cli`, and the `Http` and `Token` variants of `Error` | `scripts/review_gate.rs`, `scripts/repo_settings.rs`, `scripts/wt.rs` |
+| `github` | `ureq` | the `github` module (the GitHub API client), `worktree::cli`, and the `Http` and `Token` variants of `Error` | `scripts/review_gate.rs`, `scripts/repo_settings.rs`, `scripts/wt.rs`, `scripts/dag.rs`, `scripts/dag_lint.rs`, `scripts/dependabot_automerge.rs` |
 | `hooks` | `regex` | the `hooks` module: the hook installer behind `just hooks` and the deny-terms check behind `just hook-pre-push` | `scripts/hooks.rs` |
 | `doctor` | `toml` | the `doctor` module behind `just doctor` | `scripts/doctor.rs` |
 
