@@ -54,6 +54,10 @@ check-design:
 check-retired-terms:
     {{rs}} scripts/retired_terms.rs .
 
+# Write assets/banner.svg, the README banner image, from assets/banner.txt.
+banner-svg:
+    {{rs}} scripts/banner.rs assets/banner.txt assets/banner.svg
+
 # Check the crate dependency rules: layers, test-only crates and thin binaries.
 layering:
     {{rs}} scripts/layering.rs .
