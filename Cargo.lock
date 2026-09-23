@@ -59,7 +59,9 @@ dependencies = [
 name = "autobot-fakes"
 version = "0.0.0"
 dependencies = [
+ "autobot-adapters",
  "autobot-kernel",
+ "sha2",
 ]
 
 [[package]]
