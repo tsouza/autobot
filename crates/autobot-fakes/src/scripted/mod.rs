@@ -30,8 +30,8 @@
 //! - Budget is one unit per call asked of the broker.
 //! - A record's name is its kind and the `AgentRun`, so every retry of the same session end
 //!   resolves to the same record; its create key is the digest of its name and input digest.
-//! - A replacement attempt's handling of open invocations is the open question #300; the agent
-//!   lists them in its checkpoint and leaves resuming them to the next fixture.
+//! - The agent lists its open invocations in its checkpoint and leaves resuming them, by a
+//!   continuation or by a later attempt that inherits them (KERNEL §9), to the next fixture.
 
 use autobot_adapters::artifact::sha256;
 use autobot_adapters::runtime::{

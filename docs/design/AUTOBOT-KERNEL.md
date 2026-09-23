@@ -120,7 +120,7 @@ An `AdmissionStamp` (**permit**) is a capability to *request* acceptance, nothin
 
 **Issue.** For an operation in `REQUESTED` with no ledger entry, and whose previous permit, if any, is `CONSUMED`, `INVALIDATED` or `EXPIRED`, the broker submits the create of its permit under the §2 create protocol, with client request key `(operation_uid, operation state_revision)`: a lost acknowledgement resolves to the same permit, and each return to `REQUESTED` yields a new key. The Context controller validates the create against one read of the registers and refuses it unless `hold_state = RUNNING`, `plan_authority[plan].revision_phase = ACTIVE` and `manager_authority[plan].phase = ACTIVE`. It pins every register value from that same read, and the reservation, grant, capsule digest, routing pin, `provider_binding` and effect digest the broker names. A **merge** is an effect whose provider operation integrates source heads into a base branch; a permit whose `provider_binding` names a merge always pins an integration basis; a merge create without one is refused. A permit's `expires_at` is at most its creation time plus the profile's replay window, and every `AcceptDispatch` pins that replay window (§2), so a replay of an acceptance is never `REPLAY_EXPIRED` while its permit can still be accepted. On the permit's `COMMITTED` create receipt the broker CASes the operation `REQUESTED → PERMITTED`, recording `permit_uid`.
 
-`AcceptDispatch(permit)` is one `WorkContext` domain commit, submitted by the broker with idempotency key `permit_uid`, whose preconditions are these:
+`AcceptDispatch(permit)` is one `WorkContext` domain commit, submitted by the broker with idempotency key `permit_uid` only while the permit's operation records it as `PERMITTED` (§3.3, unsent operations), whose preconditions are these:
 
 ```text
 permit.state = ISSUED                                            (read before the CAS)
@@ -299,6 +299,9 @@ CommandReceipt       PREPARED → COMMITTED | REJECTED | CANCELLED | REPLAY_EXPI
 AdmissionStamp       ISSUED → BROKER_ACCEPTED → CONSUMED
                      ISSUED | BROKER_ACCEPTED → INVALIDATED ; ISSUED → EXPIRED
                      (BROKER_ACCEPTED → INVALIDATED only on a currency or register re-validation failure, or a blocked-target refusal at 2a, before any send_attempt)
+                     (ISSUED → BROKER_ACCEPTED only for a permit its operation records as PERMITTED, the only permit the broker
+                      submits AcceptDispatch for; a permit whose create lands after its operation ended is never accepted and
+                      ends INVALIDATED or EXPIRED, §3.3)
 
 ExternalOperation,   REQUESTED → PERMITTED → DISPATCHING → CONFIRMED | REJECTED | FAILED
 ToolInvocation       PERMITTED → REQUESTED                          (permit invalidated: before acceptance, or on a currency or register re-validation failure or a blocked-target refusal at 2a, before any send)
@@ -327,8 +330,9 @@ reservation phase    RESERVED → APPLYING → RESOLVED   (active_manager_transa
                      terminal_state:  COMMITTED | CANCELLED | REJECTED → NONE (a new reservation overwrites the RESOLVED slot)
 ledger entry         ACCEPTED_NOT_SENT → SEND_ATTEMPTED → ACKNOWLEDGED   (send_state; ACKNOWLEDGED is written in the CAS that removes the entry)
                      ACCEPTED_NOT_SENT → ACKNOWLEDGED                    (currency failure or blocked-target refusal at step 2, or currency or register failure at recovery row 1; no send_attempt)
-expected record      PENDING → RECORDED | GAP   (TaskRun.status.expected_records.<kind>; GAP is final: a record committed after
-                      the gap closes the TelemetryGap and leaves the entry GAP)
+expected record      PENDING → RECORDED | GAP   (TaskRun.status.expected_records.outcome and each expected_records.usage[producer],
+                      committed PENDING before its producer spends, §8; GAP is final: a record committed after the gap
+                      closes the TelemetryGap and leaves the entry GAP)
 
 WorkContext          hold_state:  RUNNING → FREEZE_PENDING → PROPAGATING → ENFORCED → RELEASING → RUNNING
                      manager_authority[plan].phase:  ACTIVE → DRAINING → ACTIVE (new epoch)

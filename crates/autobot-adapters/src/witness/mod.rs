@@ -7,11 +7,12 @@
 //! self-assert that its predecessor is fenced. When the witness is unavailable no receipt is
 //! issued, and the restored installation stays read-only.
 //!
+//! The receipt's fields are those KERNEL §7 and FORMAL §2 list. It carries the digest of the
+//! ambiguous operation set, never the set, which the `RestoreRequest` records; the witness
+//! signs only the digest.
+//!
 //! Choices this module makes where the design is open:
 //!
-//! - The receipt's fields are those KERNEL §7 lists. FORMAL §2 also lists the
-//!   `ambiguous_operation_set` itself beside its digest; the receipt carries the digest, which
-//!   binds the set the installation holds.
 //! - A signature covers [`RestoreWitnessReceipt::signed_bytes`], a fixed, length-prefixed
 //!   encoding of every other field, so every witness implementation signs the same bytes.
 //! - Verification needs only the witness's public key, never the witness service: a receipt
@@ -35,7 +36,8 @@ pub struct RestoreWitnessRequest {
     pub restore_generation: u64,
     /// The digest of the evidence that the old installation is fenced.
     pub old_installation_fence_evidence: Digest,
-    /// The digest of the set of operations whose outcome the restore could not tell.
+    /// The digest of the ambiguous operation set: every operation the restored state holds in a
+    /// non-terminal state.
     pub ambiguous_operation_set_digest: Digest,
     /// The digest of the mapping from old identities to new ones.
     pub identity_mapping_digest: Digest,
