@@ -12,10 +12,11 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request cancels its older run; runs on main always finish.
+# A new push to a pull request cancels its older run. Each push to main has a group of its
+# own, so no main run is cancelled, whether it is running or still pending.
 concurrency:
-  group: kind-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: kind-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
