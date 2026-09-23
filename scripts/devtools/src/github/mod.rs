@@ -3,13 +3,17 @@
 //! The token comes from the first non-empty value of `GITHUB_TOKEN` and `GH_TOKEN`; when both
 //! are unset or empty, it is read from `<cli> auth token`, where `<cli>` is `AUTOBOT_GH_CLI` if
 //! set, otherwise `gh`.
+//!
+//! The repository is resolved once, by [`repository`]: `GITHUB_REPOSITORY` when it is set
+//! and not blank (the value is trimmed), otherwise the repository the `origin` remote points at.
 
 pub mod graph;
 pub mod settings;
 pub mod verdict;
 
 use crate::process::Cmd;
-use crate::{Error, Result};
+use crate::{Error, Result, git};
+use std::path::Path;
 
 const API: &str = "https://api.github.com";
 
@@ -31,6 +35,34 @@ pub fn resolve_token(
         return Err(Error::Token(format!("`{cli} auth token` printed no token")));
     }
     Ok(token)
+}
+
+/// Resolves the `owner/name` of the repository: `env` (the value of `GITHUB_REPOSITORY`)
+/// when it is set and not blank, otherwise the repository the URL returned by `remote`
+/// points at, parsed by [`git::remote_repo`]. `remote` runs only when `env` is unusable.
+///
+/// # Errors
+/// Fails if `remote` fails or returns a URL that does not name `owner/name`.
+pub fn resolve_repo(
+    env: Option<String>,
+    remote: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    match env.map(|repo| repo.trim().to_owned()) {
+        Some(repo) if !repo.is_empty() => Ok(repo),
+        _ => git::remote_repo(&remote()?),
+    }
+}
+
+/// The `owner/name` of the repository the scripts act on, resolved by [`resolve_repo`] from
+/// `GITHUB_REPOSITORY` and the `origin` remote of the checkout containing `dir`.
+///
+/// # Errors
+/// Fails if `GITHUB_REPOSITORY` is unset or blank and the `origin` remote is missing or does
+/// not name `owner/name`.
+pub fn repository(dir: impl AsRef<Path>) -> Result<String> {
+    resolve_repo(std::env::var("GITHUB_REPOSITORY").ok(), || {
+        git::origin_url(dir)
+    })
 }
 
 /// An authenticated GitHub API client for one repository.
@@ -115,4 +147,48 @@ fn headers<B>(req: ureq::RequestBuilder<B>, auth: &str) -> ureq::RequestBuilder<
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", "autobot-devtools")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    const ALIAS_REMOTE: &str = "git@github.com-tsouza:tsouza/autobot.git\n";
+
+    #[test]
+    fn resolve_repo_prefers_the_environment_variable() {
+        let asked = Cell::new(false);
+        let remote = || {
+            asked.set(true);
+            Ok(ALIAS_REMOTE.to_owned())
+        };
+        assert_eq!(resolve_repo(Some("a/b".into()), remote).unwrap(), "a/b");
+        assert!(
+            !asked.get(),
+            "the remote must not be read when the variable is set"
+        );
+    }
+
+    #[test]
+    fn resolve_repo_falls_back_to_ssh_https_and_host_alias_remotes() {
+        for url in [
+            "git@github.com:tsouza/autobot.git",
+            "https://github.com/tsouza/autobot",
+            ALIAS_REMOTE,
+        ] {
+            for env in [None, Some(String::new()), Some("  ".to_owned())] {
+                let got = resolve_repo(env.clone(), || Ok(url.to_owned())).unwrap();
+                assert_eq!(got, "tsouza/autobot", "{url} with {env:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_repo_reports_a_bad_or_missing_remote() {
+        let err = resolve_repo(None, || Ok("/local/autobot".to_owned())).unwrap_err();
+        assert!(err.to_string().contains("not a GitHub remote URL"), "{err}");
+        let err = resolve_repo(None, || Err(Error::Parse("no origin".into()))).unwrap_err();
+        assert!(err.to_string().contains("no origin"), "{err}");
+    }
 }

@@ -417,25 +417,11 @@ pub fn rm(
     Ok(wt.path)
 }
 
-/// The `owner/name` of a GitHub remote URL (`https://…/owner/name(.git)` or
-/// `git@host:owner/name(.git)`, whatever the host alias).
-#[must_use]
-pub fn github_repo(url: &str) -> Option<String> {
-    let path = url.trim().trim_end_matches('/').trim_end_matches(".git");
-    let path = match path.split_once("://") {
-        Some((_, rest)) => rest.split_once('/')?.1,
-        None => path.split_once(':')?.1,
-    };
-    let mut parts = path.rsplit('/');
-    let name = parts.next().filter(|s| !s.is_empty())?;
-    let owner = parts.next().filter(|s| !s.is_empty())?;
-    Some(format!("{owner}/{name}"))
-}
-
 /// Entry point of `scripts/wt.rs`: `new <issue#>`, `list` or `rm <issue#>`, run from the
 /// current directory. `new` reads the issue title, and `rm` the merged pull requests of the
-/// branch, from the GitHub repository of `origin`; `rm` asks GitHub only when the branch
-/// has commits that no remote-tracking branch contains.
+/// branch, from the repository [`crate::github::repository`] resolves: `GITHUB_REPOSITORY`
+/// when it is set and not blank, otherwise the GitHub repository of `origin`. `rm` asks
+/// GitHub only when the branch has commits that no remote-tracking branch contains.
 ///
 /// # Errors
 /// Fails on bad arguments and on any failure of the subcommand.
@@ -444,14 +430,7 @@ pub fn cli(args: &[String]) -> Result<()> {
     let here = Path::new(".");
     let usage = || refusal("wt", "usage: wt new <issue#> | wt list | wt rm <issue#>");
     let issue = |arg: &str| arg.parse::<u64>().map_err(|_| usage());
-    let origin_repo = || -> Result<String> {
-        let url = Cmd::new("git")
-            .args(["remote", "get-url", "origin"])
-            .current_dir(here)
-            .output()?;
-        github_repo(&url)
-            .ok_or_else(|| Error::Parse(format!("not a GitHub remote: {}", url.trim())))
-    };
+    let origin_repo = || crate::github::repository(here);
     match args {
         [cmd, n] if cmd == "new" => {
             let issue = issue(n)?;
@@ -629,20 +608,6 @@ mod tests {
             Settings::load(&tmp.0.join("absent.toml")).unwrap(),
             Settings::default()
         );
-    }
-
-    #[test]
-    fn github_repo_parses_remote_urls() {
-        for url in [
-            "https://github.com/o/r.git",
-            "https://github.com/o/r",
-            "git@github.com:o/r.git",
-            "git@github.com-alias:o/r.git\n",
-            "ssh://git@github.com/o/r.git",
-        ] {
-            assert_eq!(github_repo(url).as_deref(), Some("o/r"), "{url}");
-        }
-        assert_eq!(github_repo("/local/path"), None);
     }
 
     #[test]
