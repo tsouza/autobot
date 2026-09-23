@@ -105,6 +105,11 @@ label-gate pr:
 dependabot-automerge pr:
     {{rs}} scripts/dependabot_automerge.rs "$1"
 
+# Fail when `title` is not a Conventional Commits header: type, optional (scope), optional `!`, `: `, description.
+[positional-arguments]
+pr-title title:
+    {{rs}} scripts/pr_title.rs "$1"
+
 # CI job: formatting.
 ci-fmt: fmt-check
 

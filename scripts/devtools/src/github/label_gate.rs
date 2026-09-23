@@ -352,7 +352,7 @@ mod tests {
             .1;
         assert!(
             on.contains(
-                "  pull_request:\n    types: [opened, synchronize, reopened, labeled, unlabeled]\n"
+                "  pull_request:\n    types: [opened, synchronize, reopened, labeled, unlabeled, edited]\n"
             ),
             "{on}"
         );

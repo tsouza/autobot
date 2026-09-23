@@ -4,6 +4,7 @@
 //! by path and calls one function; the logic lives here, where it is linted and tested.
 
 pub mod cargo;
+pub mod conventional;
 pub mod design;
 #[cfg(feature = "doctor")]
 pub mod doctor;
