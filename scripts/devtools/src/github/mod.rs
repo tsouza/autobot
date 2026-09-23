@@ -4,9 +4,9 @@
 //! are unset or empty, it is read from `<cli> auth token`, where `<cli>` is `AUTOBOT_GH_CLI` if
 //! set, otherwise `gh`.
 
+pub mod graph;
 pub mod settings;
 pub mod verdict;
-pub mod graph;
 
 use crate::process::Cmd;
 use crate::{Error, Result};
