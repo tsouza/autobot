@@ -970,3 +970,19 @@ fn a_delete_whose_tombstone_key_is_the_target_s_is_refused_before_any_operation(
     });
     assert_eq!(expect_done(&mut p), DeleteOutcome::TombstoneIsTarget);
 }
+
+#[test]
+fn a_delete_whose_target_names_another_create_receipt_uid_is_refused_before_reading_it() {
+    let mut p = delete_a();
+    expect_op(&mut p);
+    let mut target = object(1, None);
+    target.origin.create_receipt_uid = uid("create-of-another-incarnation");
+    p.resume(StoreResult::Object(Box::new(target)))
+        .expect("target");
+    assert_eq!(
+        expect_done(&mut p),
+        DeleteOutcome::Refused {
+            create_receipt: None
+        }
+    );
+}

@@ -31,10 +31,10 @@
 //! - Verification never depends on the mode: a receipt verifies while the witness is absent.
 //! - `witness_generation` starts at 1 and advances by one for each receipt signed.
 
+use crate::hmac_sha256;
 use autobot_adapters::witness::{
     AuthorityWitness, RestoreWitnessReceipt, RestoreWitnessRequest, WitnessError,
 };
-use sha2::{Digest as _, Sha256};
 
 /// The test key a [`FakeWitness::new`] signs with.
 pub const TEST_KEY: [u8; 32] = *b"autobot fake witness test key 01";
@@ -147,28 +147,6 @@ impl AuthorityWitness for FakeWitness {
             Err(WitnessError::BadSignature)
         }
     }
-}
-
-/// HMAC-SHA256 of `message` under `key` (RFC 2104, with SHA-256's 64-byte block).
-fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    const BLOCK: usize = 64;
-    let mut block = [0u8; BLOCK];
-    if key.len() > BLOCK {
-        let hashed: [u8; 32] = Sha256::digest(key).into();
-        block[..32].copy_from_slice(&hashed);
-    } else {
-        block[..key.len()].copy_from_slice(key);
-    }
-    let inner: [u8; 32] = Sha256::new()
-        .chain_update(block.map(|b| b ^ 0x36))
-        .chain_update(message)
-        .finalize()
-        .into();
-    Sha256::new()
-        .chain_update(block.map(|b| b ^ 0x5c))
-        .chain_update(inner)
-        .finalize()
-        .into()
 }
 
 #[cfg(test)]

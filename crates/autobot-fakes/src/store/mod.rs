@@ -34,7 +34,6 @@ use autobot_kernel::store::{
 use autobot_kernel::types::{Namespace, Uid};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::num::NonZeroU32;
 
 /// What [`MemStore::execute`] did with one operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +52,9 @@ pub struct MemStore {
     uids: u64,
     log: Vec<(u64, ObjectKey)>,
     armed: Vec<Fault>,
+    /// The writes applied since the first armed crash became the first, counted against its
+    /// `after_writes`.
+    crash_writes: u32,
     fired: Vec<Fault>,
     late: Option<StoreOp>,
 }
@@ -122,28 +124,22 @@ impl MemStore {
         Execution::Result(result)
     }
 
-    /// Counts one applied write against an armed crash; whether the crash fires.
+    /// Counts one applied write against the first armed crash; whether it fires. A crash that
+    /// fires is reported as it was armed.
     fn count_down_crash(&mut self) -> bool {
-        let Some(i) = self
-            .armed
-            .iter()
-            .position(|f| matches!(f, Fault::Crash { .. }))
-        else {
+        let Some((i, after_writes)) = self.armed.iter().enumerate().find_map(|(i, f)| match f {
+            Fault::Crash { after_writes } => Some((i, *after_writes)),
+            _ => None,
+        }) else {
             return false;
         };
-        let Fault::Crash { after_writes } = self.armed.remove(i) else {
+        self.crash_writes = self.crash_writes.saturating_add(1);
+        if self.crash_writes < after_writes.get() {
             return false;
-        };
-        match NonZeroU32::new(after_writes.get() - 1) {
-            Some(left) => {
-                self.armed.insert(i, Fault::Crash { after_writes: left });
-                false
-            }
-            None => {
-                self.fired.push(Fault::Crash { after_writes });
-                true
-            }
         }
+        self.crash_writes = 0;
+        self.fired.push(self.armed.remove(i));
+        true
     }
 
     /// Removes and returns the first armed fault `applies` accepts.

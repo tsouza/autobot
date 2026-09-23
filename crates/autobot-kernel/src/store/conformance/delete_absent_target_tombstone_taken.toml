@@ -1,0 +1,48 @@
+name = "delete-absent-target-tombstone-taken"
+summary = "A delete that finds its target absent and, under its tombstone name, an object with another spec or another create receipt UID ends tombstone_taken, leaving the tombstone; the same delete with the tombstone's own spec and create receipt ends deleted."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "create"
+object = "create-a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "create-a"
+domain = "COMMITTED"
+expect = "initialized"
+
+[[steps]]
+do = "delete"
+object = "a"
+spec = "delete a"
+expect = "deleted"
+
+[[steps]]
+do = "delete"
+object = "a"
+spec = "another delete"
+expect = "tombstone_taken"
+
+[[steps]]
+do = "delete"
+object = "a"
+receipt = "create-b"
+spec = "delete a"
+expect = "tombstone_taken"
+
+[[steps]]
+do = "check"
+object = "tombstone-a"
+create_receipt = "create-a"
+
+[[steps]]
+do = "delete"
+object = "a"
+spec = "delete a"
+expect = "deleted"

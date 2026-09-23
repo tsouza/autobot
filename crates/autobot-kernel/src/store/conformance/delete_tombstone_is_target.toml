@@ -1,0 +1,30 @@
+name = "delete-tombstone-is-target"
+summary = "A delete that names its target's own key as the tombstone ends tombstone_is_target and leaves the target, even with a terminal create receipt."
+
+[[steps]]
+do = "create"
+object = "a"
+spec = "payload"
+expect = "created"
+
+[[steps]]
+do = "create"
+object = "create-a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "create-a"
+domain = "COMMITTED"
+expect = "initialized"
+
+[[steps]]
+do = "delete"
+object = "a"
+tombstone = "a"
+expect = "tombstone_is_target"
+
+[[steps]]
+do = "check"
+object = "a"
+create_receipt = "create-a"
