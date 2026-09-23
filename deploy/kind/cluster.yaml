@@ -1,8 +1,30 @@
-# The kind cluster behind `just kind-up` and the `integration` job: one control-plane node.
-# The node image is pinned by digest to an image built for the kind release that
+# The kind cluster behind `just kind-up` and the `integration` job: one control-plane node,
+# which runs everything else, and one worker dedicated to the artifact store
+# (deploy/artifact-store): labelled `autobot/role=artifact-store` and tainted
+# `autobot/role=artifact-store:NoSchedule`, so that only pods tolerating the taint run there.
+# The node images are pinned by digest to an image built for the kind release that
 # `autobot_devtools::kind::KIND_VERSION` names; the two move together.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
     image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    # Workloads other than the store schedule here: kind keeps the control-plane taint when a
+    # cluster has workers, so it is cleared.
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          taints: []
+  - role: worker
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    labels:
+      autobot/role: artifact-store
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - key: autobot/role
+              value: artifact-store
+              effect: NoSchedule

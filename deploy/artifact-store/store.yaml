@@ -40,6 +40,14 @@ spec:
         app.kubernetes.io/part-of: autobot
     spec:
       automountServiceAccountToken: false
+      # Only the worker labelled and tainted for the store in deploy/kind/cluster.yaml.
+      nodeSelector:
+        autobot/role: artifact-store
+      tolerations:
+        - key: autobot/role
+          operator: Equal
+          value: artifact-store
+          effect: NoSchedule
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

@@ -8,7 +8,10 @@
 //! which the Justfile recipes set to the kind cluster's own file.
 //!
 //! [`up`] applies `namespace.yaml`, creates the Secret [`SECRET`] when it is absent, applies
-//! `store.yaml`, waits for the rollout, and then, through the `mc` client bundled in the
+//! `store.yaml`, waits for the rollout, requires every store pod to run on the one node labelled
+//! [`NODE_KEY`]`=`[`NODE_ROLE`] (the kind worker that `deploy/kind/cluster.yaml` dedicates to
+//! the store and taints with the same key and value, `NoSchedule`, so that only pods
+//! tolerating it run there), and then, through the `mc` client bundled in the
 //! server image, creates the bucket [`BUCKET`], enables versioning on it and sets SSE-S3 as its
 //! default encryption. It asserts the result rather than trusting the commands: versioning
 //! reads back `Enabled`, the default encryption reads back `AES256`, and an object written
@@ -23,17 +26,21 @@
 //!   over the old volume would leave every object unreadable, so [`up`] never replaces it. The
 //!   values reach `kubectl` through a mode-0600 file under [`SCRATCH`] that is removed right
 //!   after, never through the command line, which [`crate::process::Cmd`] logs.
-//! - The store is a single server on one volume of the cluster's default storage class. It is
+//! - The store is a single server on one volume of the cluster's default storage class, which
+//!   provisions it on the node the pod is scheduled to, the store's node. It is
 //!   a qualification fixture: it has no replication and no restore process of its own.
 //!
 //! [`check`] stands in for an agent workspace. It creates the namespace [`PROBE_NAMESPACE`],
-//! gives it a client Secret for the store's Service, and runs a pod there that uploads an
-//! object named after its own UID. It then deletes that namespace, waits until it is gone, and
+//! gives it a client Secret for the store's Service, and runs two pods there: `writer` uploads an
+//! object named after its own UID and must have run on another node than the store's;
+//! `intruder` asks for the store's node without the toleration and must stay `Unschedulable`
+//! by the untolerated taint. It then deletes that namespace, waits until it is gone, and
 //! requires the store's namespace to be `Active`, its deployment to be available, and the
 //! object to read back as the same version, with the workspace's content, encrypted.
 //!
 //! [`down`] deletes the store's namespace, and with it the volume and every object.
 
+use crate::image::is_pinned;
 use crate::kind::CLUSTER;
 use crate::process::Cmd;
 use crate::worktree::refusal;
@@ -79,18 +86,14 @@ pub const SCRATCH: &str = "target/artifact-store";
 /// How long a rollout, the probe pod or the probe namespace deletion may take.
 pub const WAIT: &str = "300s";
 
+/// The label key, and the taint key, of the kind worker dedicated to the store.
+pub const NODE_KEY: &str = "autobot/role";
+
+/// The value of [`NODE_KEY`] in that label and taint.
+pub const NODE_ROLE: &str = "artifact-store";
+
 /// The store's Service address, as a client in another namespace reaches it.
 pub const SERVICE_URL: &str = "minio.autobot-artifact-store.svc.cluster.local:9000";
-
-/// Whether `image` ends in `@sha256:<64 lowercase hex digits>`.
-#[must_use]
-pub fn pinned_by_digest(image: &str) -> bool {
-    image.rsplit_once("@sha256:").is_some_and(|(_, d)| {
-        d.len() == 64
-            && d.bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    })
-}
 
 /// Checks that manifest text names at least one image and pins every image by digest.
 ///
@@ -109,7 +112,7 @@ pub fn check_images(text: &str) -> Result<()> {
     if images.is_empty() {
         return Err(invalid("no image".into()));
     }
-    match images.iter().find(|image| !pinned_by_digest(image)) {
+    match images.iter().find(|image| !is_pinned(image)) {
         Some(image) => Err(invalid(format!("image `{image}` is not pinned by digest"))),
         None => Ok(()),
     }
@@ -173,6 +176,53 @@ pub fn check_object(output: &str) -> Result<String> {
     match value.get("versionID").and_then(|s| s.as_str()) {
         Some(id) if !id.is_empty() && id != "null" => Ok(id.to_owned()),
         other => Err(assertion(format!("object version id is {other:?}"))),
+    }
+}
+
+/// The one node `kubectl get nodes -l <NODE_KEY>=<NODE_ROLE> -o name` lists, without its
+/// `node/` prefix.
+///
+/// # Errors
+/// Fails when there is no such node or more than one.
+pub fn store_node(output: &str) -> Result<String> {
+    let nodes: Vec<&str> = output.split_whitespace().collect();
+    match nodes[..] {
+        [node] => Ok(node.trim_start_matches("node/").to_owned()),
+        _ => Err(assertion(format!(
+            "need exactly one node labelled {NODE_KEY}={NODE_ROLE}, found {nodes:?}"
+        ))),
+    }
+}
+
+/// Checks the space-separated node names of the store's pods: at least one, all `node`.
+///
+/// # Errors
+/// Fails when there is no pod or a pod runs, or is bound, elsewhere.
+pub fn check_placement(node: &str, pod_nodes: &str) -> Result<()> {
+    let pods: Vec<&str> = pod_nodes.split_whitespace().collect();
+    if pods.is_empty() || pods.iter().any(|p| *p != node) {
+        return Err(assertion(format!(
+            "store pods run on {pods:?}, need all on `{node}`"
+        )));
+    }
+    Ok(())
+}
+
+/// Checks the `PodScheduled` condition of a pod that asks for the store's node without
+/// tolerating its taint, as `<reason> <message>`: it is `Unschedulable` because of an
+/// untolerated taint.
+///
+/// # Errors
+/// Fails for any other reason or message.
+pub fn check_repelled(condition: &str) -> Result<()> {
+    let condition = condition.trim();
+    if condition.starts_with("Unschedulable ") && condition.contains("had untolerated taint") {
+        Ok(())
+    } else {
+        Err(assertion(format!(
+            "a pod without the toleration is `{condition}`, need Unschedulable by an \
+             untolerated taint"
+        )))
     }
 }
 
@@ -336,6 +386,39 @@ fn rollout() -> Result<()> {
         .run()
 }
 
+/// The store's node, after checking that every store pod runs on it.
+fn placement() -> Result<String> {
+    let node = store_node(&logged(
+        &kubectl()
+            .args(["get", "nodes", "-o", "name", "-l"])
+            .args([format!("{NODE_KEY}={NODE_ROLE}")]),
+    )?)?;
+    let pods = logged(
+        &kubectl()
+            .args([
+                "-n",
+                NAMESPACE,
+                "get",
+                "pods",
+                "-l",
+                "app.kubernetes.io/name=minio",
+            ])
+            .args(["-o", "jsonpath={.items[*].spec.nodeName}"]),
+    )?;
+    check_placement(&node, &pods)?;
+    Ok(node)
+}
+
+/// A field of pod `name` in [`PROBE_NAMESPACE`], by JSONPath.
+fn probe_field(name: &str, path: &str) -> Result<String> {
+    logged(
+        &kubectl()
+            .args(["-n", PROBE_NAMESPACE, "get", "pod", name, "-o"])
+            .args([format!("jsonpath={path}")]),
+    )
+    .map(|s| s.trim().to_owned())
+}
+
 /// Deploys the store and configures and asserts its bucket, as the module documentation says.
 ///
 /// # Errors
@@ -355,6 +438,7 @@ pub fn up(repo: &Path) -> Result<()> {
     }
     apply(repo, "store.yaml")?;
     rollout()?;
+    let node = placement()?;
     let bucket = &bucket();
     mc(&["mb", "--ignore-existing", bucket])?;
     mc(&["version", "enable", bucket])?;
@@ -369,8 +453,8 @@ pub fn up(repo: &Path) -> Result<()> {
     ]))?;
     let version = check_object(&mc(&["stat", &probe])?)?;
     eprintln!(
-        "artifact store up: bucket `{BUCKET}` in namespace `{NAMESPACE}`, versioning Enabled, \
-         default encryption SSE-S3 (AES256); {probe} stored encrypted as version {version}"
+        "artifact store up: bucket `{BUCKET}` in namespace `{NAMESPACE}` on node `{node}`, \
+         versioning Enabled, default encryption SSE-S3 (AES256); {probe} stored encrypted as version {version}"
     );
     Ok(())
 }
@@ -385,6 +469,7 @@ pub fn up(repo: &Path) -> Result<()> {
 pub fn check(repo: &Path) -> Result<()> {
     read_manifests(repo)?;
     rollout()?;
+    let node = placement()?;
     let delete_probe = || {
         kubectl()
             .args(["delete", "namespace", PROBE_NAMESPACE, "--ignore-not-found"])
@@ -407,11 +492,24 @@ pub fn check(repo: &Path) -> Result<()> {
             WAIT,
         ])
         .run()?;
-    let uid = kubectl()
-        .args(["-n", PROBE_NAMESPACE, "get", "pod", "writer"])
-        .args(["-o", "jsonpath={.metadata.uid}"])
-        .output()?;
-    let key = object(&format!("workspace-probe/{}", uid.trim()));
+    let writer_node = probe_field("writer", "{.spec.nodeName}")?;
+    if writer_node == node {
+        return Err(assertion(format!(
+            "the workspace pod `writer` ran on the store's node `{node}`"
+        )));
+    }
+    const SCHEDULED: &str = "{.status.conditions[?(@.type==\"PodScheduled\")]";
+    kubectl()
+        .args(["-n", PROBE_NAMESPACE, "wait", "pod/intruder"])
+        .args([format!("--for=jsonpath={SCHEDULED}.reason}}=Unschedulable")])
+        .args(["--timeout", WAIT])
+        .run()?;
+    check_repelled(&probe_field(
+        "intruder",
+        &format!("{SCHEDULED}.reason}} {SCHEDULED}.message}}"),
+    )?)?;
+    let uid = probe_field("writer", "{.metadata.uid}")?;
+    let key = object(&format!("workspace-probe/{uid}"));
     let written = check_object(&mc(&["stat", &key])?)?;
     delete_probe()?;
     let gone = kubectl()
@@ -445,6 +543,7 @@ pub fn check(repo: &Path) -> Result<()> {
         )));
     }
     rollout()?;
+    placement()?;
     let version = check_object(&mc(&["stat", &key])?)?;
     if version != written {
         return Err(assertion(format!(
@@ -459,8 +558,10 @@ pub fn check(repo: &Path) -> Result<()> {
         )));
     }
     eprintln!(
-        "artifact store check: namespace `{PROBE_NAMESPACE}` deleted; namespace `{NAMESPACE}` \
-         Active, deployment available, {key} intact (version {version}, SSE-S3)"
+        "artifact store check: store on node `{node}`, where `intruder` stayed unschedulable and \
+         `writer` did not run (it ran on `{writer_node}`); namespace `{PROBE_NAMESPACE}` \
+         deleted; namespace `{NAMESPACE}` Active, deployment available, {key} intact \
+         (version {version}, SSE-S3)"
     );
     Ok(())
 }
@@ -582,7 +683,7 @@ mod tests {
         assert_eq!(str_at(&ns[0], &["metadata", "name"]), PROBE_NAMESPACE);
         assert_ne!(PROBE_NAMESPACE, NAMESPACE);
         let pod = documents("workspace-probe.yaml");
-        assert_eq!(pod.len(), 1);
+        assert_eq!(pod.len(), 2);
         assert_eq!(str_at(&pod[0], &["kind"]), "Pod");
         assert_eq!(str_at(&pod[0], &["metadata", "name"]), "writer");
         assert_eq!(str_at(&pod[0], &["metadata", "namespace"]), PROBE_NAMESPACE);
@@ -598,22 +699,106 @@ mod tests {
             )),
             "{script}"
         );
+        assert!(pod[0]["spec"]["nodeSelector"].is_badvalue());
+        assert!(pod[0]["spec"]["tolerations"].is_badvalue());
+        let intruder = &pod[1];
+        assert_eq!(str_at(intruder, &["metadata", "name"]), "intruder");
+        assert_eq!(
+            str_at(intruder, &["metadata", "namespace"]),
+            PROBE_NAMESPACE
+        );
+        assert_eq!(
+            str_at(intruder, &["spec", "nodeSelector", NODE_KEY]),
+            NODE_ROLE
+        );
+        assert!(intruder["spec"]["tolerations"].is_badvalue());
     }
 
     #[test]
-    fn only_a_full_lowercase_sha256_digest_pins_an_image() {
-        assert!(pinned_by_digest(&format!(
-            "quay.io/minio/minio:RELEASE.x@sha256:{DIGEST}"
-        )));
-        assert!(pinned_by_digest(&format!("minio@sha256:{DIGEST}")));
-        for image in [
-            "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z".to_owned(),
-            format!("minio@sha256:{}", &DIGEST[1..]),
-            format!("minio@sha256:{DIGEST}0"),
-            format!("minio@sha256:{}", DIGEST.to_uppercase()),
-            format!("minio@sha512:{DIGEST}"),
+    fn the_store_selects_and_tolerates_its_dedicated_node() {
+        let store = documents("store.yaml");
+        let pod = &store[1]["spec"]["template"]["spec"];
+        assert_eq!(str_at(pod, &["nodeSelector", NODE_KEY]), NODE_ROLE);
+        let tolerations = pod["tolerations"].as_vec().unwrap();
+        assert_eq!(tolerations.len(), 1);
+        assert_eq!(str_at(&tolerations[0], &["key"]), NODE_KEY);
+        assert_eq!(str_at(&tolerations[0], &["operator"]), "Equal");
+        assert_eq!(str_at(&tolerations[0], &["value"]), NODE_ROLE);
+        assert_eq!(str_at(&tolerations[0], &["effect"]), "NoSchedule");
+    }
+
+    #[test]
+    fn the_kind_cluster_labels_and_taints_one_worker_for_the_store() {
+        let text = include_str!("../../../deploy/kind/cluster.yaml");
+        let cluster = YamlLoader::load_from_str(text).unwrap();
+        let nodes = cluster[0]["nodes"].as_vec().unwrap();
+        let labelled: Vec<&Yaml> = nodes
+            .iter()
+            .filter(|n| str_at(n, &["labels", NODE_KEY]) == NODE_ROLE)
+            .collect();
+        assert_eq!(labelled.len(), 1);
+        assert_eq!(str_at(labelled[0], &["role"]), "worker");
+        let patch = labelled[0]["kubeadmConfigPatches"][0].as_str().unwrap();
+        let patch = &YamlLoader::load_from_str(patch).unwrap()[0];
+        assert_eq!(str_at(patch, &["kind"]), "JoinConfiguration");
+        let taint = &patch["nodeRegistration"]["taints"][0];
+        assert_eq!(str_at(taint, &["key"]), NODE_KEY);
+        assert_eq!(str_at(taint, &["value"]), NODE_ROLE);
+        assert_eq!(str_at(taint, &["effect"]), "NoSchedule");
+        let others: Vec<&Yaml> = nodes
+            .iter()
+            .filter(|n| str_at(n, &["labels", NODE_KEY]) != NODE_ROLE)
+            .collect();
+        assert_eq!(others.len(), 1);
+        let init = others[0]["kubeadmConfigPatches"][0].as_str().unwrap();
+        let init = &YamlLoader::load_from_str(init).unwrap()[0];
+        assert_eq!(str_at(init, &["kind"]), "InitConfiguration");
+        assert_eq!(
+            init["nodeRegistration"]["taints"].as_vec().map(Vec::len),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn exactly_one_store_node_is_required_and_every_store_pod_runs_on_it() {
+        assert_eq!(
+            store_node("node/autobot-worker\n").unwrap(),
+            "autobot-worker"
+        );
+        for output in ["", "node/a\nnode/b\n"] {
+            let err = store_node(output).unwrap_err().to_string();
+            assert!(err.contains("need exactly one node"), "{err}");
+        }
+        check_placement("autobot-worker", "autobot-worker").unwrap();
+        for pods in [
+            "",
+            "autobot-control-plane",
+            "autobot-worker autobot-control-plane",
         ] {
-            assert!(!pinned_by_digest(&image), "{image}");
+            let err = check_placement("autobot-worker", pods)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("need all on `autobot-worker`"),
+                "{pods}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pod_without_the_toleration_must_be_repelled_by_the_taint() {
+        check_repelled(
+            "Unschedulable 0/2 nodes are available: 1 node(s) didn't match Pod's node \
+             affinity/selector, 1 node(s) had untolerated taint(s). preemption: 0/2 nodes are \
+             available: 2 Preemption is not helpful for scheduling.",
+        )
+        .unwrap();
+        for condition in [
+            "",
+            "Unschedulable 0/2 nodes are available: 2 Insufficient cpu.",
+            "had untolerated taint(s)",
+        ] {
+            assert!(check_repelled(condition).is_err(), "{condition}");
         }
     }
 
