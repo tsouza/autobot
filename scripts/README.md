@@ -12,6 +12,7 @@ A script is invoked as `rust-script --force --debug scripts/<name>.rs` with `RUS
 | `hooks` | `regex` | the `hooks` module: the hook installer behind `just hooks` and the deny-terms check behind `just hook-pre-push` | `scripts/hooks.rs` |
 | `doctor` | `toml` | the `doctor` module behind `just doctor` | `scripts/doctor.rs` |
 | `judge` | `ring`, and `github` | the `judge` module: the `judged` charter entries asked of a pull request through the typed-question service, behind `just judge` | `scripts/judge.rs` |
+| `gates` | `autobot-kernel`, `sha2` | the `gates` module: the gate records behind `just gate-status` and `just gate-evidence` | `scripts/gate_evidence.rs`, `scripts/gate_status.rs` |
 
 The default feature set is empty. Crates that use the library as a dev-dependency set `default-features = false` and enable none of these features. The workspace lint, test and doc recipes build with `--all-features`, so every feature goes through the gates.
 

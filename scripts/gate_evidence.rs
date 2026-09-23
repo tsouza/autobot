@@ -4,7 +4,7 @@
 //!
 //! ```cargo
 //! [dependencies]
-//! autobot-devtools = { path = "devtools" }
+//! autobot-devtools = { path = "devtools", features = ["gates"] }
 //! ```
 
 use std::process::ExitCode;
