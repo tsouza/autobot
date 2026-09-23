@@ -13,10 +13,14 @@
 //! - `autobot-fakes` or `autobot-testkit` is a normal or build dependency, except the normal
 //!   dependency of `autobot-testkit` on `autobot-fakes`, and an optional normal dependency of
 //!   `autobot-operator` on `autobot-fakes` that only the non-default feature `m0-fakes`
-//!   activates, written as `dep:autobot-fakes` so that no implicit feature exposes it.
+//!   activates, written as `dep:<key>` so that no implicit feature exposes it.
 //! - A normal or build dependency on `autobot-operator` enables `m0-fakes`, or a feature that
-//!   `default` enables, directly or through other features, contains `autobot-operator/m0-fakes`
-//!   or `autobot-operator?/m0-fakes`: either would link `autobot-fakes` into a normal build.
+//!   `default` enables, directly or through other features, contains `<key>/m0-fakes` or
+//!   `<key>?/m0-fakes`: either would link `autobot-fakes` into a normal build.
+//!
+//! `<key>` is the name the manifest declares the dependency under ([`Dependency::key`]): the
+//! package name, or the rename in `ops = { package = "autobot-operator" }`. Feature entries name
+//! a dependency by that key, so they are matched against it.
 //! - The source file of a binary target has more than [`MAX_MAIN_LINES`] lines: a binary is a
 //!   thin wrapper over a library.
 //!
@@ -119,9 +123,15 @@ pub fn check(crates: &[Package], lines: impl Fn(&Path) -> Result<usize>) -> Resu
                 flag(message);
             }
         }
+        let operator_keys: BTreeSet<&str> = c
+            .dependencies
+            .iter()
+            .filter(|d| d.name == OPERATOR && d.kind != Kind::Dev)
+            .map(Dependency::key)
+            .collect();
         let (_, entries) = enabled_by_default(c);
         for entry in entries {
-            if enables_operator_m0_fakes(entry) {
+            if operator_keys.iter().any(|key| enables_m0_fakes(entry, key)) {
                 flag(format!(
                     "default features enable `{entry}`, which links `{FAKES}` into a normal build"
                 ));
@@ -199,13 +209,14 @@ fn test_crate_exception(c: &Package, d: &Dependency) -> bool {
     let activators: BTreeSet<&str> = c
         .features
         .iter()
-        .filter(|(_, enables)| enables.iter().any(|e| activates(e, &d.name)))
+        .filter(|(_, enables)| enables.iter().any(|e| activates(e, d.key())))
         .map(|(feature, _)| feature.as_str())
         .collect();
     activators == BTreeSet::from([M0_FAKES]) && !enabled_by_default(c).0.contains(M0_FAKES)
 }
 
-/// Whether the feature entry `entry` activates the optional dependency `dep`.
+/// Whether the feature entry `entry` activates the optional dependency declared under the key
+/// `dep`.
 fn activates(entry: &str, dep: &str) -> bool {
     let target = entry.strip_prefix("dep:").unwrap_or(entry);
     // `dep?/feature` enables a feature only if something else activates `dep`.
@@ -215,10 +226,11 @@ fn activates(entry: &str, dep: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// Whether the feature entry `entry` enables the operator's `m0-fakes`, weakly or not.
-fn enables_operator_m0_fakes(entry: &str) -> bool {
+/// Whether the feature entry `entry` enables `m0-fakes`, weakly or not, of the operator
+/// dependency declared under the key `key`.
+fn enables_m0_fakes(entry: &str, key: &str) -> bool {
     entry
-        .strip_prefix(OPERATOR)
+        .strip_prefix(key)
         .and_then(|rest| rest.strip_prefix('?').or(Some(rest)))
         .and_then(|rest| rest.strip_prefix('/'))
         == Some(M0_FAKES)
@@ -254,6 +266,7 @@ mod tests {
     fn dep(name: &str, kind: Kind) -> Dependency {
         Dependency {
             name: name.to_owned(),
+            rename: None,
             kind,
             optional: false,
             default_features: true,
@@ -533,12 +546,65 @@ mod tests {
 
     #[test]
     fn operator_m0_fakes_entry_matching() {
-        assert!(enables_operator_m0_fakes("autobot-operator/m0-fakes"));
-        assert!(enables_operator_m0_fakes("autobot-operator?/m0-fakes"));
-        assert!(!enables_operator_m0_fakes("autobot-operator/other"));
-        assert!(!enables_operator_m0_fakes("autobot-operator/m0-fakes-x"));
-        assert!(!enables_operator_m0_fakes("autobot-operator-x/m0-fakes"));
-        assert!(!enables_operator_m0_fakes("m0-fakes"));
+        let m = |entry| enables_m0_fakes(entry, OPERATOR);
+        assert!(m("autobot-operator/m0-fakes"));
+        assert!(m("autobot-operator?/m0-fakes"));
+        assert!(!m("autobot-operator/other"));
+        assert!(!m("autobot-operator/m0-fakes-x"));
+        assert!(!m("autobot-operator-x/m0-fakes"));
+        assert!(!m("m0-fakes"));
+    }
+
+    #[test]
+    fn dependent_default_feature_enabling_renamed_operator_m0_fakes_fails() {
+        let ops = Dependency {
+            rename: Some("ops".to_owned()),
+            ..dep(OPERATOR, Kind::Normal)
+        };
+        let cli = Package {
+            features: BTreeMap::from([
+                ("default".to_owned(), vec!["sim".to_owned()]),
+                ("sim".to_owned(), vec!["ops/m0-fakes".to_owned()]),
+            ]),
+            ..krate("autobot-cli", vec![ops])
+        };
+        assert_eq!(
+            violations(&with(cli)),
+            vec![format!(
+                "autobot-cli: default features enable `ops/m0-fakes`, which links `{FAKES}` into a normal build"
+            )]
+        );
+    }
+
+    #[test]
+    fn default_feature_naming_a_non_operator_package_renamed_like_the_operator_passes() {
+        // The key `autobot-operator` belongs to another package, so the entry is not the operator's.
+        let other = Dependency {
+            rename: Some(OPERATOR.to_owned()),
+            ..dep("serde", Kind::Normal)
+        };
+        let cli = Package {
+            features: BTreeMap::from([(
+                "default".to_owned(),
+                vec!["autobot-operator/m0-fakes".to_owned()],
+            )]),
+            ..krate("autobot-cli", vec![other])
+        };
+        assert_eq!(violations(&with(cli)), Vec::<String>::new());
+    }
+
+    #[test]
+    fn operator_renamed_fakes_behind_m0_fakes_passes() {
+        let mut op = operator_with_fakes(&[(M0_FAKES, &["dep:fk"])]);
+        op.dependencies[0].rename = Some("fk".to_owned());
+        assert_eq!(violations(&with(op)), Vec::<String>::new());
+    }
+
+    #[test]
+    fn operator_renamed_fakes_behind_implicit_feature_fails() {
+        let mut op = operator_with_fakes(&[(M0_FAKES, &["fk"]), ("fk", &["dep:fk"])]);
+        op.dependencies[0].rename = Some("fk".to_owned());
+        assert_eq!(violations(&with(op)).len(), 1);
     }
 
     #[test]

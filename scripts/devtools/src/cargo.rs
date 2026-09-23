@@ -33,6 +33,9 @@ impl Kind {
 pub struct Dependency {
     /// Name of the package depended on.
     pub name: String,
+    /// The key the manifest declares the dependency under when it differs from `name`, as in
+    /// `ops = { package = "autobot-operator" }`.
+    pub rename: Option<String>,
     /// Declaration kind.
     pub kind: Kind,
     /// Whether the dependency is optional.
@@ -41,6 +44,15 @@ pub struct Dependency {
     pub default_features: bool,
     /// Features of the dependency the declaration enables.
     pub features: Vec<String>,
+}
+
+impl Dependency {
+    /// The name feature entries use for the dependency (`dep:key`, `key/feature`): the
+    /// manifest key, which is [`Self::rename`] when set and [`Self::name`] otherwise.
+    #[must_use]
+    pub fn key(&self) -> &str {
+        self.rename.as_deref().unwrap_or(&self.name)
+    }
 }
 
 /// A binary target.
@@ -128,6 +140,10 @@ fn parse_dependency(package: &str, d: &serde_json::Value) -> Result<Dependency> 
     };
     Ok(Dependency {
         name: string(&d["name"], "dependencies[].name")?,
+        rename: match &d["rename"] {
+            serde_json::Value::Null => None,
+            r => Some(string(r, "dependencies[].rename")?),
+        },
         kind,
         optional: d["optional"].as_bool().unwrap_or(false),
         default_features: d["uses_default_features"].as_bool().unwrap_or(true),
@@ -198,7 +214,8 @@ mod tests {
                 {"name":"fakes","kind":null,"optional":true,"uses_default_features":true,"features":[]},
                 {"name":"devtools","kind":"dev","optional":false,"uses_default_features":false},
                 {"name":"cc","kind":"build","optional":false,"uses_default_features":true,"features":["parallel"]},
-                {"name":"serde"}
+                {"name":"serde"},
+                {"name":"autobot-operator","rename":"ops","kind":null}
             ],
             "features":{"m0-fakes":["dep:fakes"],"default":[]},
             "targets":[
@@ -209,6 +226,7 @@ mod tests {
         }]}"#;
         let dep = |name: &str, kind| Dependency {
             name: name.to_owned(),
+            rename: None,
             kind,
             optional: false,
             default_features: true,
@@ -217,7 +235,11 @@ mod tests {
         let expected = Package {
             name: "op".to_owned(),
             manifest_path: "/w/op/Cargo.toml".to_owned(),
-            normal_dependencies: vec!["fakes".to_owned(), "serde".to_owned()],
+            normal_dependencies: vec![
+                "fakes".to_owned(),
+                "serde".to_owned(),
+                "autobot-operator".to_owned(),
+            ],
             dependencies: vec![
                 Dependency {
                     optional: true,
@@ -232,6 +254,10 @@ mod tests {
                     ..dep("cc", Kind::Build)
                 },
                 dep("serde", Kind::Normal),
+                Dependency {
+                    rename: Some("ops".to_owned()),
+                    ..dep("autobot-operator", Kind::Normal)
+                },
             ],
             features: BTreeMap::from([
                 ("default".to_owned(), Vec::new()),
@@ -263,6 +289,25 @@ mod tests {
     #[test]
     fn rejects_a_package_without_a_manifest_path() {
         assert!(parse_members(r#"{"packages":[{"name":"a"}]}"#).is_err());
+    }
+
+    #[test]
+    fn key_is_the_rename_or_the_name() {
+        let json = r#"{"packages":[{"name":"a","manifest_path":"/w/a/Cargo.toml",
+            "dependencies":[{"name":"b","rename":"c"},{"name":"d","rename":null}]}]}"#;
+        let keys: Vec<String> = parse_one(json)
+            .dependencies
+            .iter()
+            .map(|d| d.key().to_owned())
+            .collect();
+        assert_eq!(keys, ["c", "d"]);
+    }
+
+    #[test]
+    fn rejects_a_non_string_rename() {
+        let json = r#"{"packages":[{"name":"a","manifest_path":"/w/a/Cargo.toml",
+            "dependencies":[{"name":"b","rename":1}]}]}"#;
+        assert!(parse_members(json).is_err());
     }
 
     #[test]
