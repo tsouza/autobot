@@ -233,7 +233,8 @@ pub fn apply(api: &impl Api, action: &Action) -> Result<String> {
     }
 }
 
-/// Entry point of `scripts/main_red.rs`. The repository is `GITHUB_REPOSITORY`.
+/// Entry point of `scripts/main_red.rs`. The repository is resolved by
+/// [`super::repository`] from the current directory.
 ///
 /// With no argument, reads the `workflow_run` event at `GITHUB_EVENT_PATH` and, when the run
 /// is red, carries out its [`Action`]. With `--dry-run <run-url>`, reads the run behind the
@@ -241,19 +242,28 @@ pub fn apply(api: &impl Api, action: &Action) -> Result<String> {
 /// whether the workflow would act on it and the action it would take, and writes nothing.
 ///
 /// # Errors
-/// Fails on bad arguments, an unset `GITHUB_REPOSITORY`, an unreadable event, or a failed
-/// GitHub call.
+/// Fails on bad arguments, an unresolvable repository, an unset `GITHUB_EVENT_PATH` without
+/// `--dry-run`, an unreadable event, or a failed GitHub call.
 pub fn main(args: impl IntoIterator<Item = String>) -> Result<()> {
+    run(args, |key| std::env::var(key).ok(), ".", Client::new)
+}
+
+/// [`main`] with the environment lookup `env`, the directory `dir` whose `origin` remote
+/// names the repository when `GITHUB_REPOSITORY` is unusable, and `connect`, which makes the
+/// client of an `owner/name`.
+fn run<A: Api>(
+    args: impl IntoIterator<Item = String>,
+    env: impl Fn(&str) -> Option<String>,
+    dir: &str,
+    connect: impl Fn(String) -> Result<A>,
+) -> Result<()> {
     let dry_run = parse_args(args)?;
-    let var = |key: &str| {
-        std::env::var(key)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| Error::Parse(format!("{key} is not set")))
-    };
-    let client = Client::new(var("GITHUB_REPOSITORY")?)?;
+    let repo = super::resolve_repo(env("GITHUB_REPOSITORY"), || crate::git::origin_url(dir))?;
+    let client = connect(repo)?;
     let Some((run_repo, id)) = dry_run else {
-        let path = var("GITHUB_EVENT_PATH")?;
+        let path = env("GITHUB_EVENT_PATH")
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| Error::Parse("GITHUB_EVENT_PATH is not set".to_owned()))?;
         let text =
             std::fs::read_to_string(&path).map_err(|e| Error::Parse(format!("{path}: {e}")))?;
         let event: Value =
@@ -266,7 +276,11 @@ pub fn main(args: impl IntoIterator<Item = String>) -> Result<()> {
         println!("main-red: {}", apply(&client, &plan(&client, &run)?)?);
         return Ok(());
     };
-    let run = Run::from_json(&Client::new(run_repo)?.get(&format!("actions/runs/{id}"))?)?;
+    let run = Run::from_json(&connect(run_repo)?.request(
+        Method::Get,
+        &format!("actions/runs/{id}"),
+        None,
+    )?)?;
     match run.skip_reason() {
         Some(reason) => println!("main-red would skip this run: {reason}"),
         None => println!("main-red would act on this run"),
@@ -593,6 +607,88 @@ mod tests {
         run.as_object_mut().unwrap().remove("head_sha");
         let err = Run::from_json(&run).unwrap_err();
         assert!(err.to_string().contains("head_sha"), "{err}");
+    }
+
+    /// A fresh repository whose `origin` remote is `url`.
+    fn repo_with_origin(test: &str, url: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("main-red-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for args in [vec!["init", "-q"], vec!["remote", "add", "origin", url]] {
+            crate::process::Cmd::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+        }
+        dir
+    }
+
+    /// Lets one [`FakeRepo`] serve every client a run connects.
+    impl Api for &FakeRepo {
+        fn request(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Value> {
+            (**self).request(method, path, body)
+        }
+    }
+
+    /// Runs `--dry-run <RUN_URL>` in `dir` with `env`, and returns the repositories connected
+    /// to and the writes made.
+    fn dry_run(
+        env: &[(&str, &str)],
+        dir: &std::path::Path,
+    ) -> (Vec<String>, Vec<(Method, String, Value)>) {
+        let env: BTreeMap<&str, &str> = env.iter().copied().collect();
+        let mut api = FakeRepo::new(json!([]));
+        api.responses
+            .insert("actions/runs/35276703631".to_owned(), parse(FAILED_RUN));
+        let connected = RefCell::new(Vec::new());
+        run(
+            ["--dry-run".to_owned(), RUN_URL.to_owned()],
+            |key| env.get(key).map(|v| (*v).to_owned()),
+            dir.to_str().unwrap(),
+            |repo| {
+                connected.borrow_mut().push(repo);
+                Ok(&api)
+            },
+        )
+        .unwrap();
+        (connected.into_inner(), api.writes.into_inner())
+    }
+
+    #[test]
+    fn without_github_repository_the_origin_remote_names_the_repository() {
+        let dir = repo_with_origin("origin", "git@github.com-alias:owner/name.git");
+        let (connected, writes) = dry_run(&[], &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(connected, ["owner/name", "tsouza/runnerscout"]);
+        assert_eq!(writes, []);
+    }
+
+    #[test]
+    fn github_repository_wins_over_the_origin_remote() {
+        let dir = repo_with_origin("env", "https://github.com/owner/name");
+        let (connected, _) = dry_run(&[("GITHUB_REPOSITORY", " other/repo ")], &dir);
+        let (blank, _) = dry_run(&[("GITHUB_REPOSITORY", " ")], &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(connected, ["other/repo", "tsouza/runnerscout"]);
+        assert_eq!(blank, ["owner/name", "tsouza/runnerscout"]);
+    }
+
+    #[test]
+    fn a_run_without_a_dry_run_needs_github_event_path() {
+        let dir = repo_with_origin("event", "https://github.com/owner/name");
+        let err = run(
+            Vec::new(),
+            |_| None,
+            dir.to_str().unwrap(),
+            |_| Ok(FakeRepo::new(json!([]))),
+        )
+        .unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            err.to_string().contains("GITHUB_EVENT_PATH is not set"),
+            "{err}"
+        );
     }
 
     #[test]
