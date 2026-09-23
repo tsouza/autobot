@@ -1,3 +1,9 @@
+```text
+ ▄  ▄ ▄ ▄▄▄  ▄  ▄▄   ▄  ▄▄▄
+█■█ █ █  █  █ █ █■▄ █ █  █ 
+▀ ▀ ▀▀▀  ▀   ▀  ▀▀   ▀   ▀
+```
+
 # AutoBot
 
 AutoBot is a durable multi-agent software delivery engine. It takes an accepted milestone and converges on it with a swarm of role-specialized agents — manager, worker, reviewer, tester, integrator, and an optional task-local micro-manager — spending as little frontier-model money as the quality bar allows, never losing work and never acting on stale authority.
