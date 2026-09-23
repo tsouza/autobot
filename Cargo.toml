@@ -10,6 +10,7 @@ members = [
     "crates/autobot-fakes",
     "crates/autobot-testkit",
     "crates/autobot-cli",
+    "scripts/devtools",
 ]
 
 [workspace.package]
