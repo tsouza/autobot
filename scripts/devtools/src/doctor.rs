@@ -5,8 +5,9 @@
 //! - every development tool answers `--version`: rust-script, just, cargo-nextest,
 //!   cargo-deny, cargo-machete and sccache;
 //! - the effective rustc wrapper is sccache and comes from the home Cargo configuration
-//!   (`$CARGO_HOME/config.toml`, `CARGO_HOME` defaulting to `~/.cargo`), not from the
-//!   environment nor from a `.cargo/config.toml` in the repository or above it;
+//!   (`$CARGO_HOME/config`, or `$CARGO_HOME/config.toml` when there is no `config`, with
+//!   `CARGO_HOME` defaulting to `~/.cargo`; see [`cargo_configs`]), not from the environment
+//!   nor from a `.cargo/config` or `.cargo/config.toml` in the repository or above it;
 //! - the sccache server is listening (`SCCACHE_SERVER_UDS`, or TCP port
 //!   `SCCACHE_SERVER_PORT`, default 4226), checked by connecting so that the check never
 //!   starts a server;
