@@ -8,6 +8,7 @@ pub mod commit;
 pub mod digest;
 pub mod error;
 pub mod fields;
+pub mod lifecycle;
 pub mod profile;
 pub mod reducer;
 pub mod status;
