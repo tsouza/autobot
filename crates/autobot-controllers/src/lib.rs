@@ -7,6 +7,12 @@
 
 pub mod queue;
 
+/// Custody: the workspace checkpoints of `docs/design/AUTOBOT-KERNEL.md` §7 and the stores
+/// they upload to.
+pub mod custody {
+    pub mod artifact_store;
+}
+
 /// An owning controller the operator host can run.
 pub trait Controller: Send + Sync {
     /// The controller's name: the owner of its kinds in `docs/design/AUTOBOT-M0-AND-GATES.md`
