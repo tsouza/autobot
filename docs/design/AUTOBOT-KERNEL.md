@@ -78,13 +78,13 @@ integration_authority[basis_uid]  (basis_generation, state ∈ {RESERVED, INVALI
                                   from ReserveIntegrationBasis until RetireIntegrationBasis
 dispatch_authority_generation     witness generation of this installation (§7)
 dispatch_ledger[]                 bounded accepted-dispatch outbox (§3.3)
-blocked_targets[]                 (target_identity, operation_uid, adjudication) of every unsettled operation, in order added (§3.3)
+blocked_targets[]                 (target_identity, operation_uid) of every unsettled operation, in order added (§3.3)
 active_manager_transaction        one bounded reservation slot (§4)
 ```
 
 Routing is deliberately **not** a register. A TaskRun's **routing pin** — the identifier of the worker-strategy configuration it was admitted with — is written into its spec at `AdmitTask` and never changes for the life of the TaskRun; a permit carries that pin and acceptance checks only that the two are equal. Changing what future admissions pin needs no linearization with dispatch.
 
-An **authority cut** is any register change. Every cut and every acceptance is a CAS on `WorkContext` applied by the **Context controller**, the sole owner of `WorkContext` status. A controller that needs a cut — the broker for `AcceptDispatch`, the Plan controller for `InstallManagerAuthority` / `ActivatePlanRevision` / `QuiescePlan` / `ResumePlanRevision` / `SupersedePlanRevision` / `RetirePlanAuthority`, the Manager holder for `RenewManagerAuthority`, a Manager command's target controller for `ClaimManagerTransaction`, the Integration controller for `ReserveIntegrationBasis` / `InvalidateIntegrationBasis` / `RetireIntegrationBasis`, the Custody controller for `AdvanceDispatchAuthorityGeneration` — submits a command targeting the `WorkContext` under its own principal and proceeds only on the `COMMITTED` receipt. Wherever this document says "the broker's `AcceptDispatch`", "the ledger entry to `SEND_ATTEMPTED`" or `AcknowledgeDispatch` it means that command path: the broker submits `AcceptDispatch` as a command, and the ledger updates and the `blocked_targets` updates as **reconciliation requests**, which are not `AutoBotCommand`s. A reconciliation request pins no revision and produces no `CommandReceipt`. A ledger update, or the addition of a pair, which is also a no-op when the pair is present, names the entry by `(operation_uid, permit_uid)` and the `send_state` it expects to find, and is a no-op when the entry is absent or already past that `send_state`, so a delayed request can neither advance a later entry nor remove one; the step-5(b) removal expects either `send_state`, and recovery row 6 adds a pair with no entry, a no-op when the pair is present (§3.3). The removal of a pair names the pair and is a no-op when it is absent; the recording on a pair of the mirror of its operation's adjudication is a no-op once the pair holds one, and the adjudication itself is a domain field of the operation (§3.3). The Context controller applies `AcceptDispatch` as a domain commit and every reconciliation request as a reconciliation-only CAS, and the broker proceeds only after its request has landed — the `COMMITTED` receipt for `AcceptDispatch`, a linearizable read of the updated entry or pair for the others. Only the Context controller writes the ledger, and only the Context controller writes `AdmissionStamp` status, so the `BROKER_ACCEPTED` acknowledgement is likewise a broker command it applies.
+An **authority cut** is any register change. Every cut and every acceptance is a CAS on `WorkContext` applied by the **Context controller**, the sole owner of `WorkContext` status. A controller that needs a cut — the broker for `AcceptDispatch`, the Plan controller for `InstallManagerAuthority` / `ActivatePlanRevision` / `QuiescePlan` / `ResumePlanRevision` / `SupersedePlanRevision` / `RetirePlanAuthority`, the Manager holder for `RenewManagerAuthority`, a Manager command's target controller for `ClaimManagerTransaction`, the Integration controller for `ReserveIntegrationBasis` / `InvalidateIntegrationBasis` / `RetireIntegrationBasis`, the Custody controller for `AdvanceDispatchAuthorityGeneration` — submits a command targeting the `WorkContext` under its own principal and proceeds only on the `COMMITTED` receipt. Wherever this document says "the broker's `AcceptDispatch`", "the ledger entry to `SEND_ATTEMPTED`" or `AcknowledgeDispatch` it means that command path: the broker submits `AcceptDispatch` as a command, and the ledger updates and the `blocked_targets` updates as **reconciliation requests**, which are not `AutoBotCommand`s. A reconciliation request pins no revision and produces no `CommandReceipt`. A ledger update, or the addition of a pair, which is also a no-op when the pair is present, names the entry by `(operation_uid, permit_uid)` and the `send_state` it expects to find, and is a no-op when the entry is absent or already past that `send_state`, so a delayed request can neither advance a later entry nor remove one; the step-5(b) removal expects either `send_state`, and recovery row 6 adds a pair with no entry, a no-op when the pair is present (§3.3). The removal of a pair names the pair and is a no-op when it is absent (§3.3). The Context controller applies `AcceptDispatch` as a domain commit and every reconciliation request as a reconciliation-only CAS, and the broker proceeds only after its request has landed — the `COMMITTED` receipt for `AcceptDispatch`, a linearizable read of the updated entry or pair for the others. Only the Context controller writes the ledger, and only the Context controller writes `AdmissionStamp` status, so the `BROKER_ACCEPTED` acknowledgement is likewise a broker command it applies.
 
 | Register change | Action | Lane |
 |---|---|---|
@@ -134,10 +134,10 @@ plan_authority[permit.plan_uid] = (permit.plan_revision, _, _, ACTIVE, permit.pl
 dispatch_authority_generation = permit.dispatch_authority_generation
 permit.routing_pin = the pin in the permit's TaskRun spec        (not a register; a pin)
 |dispatch_ledger| < capacity
-|dispatch_ledger| + |blocked_targets| < capacity ∨ blocked_targets holds a pair of the operation or of the one it compensates
+|dispatch_ledger| + |blocked_targets| < capacity ∨ blocked_targets holds a pair of the operation
 ```
 
-Every `permit.*` value except `permit.state`, and the routing pin in the TaskRun spec, is an immutable pin, so reading it before the CAS is exact; every other value is a register read in that same CAS. The last line reserves the pair a send may need at §3.3 step 4: pairs and entries share the ledger's capacity, and only an operation that already holds a pair, or compensates one, is exempt, since it adds none. `permit.state` may be stale, and that is safe: a permit leaves `ISSUED` before acceptance only after a change to a register it pins, after its expiry or after a `REJECTED` `AcceptDispatch` for it, and each of those fails this CAS or its replay; after acceptance, the idempotency key returns the original receipt, and the ledger line refuses a second entry for the permit or its operation under any other replay identity.
+Every `permit.*` value except `permit.state`, and the routing pin in the TaskRun spec, is an immutable pin, so reading it before the CAS is exact; every other value is a register read in that same CAS. The last line reserves the pair a send may need at §3.3 step 4: pairs and entries share the ledger's capacity, and only an operation that already holds a pair is exempt, since it adds none. `permit.state` may be stale, and that is safe: a permit leaves `ISSUED` before acceptance only after a change to a register it pins, after its expiry or after a `REJECTED` `AcceptDispatch` for it, and each of those fails this CAS or its replay; after acceptance, the idempotency key returns the original receipt, and the ledger line refuses a second entry for the permit or its operation under any other replay identity.
 
 Effect: `admission_sequence += 1`; a ledger entry is appended that records the acceptance sequence and generation. The ledger entry, created by that commit and carried in its `COMMITTED` receipt, is the authority. A failed precondition is a guard refusal (§2); the permit is then invalidated and the operation returned to `REQUESTED` to seek a new permit under the new registers.
 
@@ -173,9 +173,9 @@ Every agent tool call with an effect outside its workspace — forge, CI, deploy
 The **dispatch ledger** entry is `(operation_uid, operation_key, permit_uid, acceptance_sequence, acceptance_generation, accepted_at, send_state ∈ {ACCEPTED_NOT_SENT, SEND_ATTEMPTED, ACKNOWLEDGED})`. `ACKNOWLEDGED` is written in the same CAS that removes the entry; it is never retained, never observable and never counts toward capacity. The broker's send sequence is:
 
 1. `AcceptDispatch` → entry `ACCEPTED_NOT_SENT`.
-2. `RecordSendAttempt`. Before it, the broker validates currency (§3.2); a failure here returns the operation to `REQUESTED` with no ledger change past `ACCEPTED_NOT_SENT`. Then two CASes in this fixed order: (2a) the ledger entry to `SEND_ATTEMPTED` — a reconciliation-only `WorkContext` CAS applied by the Context controller on the broker's reconciliation request (§3.1), which also names the operation's `target_identity` and, for a compensating operation, the operation it compensates, and which leaves the entry `ACCEPTED_NOT_SENT` when the blocked-target guard below refuses it; the broker handles a refused 2a exactly as a currency failure; then (2b) the operation to `DISPATCHING` with `send_attempt = (attempt_index, started_at, acceptance_sequence)`. **Both precede opening the remote connection.** A present `send_attempt` therefore always implies a `SEND_ATTEMPTED` entry. Once 2b is durable, the broker submits the command that records the permit `CONSUMED` (§3.2).
+2. `RecordSendAttempt`. Before it, the broker validates currency (§3.2); a failure here returns the operation to `REQUESTED` with no ledger change past `ACCEPTED_NOT_SENT`. Then two CASes in this fixed order: (2a) the ledger entry to `SEND_ATTEMPTED` — a reconciliation-only `WorkContext` CAS applied by the Context controller on the broker's reconciliation request (§3.1), which also names the operation's `target_identity`, and which leaves the entry `ACCEPTED_NOT_SENT` when the blocked-target guard below refuses it; the broker handles a refused 2a exactly as a currency failure; then (2b) the operation to `DISPATCHING` with `send_attempt = (attempt_index, started_at, acceptance_sequence)`. **Both precede opening the remote connection.** A present `send_attempt` therefore always implies a `SEND_ATTEMPTED` entry. Once 2b is durable, the broker submits the command that records the permit `CONSUMED` (§3.2).
 3. Send.
-4. Observe; CAS the operation to `CONFIRMED` / `REJECTED` / `FAILED`. A rate-limit answer is no outcome: it is handled like a timeout, and it proves non-application at reconciliation only when the provider's declared capability marks its rate-limit answers authoritative (below). On timeout or disconnect, the broker's reconciliation request first adds the operation's pair to `blocked_targets` (below), and only once it has landed does the broker CAS the operation to `OUTCOME_UNKNOWN`, so no `OUTCOME_UNKNOWN` operation exists without its pair; a compensating operation needs none, since the pair of the operation it compensates already blocks its target. The request names the entry and expects it `SEND_ATTEMPTED`, like the other ledger requests, so it is a no-op once the entry is gone.
+4. Observe; CAS the operation to `CONFIRMED` / `REJECTED` / `FAILED`. A rate-limit answer is no outcome: it is handled like a timeout, and it proves non-application at reconciliation only when the provider's declared capability marks its rate-limit answers authoritative (below). On timeout or disconnect, the broker's reconciliation request first adds the operation's pair to `blocked_targets` (below), and only once it has landed does the broker CAS the operation to `OUTCOME_UNKNOWN`, so no `OUTCOME_UNKNOWN` operation exists without its pair. The request names the entry and expects it `SEND_ATTEMPTED`, like the other ledger requests, so it is a no-op once the entry is gone.
 5. `AcknowledgeDispatch`: reconciliation-only CAS removing the entry, only after the operation has durably recorded its acceptance and one of two cases:
    - (a) a terminal or `OUTCOME_UNKNOWN` state. The broker moves an `OUTCOME_UNKNOWN` operation to `RECONCILING` only after this acknowledgement has landed.
    - (b) `REQUESTED` with no `send_attempt` present, after a currency failure at step 2 or a register or currency re-validation failure at `RecoverAcceptedDispatch` row 1. The entry is removed whether it reads `ACCEPTED_NOT_SENT` or, when a 2a the broker read as refused landed late, `SEND_ATTEMPTED`: with no `send_attempt` on the operation, nothing was sent under the entry. After the removal, the broker submits the command that records the permit `INVALIDATED` (§3.2).
@@ -195,23 +195,15 @@ The **dispatch ledger** entry is `(operation_uid, operation_key, permit_uid, acc
 
 The same scan brings every permit level with its ledger entry and operation (§3.2), and removes the pair of every terminal operation.
 
-**Blocked targets.** An operation is **unsettled** from its `OUTCOME_UNKNOWN` until it reaches a terminal state: while it is `OUTCOME_UNKNOWN`, `RECONCILING` or `UNRESOLVED`, and through a re-request after proven non-application. The `blocked_targets` register is the list, in the order the pairs were added, of one pair `(target_identity, operation_uid)` per unsettled operation, which also mirrors the operation's adjudication (below). A pair is added at step 4 for every operation except a compensating one, whose compensated operation's pair stands in for it (below), and removed by a reconciliation request from the broker once the operation's terminal state is durable and its entry is gone; a request naming an absent pair is a no-op. Capacity is reserved at acceptance: pairs and ledger entries share the ledger's capacity (§3.2), so adding a pair never waits; only recovery row 6, adding the pair of an operation whose entry was lost, can take the list past the bound, and acceptance is refused until it drops back.
+**Blocked targets.** An operation is **unsettled** from its `OUTCOME_UNKNOWN` until it reaches a terminal state: while it is `OUTCOME_UNKNOWN`, `RECONCILING` or `UNRESOLVED`, and through a re-request after proven non-application. The `blocked_targets` register is the list, in the order the pairs were added, of one pair `(target_identity, operation_uid)` per unsettled operation. A pair is added at step 4 and removed by a reconciliation request from the broker once the operation's terminal state is durable and its entry is gone; a request naming an absent pair is a no-op. Capacity is reserved at acceptance: pairs and ledger entries share the ledger's capacity (§3.2), so adding a pair never waits; only recovery row 6, adding the pair of an operation whose entry was lost, can take the list past the bound, and acceptance is refused until it drops back.
 
-The order of dependents is the order of CASes on the one `WorkContext` resource, reconciliation-only CASes included: every CAS on it is linearized by its expected-revision precondition, whether or not it increments `commit_sequence`. An effect intent is a **dependent** of an unsettled operation when it has the same `target_identity` and its 2a would follow the CAS that added that operation's pair. A sibling whose 2a preceded that CAS is concurrent, not a dependent, and is settled on its own if its outcome is unknown. The 2a guard is: no pair is on the operation's target, or the first pair on it is the operation's own, or that of the operation it compensates and mirrors `COMPENSATED`. So a fresh intent is refused while any pair is on its target; among unsettled operations on one target, only the earliest one may send again, by re-request or by compensation, and the next follows once it is terminal. The broker requests no permit for an operation whose 2a this guard would refuse; the guard stays the authority. The block is by target, not by attempt: an intent of a replacement attempt is a dependent like any other.
+The order of dependents is the order of CASes on the one `WorkContext` resource, reconciliation-only CASes included: every CAS on it is linearized by its expected-revision precondition, whether or not it increments `commit_sequence`. An effect intent is a **dependent** of an unsettled operation when it has the same `target_identity` and its 2a would follow the CAS that added that operation's pair. A sibling whose 2a preceded that CAS is concurrent, not a dependent, and is settled on its own if its outcome is unknown. The 2a guard is: no pair is on the operation's target, or the first pair on it is the operation's own. So a fresh intent is refused while any pair is on its target; among unsettled operations on one target, only the earliest one may send again, by re-request, and the next follows once it is terminal. The broker requests no permit for an operation whose 2a this guard would refuse; the guard stays the authority. The block is by target, not by attempt: an intent of a replacement attempt is a dependent like any other.
 
 The other dependents of an unsettled operation are every `IntegrationBasis` whose source or base heads the operation could have changed and every acceptance evaluation of the milestone that owns the originating command. Each is refused at the check that would otherwise admit it: `ReserveIntegrationBasis`, itself a `WorkContext` CAS, refuses a basis with a source or base head at a blocked target; once a pair is added, the Integration controller submits `InvalidateIntegrationBasis` for every reserved basis with a head at that target; `RecordAcceptanceAdjudication` refuses the owning milestone.
 
 **Reconciliation.** An operation in `RECONCILING` may be re-requested (same `operation_key`, `attempt_index + 1`) only when the adapter proves definitive non-application, and only once its permit is `CONSUMED`. The proofs are a provider lookup, provider deduplication, and a rate-limit answer from a provider whose declared capability marks its rate-limit answers authoritative; after such an answer the re-request is sent no earlier than the provider's back-off allows. A negative search proves nothing, and neither does a rate-limit answer from any other provider. When the provider's declared capability offers neither idempotency nor lookup, the operation becomes `UNRESOLVED` after `provider_reconcile_bound`: retention pinned, its dependents still blocked, plan completion blocked, an `Intervention` for human adjudication created. `UNRESOLVED` is never garbage-collected, never re-requested and never counted as success or failure. A provider whose declared capability lacks a required semantic yields `BLOCKED_UNSUPPORTED` before any send.
 
-**Adjudication.** The human adjudication of an `UNRESOLVED` operation is its `adjudication` field, a domain field of the `ExternalOperation`: the `Decision` it references and the outcome chosen, `CONFIRMED`, `FAILED` or `COMPENSATED`. The broker writes it once, by a domain CAS whose preconditions are `state = UNRESOLVED` and the field absent, so a second adjudication, or a delayed copy of the first, can never reopen or replace it. The operation's pair mirrors the chosen outcome; a reconciliation request records the mirror, a no-op once the pair holds one, and recovery re-derives it from the operation. For `CONFIRMED` or `FAILED` the broker then CASes the operation to that state, and its pair is released.
-
-**Compensation.** `COMPENSATED` means that a separate compensating effect intent reached `CONFIRMED`, and it follows only an adjudication that chose it; the `RECONCILING` operations of a provider with lookup or idempotency settle by reconciliation, never by compensation. The originating command's owner — the owning controller of the aggregate whose domain commit carried the original intent — commits the compensating intent in a domain commit of its own. Its `target_identity` is the compensated operation's, and its `desired_outcome` names the compensated operation. It is materialized and sent under this section like any other intent, with its own `operation_key`, permit, acceptance and `send_attempt`, and three rules give it an exit:
-
-- Its 2a passes only while the first pair on its target is the compensated operation's and mirrors `COMPENSATED`. Every earlier pair on that target belongs to an operation that settles, or reaches its own adjudication, without waiting on this one, so the wait is finite.
-- Its capacity is the compensated operation's pair, reserved at adjudication: its acceptance is exempt from the pair count, and it never adds a pair of its own, because the compensated operation's pair already blocks its target while its outcome is unknown.
-- When it reaches `CONFIRMED`, the broker moves the compensated operation `UNRESOLVED → COMPENSATED`, and its pair is released. When it ends otherwise, or becomes `UNRESOLVED` itself, the adjudication escalates through an `Intervention` to a human, who either has the owner commit another compensating intent or has the broker move the compensated operation `UNRESOLVED → FAILED`; the `adjudication` field is never rewritten. A compensating operation's own adjudication records `CONFIRMED` or `FAILED`, never compensation, so no compensation is ever nested automatically.
-
-The compensating operation's `EffectReceipt` is the proof. A `COMPENSATED` operation counts as a failure wherever outcomes are counted.
+**Adjudication.** An `UNRESOLVED` operation ends only through one human adjudication, recorded in its `adjudication` field, a domain field of the `ExternalOperation`: the `Decision` it references and the outcome chosen, `CONFIRMED`, `FAILED` or `COMPENSATED`. The broker writes it once, by a domain CAS that also moves the operation from `UNRESOLVED` to the chosen outcome; its preconditions are `state = UNRESOLVED` and the field absent. A second adjudication, or a delayed copy of the first, can therefore never reopen or replace it, and no crash can leave an adjudication recorded on an operation that has not yet ended. Once that CAS is durable, the broker releases the operation's pair. `COMPENSATED` records the adjudicator's evidence that the effect was compensated outside AutoBot; AutoBot sends no compensating effect, and automatic compensation is DEFERRED to G-FORGE. A `COMPENSATED` operation counts as a failure wherever outcomes are counted.
 
 ## 4. Manager serialization — I-2
 
@@ -281,11 +273,17 @@ Session expiry, context exhaustion, stream disconnect or provider outage produce
 
 ## 10. Lifecycles — the only place they are printed
 
-Every state referenced in a core document appears here. Another document may name a state; it may not print a machine. An extension kind's machine is printed at the extension's gate, never in a core document. The first value listed is the initial state.
+Every state referenced in a core document appears here. Another document may name a state; it may not print a machine. An extension kind's machine is printed at the extension's gate, never in a core document. The first value listed is the initial state. A state set that actions move is a machine here even when its record is not a kind (a gate, a projection's read model); an enumerated value that no transition moves, such as a lane, a verdict, a mode, a trust label or a consequence class, is a value, not a state, and is not printed here.
 
 ```text
 CommandReceipt       PREPARED → COMMITTED | REJECTED | CANCELLED | REPLAY_EXPIRED
                      PREPARED → UNCERTAIN → COMMITTED | REJECTED | CANCELLED
+                     (REPLAY_EXPIRED: the command was received after its own pinned replay window; it is never evaluated,
+                      never read as new intent and never rewrites a terminal receipt, and it is not reached from UNCERTAIN,
+                      which may already have committed)
+                     (CANCELLED: a reserved Manager command whose slot was APPLYING when its target's owning controller
+                      consumed its fixed expected revision with the §4 cancel CAS, so it can never commit; the retained
+                      cancellation receipt is the proof)
 
 AdmissionStamp       ISSUED → BROKER_ACCEPTED → CONSUMED
                      ISSUED | BROKER_ACCEPTED → INVALIDATED ; ISSUED → EXPIRED
@@ -301,26 +299,52 @@ ToolInvocation       PERMITTED → REQUESTED                          (permit in
                       DISPATCHING always carries send_attempt)
 
 EffectIntent         MATERIALIZED → ACKNOWLEDGED ; MATERIALIZED → QUARANTINED
+                     (the Broker writes ACKNOWLEDGED once the intent's operation is terminal; an operation OUTCOME_UNKNOWN,
+                      RECONCILING or UNRESOLVED keeps it MATERIALIZED; the source receipt is retained, §2, while any of its
+                      intents is not ACKNOWLEDGED)
 EffectReceipt        RECORDED  (immutable, one per attempt)
 
 pending commit slot  CLEARED → OCCUPIED → CLEARED ; OCCUPIED → REPAIRING → CLEARED   (per aggregate; REPAIRING while a new process reconstructs the receipt and event)
 control receipt      UNPUBLISHED → PUBLISHED   (ring entry; drained by audit publication)
 reservation phase    RESERVED → APPLYING → RESOLVED   (active_manager_transaction; RESOLVED only with a non-empty terminal_state and its receipt)
+                     RESERVED → RESOLVED (released as CANCELLED before any claim, §4)
+                     RESOLVED → RESERVED (a new reservation overwrites a RESOLVED slot)
+                     terminal_state:  NONE → COMMITTED | CANCELLED | REJECTED   (set by ReleaseManagerTransaction with its proving receipt)
+                     terminal_state:  COMMITTED | CANCELLED | REJECTED → NONE (a new reservation overwrites the RESOLVED slot)
 ledger entry         ACCEPTED_NOT_SENT → SEND_ATTEMPTED → ACKNOWLEDGED   (send_state; ACKNOWLEDGED is written in the CAS that removes the entry)
                      ACCEPTED_NOT_SENT → ACKNOWLEDGED                    (currency failure or blocked-target refusal at step 2, or currency or register failure at recovery row 1; no send_attempt)
-expected record      PENDING → RECORDED | GAP   (TaskRun.status.expected_records.<kind>)
+expected record      PENDING → RECORDED | GAP   (TaskRun.status.expected_records.<kind>; GAP is final: a record committed after
+                      the gap closes the TelemetryGap and leaves the entry GAP)
 
 WorkContext          hold_state:  RUNNING → FREEZE_PENDING → PROPAGATING → ENFORCED → RELEASING → RUNNING
                      manager_authority[plan].phase:  ACTIVE → DRAINING → ACTIVE (new epoch)
-                     (the two fields are independent; both are checked by AcceptDispatch)
+                     plan_authority[plan].revision_phase:  ACTIVE → QUIESCING → ACTIVE (the same revision, or the replacement)
+                     integration_authority[basis].state:  RESERVED → INVALIDATED
+                     (hold_state and each manager_authority[plan].phase are independent of each other; AcceptDispatch checks every field)
+                     (a hold requested in RELEASING keeps it there until that hold's own RESUME, because CompleteHoldRelease
+                      requires hold_causes empty)
+                     (a keyed entry exists from the action that creates it until its retirement, §3.1, and its absence is
+                      no state: plan_authority[plan] is created ACTIVE by the first ActivatePlanRevision, and absent means no
+                      active revision; integration_authority[basis] is created RESERVED by ReserveIntegrationBasis, and
+                      INVALIDATED is final for that key)
 
 Plan.phase           ACCEPTED → ACTIVATING → ACTIVE
                      ACTIVATING → ACTIVATION_FAILED → ACTIVATING (same snapshot) | CANCELLED
+                     ACTIVATION_FAILED → QUIESCING (replacement revision only; the register still holds the previous revision QUIESCING)
                      ACTIVE → PAUSED → ACTIVE
                      ACTIVE | PAUSED → QUIESCING → ACTIVE (same revision) | ACTIVATING (replacement revision)
-                     ACTIVE → COMPLETED | FAILED
+                     ACTIVE → COMPLETED
+                     ACTIVE | PAUSED | QUIESCING → FAILED
                      ACCEPTED | ACTIVATING | ACTIVE | PAUSED | QUIESCING → CANCELLED
                      (RevisionPending is a condition, not a phase)
+                     (ACTIVATING runs from the Plan controller's start of snapshot verification through MEMBERS_VERIFIED and
+                      the submission of ActivatePlanRevision, or of SupersedePlanRevision for a replacement; ACTIVE follows
+                      only its COMMITTED receipt; ACTIVATION_FAILED acknowledges PlanSnapshot ACTIVATION_FAILED and is reached
+                      only before that submission or on a REJECTED receipt, never while the receipt is UNCERTAIN)
+                     (FAILED and CANCELLED of a plan that holds a plan_authority entry follow its QuiescePlan and the §5 wait
+                      for active attempts, during which the phase stays where it was and then moves directly to FAILED or
+                      CANCELLED; no plan is CANCELLED while an activation receipt is UNCERTAIN; a plan that ended is retired
+                      from the registers, §3.1)
 
 Plan.status.         PROPOSED → VERIFIED → ACTIVE → QUIESCING → SUPERSEDED
 revisions[rev]       PROPOSED | VERIFIED → ABANDONED
@@ -328,6 +352,7 @@ revisions[rev]       PROPOSED | VERIFIED → ABANDONED
 
 PlanSnapshot         PROPOSED → SNAPSHOT_VERIFIED → MEMBERS_VERIFIED → ACTIVATED
                      PROPOSED | SNAPSHOT_VERIFIED | MEMBERS_VERIFIED → ACTIVATION_FAILED
+                     ACTIVATION_FAILED → PROPOSED (retry of the same snapshot: verification starts again)
 
 PlanProposal         DRAFT → REVIEW → ACCEPTED | REJECTED ; DRAFT → REJECTED
                      REVIEW → DRAFT                                  (revised by the intake client)
@@ -340,52 +365,104 @@ Charter, ProjectCharter  ACTIVE → RETIRED
                      revisions[rev]:  PROPOSED → REJECTED
                      (both kinds carry revisions[rev]; an ACCEPTED revision is immutable and digested; a SUPERSEDED revision stays pinned by every plan revision that pinned it)
 ManagerLease         ACKNOWLEDGED → EXPIRED   (acknowledgement of manager_authority; never authority)
+                     (the Context controller writes EXPIRED on the DrainManager control commit that drained this lease_uid,
+                      whatever caused the drain, or on the COMMITTED receipt of the RetirePlanAuthority that removed its entry; an EXPIRED
+                      lease never returns: AdvanceManagerEpoch installs a new lease)
 
 Task, Milestone      PROPOSED → READY → RUNNING → VERIFYING → ACCEPTED | BLOCKED | FAILED | CANCELLED | SUPERSEDED
                      READY | RUNNING | VERIFYING → BLOCKED → READY            (blocking decision, dependency, budget, capability or evidence resolved)
                      READY | RUNNING | VERIFYING | BLOCKED → SUPERSEDED | CANCELLED
+                     (VERIFYING → ACCEPTED is the acceptance adjudication the Task controller commits; it lists the UID and
+                      digest of every EvidenceBundle it relies on)
 
 TaskRun              PENDING → ADMITTED → PREPARING → EXECUTING → VERIFYING → SUCCEEDED | FAILED
                      EXECUTING | VERIFYING → RECOVERING → EXECUTING | FAILED
-                     any non-terminal → CANCELLED
+                     PREPARING → FAILED (setup failed, or fenced)
+                     PENDING | ADMITTED | EXECUTING → FAILED (fenced)
+                     any non-terminal → CANCELLED (a cancel fences first: only once fence_state is FENCED or FENCED_UNCERTAIN)
                      fence_state (control lane, from any non-terminal phase, phase unchanged):
                        ACTIVE → FENCE_PENDING → FENCED | FENCED_UNCERTAIN ; FENCED_UNCERTAIN → FENCED
+                     (the TaskRun holds the fence request and the epoch: ACTIVE → FENCE_PENDING is one TaskRun control CAS that also
+                      increments execution_epoch; FENCED and FENCED_UNCERTAIN acknowledge the FenceSession of this TaskRun at
+                      that epoch reaching CONFIRMED or UNCERTAIN, never the reverse)
+                     (once fence_state leaves ACTIVE the phase never moves to EXECUTING or SUCCEEDED; it moves to FAILED, or
+                      to CANCELLED when a cancel caused the fence, and only once fence_state is FENCED or FENCED_UNCERTAIN;
+                      FENCED_UNCERTAIN → FENCED may land after the phase is terminal; custody keeps the candidate, and a
+                      replacement TaskRun verifies it again)
 
 AgentRun             STARTING → RUNNING → COMPLETED | FAILED | CANCELLED
-                     RUNNING → HEARTBEAT_LOST → RUNNING (continuation) | fence_state := FENCE_PENDING
+                     STARTING → FAILED | CANCELLED
+                     RUNNING → HEARTBEAT_LOST → RUNNING (continuation) | fence_state := FENCE_PENDING (continuation_deadline passed; the copy acknowledging the fence requested on the TaskRun)
+                     HEARTBEAT_LOST → FAILED | CANCELLED   (only once fence_state is FENCED or FENCED_UNCERTAIN)
+                     (CANCELLED from any phase only once fence_state is FENCED or FENCED_UNCERTAIN: a cancel fences the TaskRun first)
                      fence_state: as TaskRun
+                     (fence_state and execution_epoch are acknowledged copies of its TaskRun's and authorize nothing; a fence
+                      of an AgentRun is requested on its TaskRun)
 
 AgentCheckpoint      CREATED → VERIFIED | STALE | QUARANTINED
+                     VERIFIED → STALE
+                     (STALE: its execution_epoch is below its TaskRun's; QUARANTINED: out-of-scope content was detected at
+                      the checkpoint, ROLES §2)
 ScopeCapsule         ISSUED → REVOKED
 ExecutionIdentity    ISSUED → REVOKED
 CredentialGrant      ISSUED → EXPIRED | REVOKED
 FenceSession         PENDING → CONFIRMED | UNCERTAIN ; UNCERTAIN → CONFIRMED
+                     (the Broker's evidence of one fence of one TaskRun at one execution_epoch, created for the TaskRun's
+                      FENCE_PENDING commit; CONFIRMED records FenceConfirmed, §6)
 
 Workspace            REQUESTED → PROVISIONING → READY → IN_USE → PRESERVING → PRESERVED → RETIRED
-                     any → QUARANTINED | CONFLICT
+                     PRESERVED → IN_USE (write fence lifted after a custody checkpoint; retirement needs a new PRESERVED)
+                     any non-terminal → QUARANTINED | CONFLICT
+                     QUARANTINED | CONFLICT → PRESERVING
+                     (QUARANTINED for uncertain custody leaves once a later custody checkpoint of it is VERIFIED; QUARANTINED
+                      for a scope escape or unattributed work, and CONFLICT, leave only once their WorkspaceConflict is
+                      ADJUDICATED; a workspace that was ever QUARANTINED or in CONFLICT never returns to READY or IN_USE, and
+                      later work restores its preserved artifact into a new Workspace)
 CustodyPolicy        ACTIVE → RETIRED
-CustodyCheckpoint    INVENTORIED → UPLOADING → UPLOADED → VERIFIED ; any → FAILED
+CustodyCheckpoint    INVENTORIED → UPLOADING → UPLOADED → VERIFIED ; any non-terminal → FAILED
+                     (UPLOADED: every Artifact is VERIFIED by digest; VERIFIED: an independent restore into a fresh location
+                      is verified and restore_receipt set, and the completion marker follows)
 ArtifactCommit       PENDING → VERIFIED | FAILED
+                     (VERIFIED only for a CustodyCheckpoint VERIFIED with its completion marker written; the Workspace's
+                      PRESERVED follows it, §7)
 Artifact             PENDING → VERIFIED | EXPIRED
 WorkspaceConflict    DETECTED → PRESERVING → QUARANTINED → ADJUDICATED ; PRESERVING → PRESERVED → ADJUDICATED
-RestoreRequest       REQUESTED → RESTORING → READ_ONLY → FENCED → RECONCILED → MAPPED → DISPATCH_ENABLED ; any → FAILED
+RestoreRequest       REQUESTED → RESTORING → READ_ONLY → FENCED → RECONCILED → MAPPED → DISPATCH_ENABLED ; any non-terminal → FAILED
 
-IntegrationBasis     RESERVED → INTEGRATING → VERIFIED ; RESERVED | INTEGRATING → STALE | BLOCKED
-                     (STALE acknowledges the register's INVALIDATED; the register is the authority)
+IntegrationBasis     RESERVED → INTEGRATING → VERIFIED ; RESERVED | INTEGRATING | VERIFIED → STALE | BLOCKED
+                     VERIFIED → RELEASED
+                     (STALE and RELEASED acknowledge the register's INVALIDATED and differ by cause; the register is the authority)
+                     (RELEASED: every merge operation of its merge order is terminal and InvalidateIntegrationBasis has
+                      advanced the register; RetireIntegrationBasis then removes the entry, §3.1)
 VerificationRun      PENDING → RUNNING → PASSED | FAILED | INCONCLUSIVE
 EvidenceBundle       RECORDED → INVALIDATED | EXPIRED
+                     (a bundle has no accepted state: an accepted bundle is one a committed acceptance adjudication references)
 
 Budget               OPEN → EXHAUSTED | CLOSED
 BudgetReservation    RESERVED → COMMITTED | RELEASED | UNKNOWN | EXPIRED
                      UNKNOWN → COMMITTED | RELEASED | EXPIRED         (settlement or explicit conservative expiry)
+                     (UNKNOWN: its consumer, the TaskRun for ATTEMPT or the operation for EFFECT, is terminal, fenced or
+                      OUTCOME_UNKNOWN and its usage is not SETTLED; COMMITTED on settlement; RELEASED on proven zero use;
+                      EXPIRED only by an explicit conservative expiry, counted at the reservation ceiling)
 UsageReceipt         PENDING → PARTIAL → SETTLED | DISPUTED
                      PENDING | PARTIAL → UNKNOWN → CENSORED ; CENSORED → SETTLED (append-only correction)
 OutcomeRecord        PROVISIONAL → MATURE | DEFECT_CONFIRMED ; MATURE | DEFECT_CONFIRMED → REVISED
 TelemetryGap         OPEN → CLOSED ; OPEN → PERMANENT
+                     (CLOSED: a record of the gap's kind for its TaskRun committed after the gap, linked from it; the gap is
+                      never removed, and every count uses the linked record from then on as an append-only correction, as
+                      for a CENSORED receipt later SETTLED; PERMANENT: the outbox that held the record is lost, §8)
 
 Finding              RAISED → CLASSIFIED → LINKED | PROMOTED | DEFERRED | REJECTED
 Decision             RECORDED  (immutable)
 Intervention         REQUESTED → ACKNOWLEDGED → APPLIED | REJECTED | EXPIRED
+
+gate                  NOT_RUN → RUNNING → PASSED | FAILED ; PASSED → INVALIDATED
+                     FAILED | INVALIDATED → RUNNING   (a new run of the gate)
+                     (a gate of M0 §4, not a kind: its evidence is a signed manifest, M0 §5, and NOT_RUN is a gate with no manifest)
+ProjectionState      gap:  NONE → OPEN → NONE | PERMANENT
+                     integrity:  OK → DIGEST_CONFLICT
+                     (a projection's read model of one aggregate, not a kind: DetectAuditGap opens a gap, the repaired
+                      event closes it and DeclarePermanentGap makes it PERMANENT; RejectDigestConflict records DIGEST_CONFLICT)
 ```
 
 `Dispatched`, `ReceiptObserved`, `Ambiguous`, `Reconciled`, `Unresolved` and every other name of the form *Verb-ed* are event types, never states. `RECOVERING`, `INCONCLUSIVE`, `UNRESOLVED` and `QUARANTINED` are explicit states, never generic failures. A state set printed in a schema that differs from this section is a schema defect.

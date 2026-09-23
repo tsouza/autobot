@@ -27,11 +27,13 @@ pub enum Fault {
     /// [`Fault::Dropped`].
     LostAcknowledgement(TransportFault),
     /// The provider throttles this call and the next `calls - 1` calls the trigger matches:
-    /// none of them is applied, and each ends in [`TransportFault::Timeout`].
+    /// none of them is applied. A send ends in [`SendError::RateLimited`]; any other call ends in
+    /// [`TransportFault::Timeout`], since [`ProviderError`] has no throttled answer and an
+    /// unknown outcome is the one answer that claims nothing (KERNEL §3.3). A window of zero
+    /// calls throttles nothing.
     ///
-    /// The provider trait has no throttled answer, so the adapter reports the one answer that
-    /// never claims non-application: an unknown outcome, which reconciliation then resolves
-    /// (KERNEL §3.3). A window of zero calls throttles nothing.
+    /// [`SendError::RateLimited`]: autobot_adapters::provider::SendError::RateLimited
+    /// [`ProviderError`]: autobot_adapters::provider::ProviderError
     RateLimited {
         /// How many matching calls the window throttles.
         calls: u32,

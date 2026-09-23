@@ -15,8 +15,9 @@
 //!
 //! - Provider names are `fake-forge` and `fake-ci`, and every capability is the fake's own
 //!   declaration, not a claim about any real provider.
-//! - A rate limit is reported as [`TransportFault::Timeout`]: the provider trait has no
-//!   throttled answer, and an unknown outcome is the answer that never claims non-application
+//! - A rate-limited send is reported as [`SendError::RateLimited`]. A rate-limited observation,
+//!   lookup or dry run is reported as [`TransportFault::Timeout`]: [`ProviderError`] has no
+//!   throttled answer, and an unknown outcome is the answer that never claims anything
 //!   (KERNEL §3.3).
 //! - A send without declared idempotency that repeats an applied `operation_key` is applied
 //!   again under a new remote identity; a lookup names the first.
@@ -245,7 +246,7 @@ impl ProviderAdapter for FakeProvider {
         let fault = self.fixture.script.take(Call::Send, &request.operation);
         match fault {
             Some(Fault::Dropped(t)) => Err(SendError::Transport(t)),
-            Some(Fault::RateLimited { .. }) => Err(SendError::Transport(TransportFault::Timeout)),
+            Some(Fault::RateLimited { .. }) => Err(SendError::RateLimited),
             // The acknowledgement is lost whatever it was. A remote identity is never empty,
             // so `apply` never fails; if it did, it applied nothing and the unknown outcome
             // still proves nothing either way.

@@ -17,6 +17,9 @@
 //!   to; a result for an old head is delivered with that head and satisfies nothing current.
 //! - Forge text keeps its authenticated actor and stays untrusted content: it carries no
 //!   authority until a controller has validated the actor's permissions.
+//! - A provider answer that fails authentication is dropped whole: the poll that receives it
+//!   answers [`SourceError::Unauthenticated`], nothing it carries is delivered or listed, and
+//!   authentic answers before and after it are delivered as usual.
 
 mod contract;
 

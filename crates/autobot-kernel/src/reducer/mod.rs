@@ -12,17 +12,24 @@
 //!   revision, asks the reducer, enforces the lane's field partition on the state digests,
 //!   advances the counters and writes the [`TransitionReceipt`] of a commit, or returns the
 //!   [`Refusal`].
-//! - [`Guards`] holds one switch per FORMAL §5 guard ([`GuardId`]). Outside tests every guard
-//!   is enabled; [`Guards::without`], which disables one so that a negative variant can show
-//!   its fixture failing, exists only under `cfg(test)` or the `testing` feature.
+//! - [`Guards`] holds one switch per FORMAL §5 guard ([`GuardId`]). Built without `cfg(test)`
+//!   and without the `testing` feature, every guard is enabled; [`Guards::without`], which
+//!   disables one so that a negative variant can show its fixture failing, exists only under
+//!   `cfg(test)` or the `testing` feature.
 //!
 //! Choices this module makes where the design is open:
 //!
 //! - A state gives its domain and control digests through [`ReducerState`]; which fields each
-//!   digest covers is the field partition of KERNEL §1, which the state's kind defines. [`step`]
-//!   refuses a domain transition that changes the control digest, and, while
-//!   [`GuardId::ControlFieldsOnly`] is enabled, a control transition that changes the domain
-//!   digest: KERNEL §1 rejects a commit that touches both classes.
+//!   digest covers is the field partition of KERNEL §1, which the state's kind defines. KERNEL
+//!   §1 rejects a commit that touches both classes. A reducer's transition that changes the
+//!   other lane's digest is a defect of the reducer, not a ground to refuse the command, so
+//!   [`step`] reports it as [`ReducerError::LanePartition`]: a domain transition that changes
+//!   the control digest always, and a control transition that changes the domain digest while
+//!   [`GuardId::ControlFieldsOnly`] is enabled. A refusal can be recorded as a terminal
+//!   rejection; a reducer defect must not be.
+//! - A [`TransitionReceipt`] that [`step`] could not have written does not parse: a domain
+//!   receipt whose control digest moved, and a control receipt whose domain digest moved
+//!   without [`GuardId::ControlFieldsOnly`] among its disabled guards.
 //! - A command whose expected revision is not the aggregate's current revision in its lane is
 //!   refused with [`RefusalGround::RevisionMismatch`] before the reducer runs; a retry is never
 //!   rebased (KERNEL §2). The refusal is a decision, not the rejection proof of KERNEL §2: a
@@ -150,8 +157,6 @@ pub enum RefusalGround {
     Precondition(&'static str),
     /// The command's expected revision is not the aggregate's current revision in its lane.
     RevisionMismatch,
-    /// A domain transition changed the control digest.
-    DomainCommitTouchesControl,
 }
 
 /// A refused command: the ground, and the revision of the command's lane the decision read.
@@ -204,16 +209,15 @@ pub enum Step<S> {
 /// Runs reducer `R` on `aggregate` for `command`, pinned by `pins`, under `guards`.
 ///
 /// The command is refused with [`RefusalGround::RevisionMismatch`] if its expected revision is
-/// not the aggregate's, with the reducer's ground if the reducer refuses, with
-/// [`RefusalGround::DomainCommitTouchesControl`] if a domain transition changes the control
-/// digest, and with [`RefusalGround::Guard`]`(`[`GuardId::ControlFieldsOnly`]`)` if a control
-/// transition changes the domain digest while that guard is enabled. Otherwise the counters
-/// advance by one commit of the lane and the receipt records the transition.
+/// not the aggregate's, and with the reducer's ground if the reducer refuses. Otherwise the
+/// counters advance by one commit of the lane and the receipt records the transition.
 ///
 /// # Errors
 ///
 /// [`ReducerError::LaneMismatch`] if the reducer commits on another lane than the command
-/// pins, [`ReducerError::Counter`] if a counter would pass `i64::MAX`, and
+/// pins, [`ReducerError::LanePartition`] if a domain transition changes the control digest or
+/// a control transition changes the domain digest while [`GuardId::ControlFieldsOnly`] is
+/// enabled, [`ReducerError::Counter`] if a counter would pass `i64::MAX`, and
 /// [`ReducerError::Receipt`] if the transition makes an invalid receipt, such as an invalid
 /// action name or effect intents out of order.
 pub fn step<R: Reducer>(
@@ -245,17 +249,15 @@ pub fn step<R: Reducer>(
     }
     let before_digests = aggregate.state.digests();
     let after_digests = transition.after.digests();
-    match lane {
-        Lane::Domain if before_digests.control != after_digests.control => {
-            return refuse(RefusalGround::DomainCommitTouchesControl);
+    let crosses = match lane {
+        Lane::Domain => before_digests.control != after_digests.control,
+        Lane::Control => {
+            before_digests.domain != after_digests.domain
+                && guards.is_enabled(GuardId::ControlFieldsOnly)
         }
-        Lane::Control
-            if before_digests.domain != after_digests.domain
-                && guards.is_enabled(GuardId::ControlFieldsOnly) =>
-        {
-            return refuse(RefusalGround::Guard(GuardId::ControlFieldsOnly));
-        }
-        _ => {}
+    };
+    if crosses {
+        return Err(ReducerError::LanePartition { lane });
     }
     let after = aggregate
         .counters
@@ -300,6 +302,11 @@ pub enum ReducerError {
         /// The lane of the reducer's transition.
         committed: Lane,
     },
+    /// A transition on `lane` changed the digest of the other lane's fields.
+    LanePartition {
+        /// The lane of the transition.
+        lane: Lane,
+    },
     /// A counter would pass `i64::MAX`.
     Counter(ValueError),
     /// The transition does not make a valid receipt.
@@ -313,6 +320,9 @@ impl fmt::Display for ReducerError {
                 f,
                 "the command pins the {pinned} lane but the reducer committed on {committed}"
             ),
+            Self::LanePartition { lane } => {
+                write!(f, "a {lane} transition changed the other lane's digest")
+            }
             Self::Counter(e) => write!(f, "counter exhausted: {e}"),
             Self::Receipt(e) => write!(f, "invalid receipt: {e}"),
         }
@@ -322,7 +332,7 @@ impl fmt::Display for ReducerError {
 impl std::error::Error for ReducerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::LaneMismatch { .. } => None,
+            Self::LaneMismatch { .. } | Self::LanePartition { .. } => None,
             Self::Counter(e) => Some(e),
             Self::Receipt(e) => Some(e),
         }

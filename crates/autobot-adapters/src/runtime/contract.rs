@@ -61,7 +61,8 @@ pub enum RuntimeRule {
     CheckpointIdentity,
     /// The outcome and usage records are in the outbox before the session reports its end.
     OutboxBeforeEnd,
-    /// A session whose outbox write was refused reports no end.
+    /// A session whose outbox write was refused reports [`RuntimeFailure::OutboxRefused`]:
+    /// no end, and no other category.
     NoEndWithoutOutbox,
     /// A failure is reported as its own category, never as an end or another category.
     FailureCategory,
@@ -113,7 +114,12 @@ pub fn run<H: RuntimeHarness>(harness: &mut H) -> SuiteResult<RuntimeRule> {
         (script(&[1, 2], Ending::Complete), Port::refusing_outbox()),
         (script(&[1, 2], Ending::Complete), Port::refusing_tool(1)),
     ];
-    for failure in RuntimeFailure::ALL {
+    // An outbox refusal comes from the port, not from the session: the refusing port above
+    // exercises it.
+    for failure in RuntimeFailure::ALL
+        .into_iter()
+        .filter(|f| *f != RuntimeFailure::OutboxRefused)
+    {
         endings.push((script(&[1], Ending::Fail(failure)), Port::default()));
     }
     for (script, port) in endings {
@@ -284,7 +290,11 @@ fn session<H: RuntimeHarness>(
             RuntimeRule::SemanticEnd,
             format!("{name}: failed with {got}"),
         ),
-        (Err(_), Ok(())) => {}
+        (Err(got), Ok(())) => c.check(
+            *got == RuntimeFailure::OutboxRefused,
+            RuntimeRule::NoEndWithoutOutbox,
+            || format!("{name}: the outbox refused its records and it failed with {got}"),
+        ),
         (Ok(end), Ok(())) => {
             let semantic = matches!(
                 (script.ending, end),

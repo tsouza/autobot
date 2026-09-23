@@ -21,7 +21,11 @@
 //!   repository and forge text are [`TrustClass::UntrustedContent`](crate::trust::TrustClass).
 //!   An adapter may add framing of its own, only as untrusted content.
 //! - A tool's output reaches the session as untrusted content.
-//! - An adapter whose outbox write is refused does not report a [`SessionEnd`].
+//! - An adapter whose outbox write is refused reports no [`SessionEnd`] but
+//!   [`RuntimeFailure::OutboxRefused`], a category of its own: ROLES §4 lists no category for
+//!   it (#389), and reporting it as [`RuntimeFailure::Crash`] would have a live session fenced and
+//!   preserved as after a crash (ROLES §4) when a continuation that writes the records again
+//!   is enough.
 //! - A checkpoint lists the request digests of the tool invocations still open. A continuation
 //!   resumes them (KERNEL §9); how a replacement attempt inherits them is open (#300).
 
@@ -175,8 +179,9 @@ pub enum SessionEnd {
     },
 }
 
-/// A failure category ROLES §4 keeps apart from model quality; each is answered by a
-/// continuation (KERNEL §9), never counted as a result of the model.
+/// A failure category kept apart from model quality: one ROLES §4 names, or a refused outbox
+/// write. Each is answered by a continuation (KERNEL §9), never counted as a result of the
+/// model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeFailure {
     /// The model provider is unavailable.
@@ -193,11 +198,14 @@ pub enum RuntimeFailure {
     MalformedOutput,
     /// The session's process crashed.
     Crash,
+    /// The durable outbox refused the session's outcome or usage record (KERNEL §8 step 2),
+    /// so the session may not report its end.
+    OutboxRefused,
 }
 
 impl RuntimeFailure {
     /// Every category.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::ProviderOutage,
         Self::RateLimited,
         Self::ContextExhausted,
@@ -205,6 +213,7 @@ impl RuntimeFailure {
         Self::StreamDisconnect,
         Self::MalformedOutput,
         Self::Crash,
+        Self::OutboxRefused,
     ];
 }
 
@@ -218,6 +227,7 @@ impl fmt::Display for RuntimeFailure {
             Self::StreamDisconnect => "stream disconnect",
             Self::MalformedOutput => "malformed output",
             Self::Crash => "crash",
+            Self::OutboxRefused => "outbox refused",
         })
     }
 }

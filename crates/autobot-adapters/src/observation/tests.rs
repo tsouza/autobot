@@ -8,6 +8,8 @@ enum Break {
     LosesDuringOutage,
     RelistsFirstSeen,
     AnswersWhenUnavailable,
+    ForwardsForged,
+    IgnoresForgedSilently,
 }
 
 struct Double {
@@ -18,6 +20,8 @@ struct Double {
     /// Undelivered observations and the poll count after which each is due.
     queue: Vec<(Observation, u32)>,
     published: Vec<Observation>,
+    /// A received answer that failed authentication, not yet reported.
+    forged: bool,
 }
 
 impl Double {
@@ -45,6 +49,9 @@ impl ObservationSource for Double {
         }
         let polls = self.polls;
         self.polls += 1;
+        if std::mem::take(&mut self.forged) && !self.is(Break::IgnoresForgedSilently) {
+            return Err(SourceError::Unauthenticated);
+        }
         let (due, later): (Vec<_>, Vec<_>) = self.queue.drain(..).partition(|(_, at)| *at <= polls);
         self.queue = later;
         let mut batch: Vec<Observation> = due.into_iter().map(|(o, _)| o).collect();
@@ -93,6 +100,7 @@ impl ObservationHarness for Harness {
             polls: 0,
             queue: Vec::new(),
             published: Vec::new(),
+            forged: false,
         }
     }
 
@@ -112,6 +120,14 @@ impl ObservationHarness for Harness {
             .push((observation.clone(), source.polls + delay));
         if source.delivery.duplicate {
             source.queue.push((observation.clone(), source.polls));
+        }
+    }
+
+    fn publish_unauthenticated(&mut self, source: &mut Double, observation: &Observation) {
+        if source.is(Break::ForwardsForged) {
+            self.publish(source, observation);
+        } else {
+            source.forged = true;
         }
     }
 
@@ -137,6 +153,14 @@ fn each_broken_double_fails_its_rule() {
         (
             Break::AnswersWhenUnavailable,
             ObservationRule::UnavailableFailsClosed,
+        ),
+        (
+            Break::ForwardsForged,
+            ObservationRule::UnauthenticatedRefused,
+        ),
+        (
+            Break::IgnoresForgedSilently,
+            ObservationRule::UnauthenticatedRefused,
         ),
     ];
     for (broken, rule) in cases {

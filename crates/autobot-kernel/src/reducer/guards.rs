@@ -3,46 +3,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Defines [`GuardId`] from one line per FORMAL §5 row: variant, row text, invariants.
-macro_rules! guards {
-    ($($(#[$doc:meta])* $name:ident => $removed:literal, $violates:literal;)*) => {
-        /// One guard of `docs/design/AUTOBOT-FORMAL-SURFACE.md` §5, one variant per row of its
-        /// negative-variant table, in table order.
-        ///
-        /// Serde and the JSON schema use the variant name in kebab case.
-        #[derive(
-            Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-            JsonSchema,
-        )]
-        #[serde(rename_all = "kebab-case")]
-        pub enum GuardId {
-            $($(#[$doc])* $name,)*
-        }
-
-        impl GuardId {
-            /// Every guard, in FORMAL §5 table order.
-            pub const ALL: &'static [GuardId] = &[$(GuardId::$name,)*];
-
-            /// The row's "Guard removed" cell, verbatim: what the negative variant does
-            /// without this guard.
-            #[must_use]
-            pub fn removed(self) -> &'static str {
-                match self {
-                    $(GuardId::$name => $removed,)*
-                }
-            }
-
-            /// The row's "Must violate" cell, verbatim: the fixtures the negative variant
-            /// must fail.
-            #[must_use]
-            pub fn must_violate(self) -> &'static str {
-                match self {
-                    $(GuardId::$name => $violates,)*
-                }
-            }
-        }
-    };
-}
+include!("guards_macro.rs");
 
 guards! {
     /// Acceptance reads the registers and records the acceptance in one CAS on one object.
@@ -100,18 +61,22 @@ guards! {
         "an `Intake` reaching `PROPOSED` with a repository lacking a forge-adapter answer", "F-44";
 }
 
+/// The integer type of the [`Guards`] bitset.
+type Bits = u32;
+
 impl GuardId {
     /// The guard's bit in [`Guards`]: one at its position in [`GuardId::ALL`].
-    fn bit(self) -> u32 {
+    fn bit(self) -> Bits {
         1 << (self as u32)
     }
 }
 
 /// The guards a reducer decides under.
 ///
-/// Outside tests there is one value, [`Guards::all`], with every FORMAL §5 guard enabled.
-/// [`Guards::without`], which disables one guard so that a negative variant can show its
-/// fixture failing, exists only under `cfg(test)` or the crate's `testing` feature:
+/// Built without `cfg(test)` and without the crate's `testing` feature, [`Guards::all`], with
+/// every FORMAL §5 guard enabled, is the only value that can be made. [`Guards::without`],
+/// which disables one guard so that a negative variant can show its fixture failing, exists
+/// only under `cfg(test)` or the `testing` feature:
 ///
 #[cfg_attr(not(feature = "testing"), doc = "```compile_fail")]
 #[cfg_attr(feature = "testing", doc = "```")]
@@ -123,10 +88,53 @@ impl GuardId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Guards {
     /// One bit per disabled guard, at the guard's position in [`GuardId::ALL`].
-    disabled: u32,
+    disabled: Bits,
 }
 
 impl Guards {
+    /// The most guards the bitset holds: one bit each.
+    ///
+    /// The guard list is checked against it at compile time. A list of `CAPACITY` guards
+    /// builds:
+    ///
+    /// ```
+    /// # use autobot_kernel::reducer::Guards;
+    /// # use schemars::JsonSchema;
+    /// # use serde::{Deserialize, Serialize};
+    /// include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/reducer/guards_macro.rs"));
+    /// guards! {
+    /// G0 => "", ""; G1 => "", ""; G2 => "", ""; G3 => "", ""; G4 => "", ""; G5 => "", "";
+    /// G6 => "", ""; G7 => "", ""; G8 => "", ""; G9 => "", ""; G10 => "", ""; G11 => "", "";
+    /// G12 => "", ""; G13 => "", ""; G14 => "", ""; G15 => "", ""; G16 => "", ""; G17 => "", "";
+    /// G18 => "", ""; G19 => "", ""; G20 => "", ""; G21 => "", ""; G22 => "", ""; G23 => "", "";
+    /// G24 => "", ""; G25 => "", ""; G26 => "", ""; G27 => "", ""; G28 => "", ""; G29 => "", "";
+    /// G30 => "", ""; G31 => "", "";
+    /// }
+    ///
+    /// fn main() {
+    ///     assert_eq!(GuardId::ALL.len(), Guards::CAPACITY);
+    /// }
+    /// ```
+    ///
+    /// and one more guard does not:
+    ///
+    /// ```compile_fail,E0080
+    /// # use autobot_kernel::reducer::Guards;
+    /// # use schemars::JsonSchema;
+    /// # use serde::{Deserialize, Serialize};
+    /// include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/reducer/guards_macro.rs"));
+    /// guards! {
+    /// G0 => "", ""; G1 => "", ""; G2 => "", ""; G3 => "", ""; G4 => "", ""; G5 => "", "";
+    /// G6 => "", ""; G7 => "", ""; G8 => "", ""; G9 => "", ""; G10 => "", ""; G11 => "", "";
+    /// G12 => "", ""; G13 => "", ""; G14 => "", ""; G15 => "", ""; G16 => "", ""; G17 => "", "";
+    /// G18 => "", ""; G19 => "", ""; G20 => "", ""; G21 => "", ""; G22 => "", ""; G23 => "", "";
+    /// G24 => "", ""; G25 => "", ""; G26 => "", ""; G27 => "", ""; G28 => "", ""; G29 => "", "";
+    /// G30 => "", ""; G31 => "", ""; G32 => "", "";
+    /// }
+    /// # fn main() {}
+    /// ```
+    pub const CAPACITY: usize = Bits::BITS as usize;
+
     /// Every guard enabled.
     #[must_use]
     pub const fn all() -> Self {
