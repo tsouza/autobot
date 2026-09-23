@@ -5,6 +5,7 @@
 #![warn(missing_docs)]
 
 pub mod error;
+pub mod fields;
 pub mod profile;
 pub mod reducer;
 pub mod status;
