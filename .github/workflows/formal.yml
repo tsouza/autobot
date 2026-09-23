@@ -1,7 +1,8 @@
 # The formal toolchain. `formal` (required) runs on every pull request and push and always
 # reports: it passes at once when neither formal/** nor scripts/devtools/src/formal/** changed,
-# and otherwise typechecks and simulates every module. `formal-verify` runs Apalache over every
-# instance when formal/** changed and every night. Neither job holds a model key or a secret.
+# and otherwise typechecks every module and simulates every check target. `formal-verify` runs
+# Apalache over every check target when formal/** changed and every night. Neither job holds a
+# model key or a secret.
 name: formal
 
 on:
