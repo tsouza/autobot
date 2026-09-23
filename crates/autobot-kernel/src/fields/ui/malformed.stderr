@@ -1,0 +1,23 @@
+error: expected one of domain, control, reconciliation, structural, optionally with `nested`, or `nested` alone
+ --> src/fields/ui/malformed.rs:5:13
+  |
+5 |     #[field(canonical)]
+  |             ^^^^^^^^^
+
+error: a field has one class
+ --> src/fields/ui/malformed.rs:7:21
+  |
+7 |     #[field(domain, control)]
+  |                     ^^^^^^^
+
+error: a field carries one #[field(...)] attribute
+  --> src/fields/ui/malformed.rs:10:5
+   |
+10 |     #[field(domain)]
+   |     ^^^^^^^^^^^^^^^^
+
+error: expected one of domain, control, reconciliation, structural, optionally with `nested`, or `nested` alone
+  --> src/fields/ui/malformed.rs:12:5
+   |
+12 |     #[field()]
+   |     ^^^^^^^^^^

@@ -1,0 +1,42 @@
+name = "watch-drop"
+summary = "A dropped watch event leaves its object unread until the next relist, which makes it due."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "create"
+object = "b"
+expect = "created"
+
+[[steps]]
+do = "relist"
+expect = ["a", "b"]
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "initialize"
+object = "b"
+expect = "initialized"
+
+[[steps]]
+do = "inject"
+fault = { kind = "drop_events", count = 1 }
+
+[[steps]]
+do = "poll"
+expect = ["b"]
+
+[[steps]]
+do = "relist"
+expect = ["a"]
+
+[[steps]]
+do = "relist"
+expect = []
