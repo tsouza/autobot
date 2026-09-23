@@ -1,9 +1,11 @@
 //! Every `run:` step of every workflow is a `just` recipe (GHA -> just -> scripts).
 //!
 //! The check is strict rather than a YAML parse: a step passes only when its `run` key is
-//! written plainly as `run: just …` on one line. Any other spelling of a `run` key (quoted,
-//! inside a flow mapping, or as an explicit `?` key) is reported, and so is a `run` value that
-//! continues onto a more indented line.
+//! written plainly as `run: just …` on one line. Any other spelling of a `run` key (inside a
+//! flow mapping, after a tag or anchor, or as an explicit `?` key) is reported, and so is a
+//! `run` value that continues onto a more indented line. Every quoted key and every alias key
+//! is reported whatever it spells, because an escape (`"\x72un"`) or an alias can spell `run`
+//! without containing that text.
 
 use std::path::Path;
 
@@ -38,21 +40,40 @@ fn plain_run(line: &str) -> Option<(usize, &str)> {
     Some((line.len() - body.len(), value.trim()))
 }
 
-/// Whether the line holds a `run` key in any spelling other than the plain one: quoted,
-/// inside a flow mapping, or after an explicit `?` key indicator.
+/// Whether the text right after `at` in `line` is a `:` key indicator, after optional spaces.
+fn key_follows(line: &str, at: usize) -> bool {
+    line[at..].trim_start().starts_with(':')
+}
+
+/// Whether the line holds a quoted key or an alias key (`*name :`), whatever it spells.
+fn quoted_or_alias_key(line: &str) -> bool {
+    let quoted = line
+        .match_indices(['"', '\''])
+        .any(|(at, _)| key_follows(line, at + 1));
+    let alias = line.match_indices('*').any(|(at, _)| {
+        let name = line[at + 1..]
+            .find(|c: char| c.is_whitespace() || ":,{}[]".contains(c))
+            .map_or(line.len(), |end| at + 1 + end);
+        name > at + 1 && key_follows(line, name)
+    });
+    quoted || alias
+}
+
+/// Whether the line holds a key that is or may be `run` in any spelling other than the plain
+/// one: quoted, an alias, inside a flow mapping, after a tag or anchor, or after an explicit
+/// `?` key indicator.
 fn other_run_key(line: &str) -> bool {
     if line
         .trim_start()
         .trim_start_matches(['-', ' '])
         .starts_with('?')
+        || quoted_or_alias_key(line)
     {
         return true;
     }
     line.match_indices("run").any(|(at, _)| {
         let before = line[..at].chars().next_back();
-        let opens = before.is_none_or(|c| c.is_whitespace() || "{,\"'".contains(c));
-        let after = line[at + 3..].trim_start_matches(['"', '\'']).trim_start();
-        opens && after.starts_with(':')
+        before.is_none_or(|c| c.is_whitespace() || "{,".contains(c)) && key_follows(line, at + 3)
     })
 }
 
@@ -150,10 +171,18 @@ fn run_keys_in_other_spellings_are_found() {
         "      - \"run\": cargo test",
         "      - 'run' : just ci",
         "      - ? run",
+        "      - \"\\x72un\": cargo test",
+        "      - \"r\\u0075n\": cargo test",
+        "      - {\"\\x72un\": cargo test}",
+        "      - !!str run: cargo test",
+        "      - &k run: cargo test",
+        "      - *k : cargo test",
     ];
     for line in spelled {
         assert_eq!(offending_steps(&format!("{line}\n")).len(), 1, "{line}");
     }
     let unrelated = "  dry-run:\n    runs-on: x\n      run-url:\n# a push or scheduled run\n";
     assert!(offending_steps(unrelated).is_empty());
+    let quoted_values = "      - run: just label-gate \"$PR\"\n        if: github.ref == 'main'\n";
+    assert!(offending_steps(quoted_values).is_empty());
 }
