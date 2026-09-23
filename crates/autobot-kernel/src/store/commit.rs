@@ -69,6 +69,7 @@ pub struct EventFields {
 }
 
 /// The commit-computed facts an [`AuditEnvelope`] records.
+#[derive(Clone, Copy)]
 struct CommitFacts<'a> {
     aggregate_uid: &'a Uid,
     commit_sequence: CommitSequence,
