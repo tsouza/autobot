@@ -5,6 +5,7 @@
 //! set, otherwise `gh`.
 
 pub mod settings;
+pub mod verdict;
 
 use crate::process::Cmd;
 use crate::{Error, Result};

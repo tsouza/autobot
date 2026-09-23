@@ -52,6 +52,10 @@ ci: fmt-check clippy test doc deny machete
 repo-settings *args:
     {{rs}} scripts/repo_settings.rs {{args}}
 
+# Post the `review-gate` commit status on pull request `pr` from its latest review verdict.
+review-gate pr:
+    {{rs}} scripts/review_gate.rs {{pr}}
+
 # CI job: formatting.
 ci-fmt: fmt-check
 
