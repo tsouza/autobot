@@ -36,8 +36,8 @@ Laws are absolute: a law changes only through a new revision of this charter, an
 
 | Id | Rule | Mode | Threshold |
 |---|---|---|---|
-| R-1 | A pull request changes only its task's allowed paths and the paths CONTRIBUTING lets every task change. | `review` | |
-| R-2 | A pull request delivers exactly one task. | `review` | |
+| R-1 | A pull request changes only its task's allowed paths and the paths CONTRIBUTING lets every task change. | `mechanical` | |
+| R-2 | A pull request delivers exactly one task. | `judged` | 0.8 |
 | R-3 | Every workflow `run:` step is a single `just` recipe. | `mechanical` | |
 | R-4 | Logic behind a recipe lives once, in `autobot-devtools`; scripts are thin entry points. | `review` | |
 | R-5 | Tests assert behaviour and fail when the behaviour is wrong. | `review` | |

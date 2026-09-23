@@ -1,0 +1,36 @@
+# The `scope` check: fails a pull request that changes a path outside the allowed paths of the
+# task issue it closes, the paths its scope-extension comments name and the paths every task
+# may change, or that closes no task issue. A `pull_request` run takes this workflow file from
+# the pull request, but it checks out the default branch and runs that branch's recipe and
+# script, so a pull request cannot change the code that judges it. Only the pull
+# request number comes from the event: the body, the changed files, the task issue and its
+# comments are read from the GitHub API when the job runs. A scope-extension comment counts
+# from the next run, which a re-run of the check starts. No run cancels another, because a
+# cancelled run of a required check leaves it unmet.
+name: scope
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  scope:
+    runs-on: [self-hosted, autobot-light]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with:
+          tool: just,rust-script
+      - run: just toolchain
+      - run: just scope "$PR"
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ github.token }}

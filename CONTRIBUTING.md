@@ -3,6 +3,8 @@
 ## Work items
 
 - Every change delivers exactly one task issue. A task issue is a scope capsule with these sections: **Objective**, **Design refs**, **Allowed paths**, **Non-goals**, **Acceptance evidence**, and optionally **Owns**, which names the design elements (kinds, F-n fixtures, formal modules) the task is the single owner of.
+- **Allowed paths** holds paths and globs only, separated by commas or line breaks: `**` spans any number of directories, `*` any run of characters within one, and a trailing `/` everything under a directory. A glob that starts with `**` is refused. A qualifier on a path (a section, an entry, "only deleting ...") goes in **Non-goals**; an entry with one allows nothing.
+- A comment on the task issue that starts with `Scope extension`, written by the repository owner, a member or a collaborator, adds to the task's allowed paths each backticked span that holds a `/`, a `.` or a `*` and is a path or glob.
 - A task is a sub-issue of one epic and belongs to that epic's milestone. Ordering between issues is expressed only as native "blocked by" dependencies: minimal, acyclic, and never pointing at an issue in a later milestone.
 - Work order: the earliest open milestone first, then issues with no open blockers, then issues on the critical path of the blocked-by graph, which `just dag --critical` computes. The `urgent` label is the only override. There are no priority labels.
 - Epics carry `type:epic`, tasks `type:task`.
@@ -44,6 +46,7 @@ just doctor --measure  # also the sccache hit split: dependencies, then workspac
 - **Title:** Conventional Commits (`feat(kernel): …`, `fix(docs): …`, `chore: …`). Merges are squash-only, so the title becomes the commit on `main`.
 - **Description:** starts with `Closes #N` and then describes only the resolution: what changed and how, decisions taken while implementing, deviations from the capsule and why, and the evidence for each acceptance item. It never copies, paraphrases or mirrors the issue; the issue is already linked.
 - **Paths:** a pull request changes only its task's allowed paths. Every task may also edit its crate's `Cargo.toml`, `Cargo.lock`, the `[workspace.dependencies]` entries it needs, the `mod` line in the parent module of a file it adds, and its own entry in `autobot_controllers::all_controllers()`. Under `crates/*/tests/g_*/` an implementation task may only delete the `#[ignore = "awaiting #N"]` lines that name its own issue.
+- **Scope:** the `scope` check fails a pull request that closes no task issue, or that changes a path (or renames a file from one) that none of the task's allowed paths, its scope extensions and the paths above allows, and names each such path. It reads the parent-module and gate-test inherited paths by line. A parent module may only gain `mod <name>;` lines (optionally `pub` or `pub(crate)`) for files the pull request adds under it, with adjacent `///` doc comments and blank lines, and lose nothing. A gate test group may only lose `#[ignore = "awaiting #N"]` lines naming the task. A scope extension posted after the check ran counts from its next run; re-run the check.
 
 ## Review and merge
 
@@ -56,6 +59,7 @@ just doctor --measure  # also the sccache hit split: dependencies, then workspac
   or `Review verdict: FAIL @ <full-head-sha>`, followed by what was checked, each blocking finding with file and line, and then an "Advisory (not blocking)" section. Only a blocking finding makes the verdict FAIL; the checklist in `AGENTS.md` defines both kinds.
 - The verdict binds to that head SHA only. Any new push needs a new verdict. The `review-gate` check reads this first line.
 - The `judge` check asks, for every `judged` entry of `CHARTER.md`, whether the pull request's diff and text violate it. It fails only on a "violates" answer at or above the entry's threshold, naming the entry and the confidence; a "complies" or "unsure" answer, a truncated input or an unavailable service passes it and leaves the entry to the review. It is never a required check and never replaces the review verdict.
+- The `sensitive-terms` check matches the diff's added lines and paths, the commit messages and the pull request's title and body against the term list in the `SENSITIVE_TERMS` repository secret, in the format of the deny-terms file. It fails on a match and prints only where each match is, never the term or the matched text. Without the secret it passes and says nothing was screened. It is never a required check.
 - `main` merges only through pull requests with squash, and GitHub performs every merge through auto-merge. Until `review-gate` is a required check, auto-merge is enabled on a pull request only after a PASS verdict names its current head SHA: with no required checks, enabling auto-merge merges immediately.
 
 ## Lanes

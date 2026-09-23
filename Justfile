@@ -109,6 +109,15 @@ main-red *args:
 label-gate pr:
     {{rs}} scripts/label_gate.rs {{pr}}
 
+# Fail pull request `pr`, read live from the GitHub API, when it closes no task issue or changes a path outside the task's allowed paths, its scope extensions and the paths every task may change.
+scope pr:
+    {{rs}} scripts/scope.rs {{pr}}
+
+# Fail pull request `pr` when its diff, commit messages or text match a term of `SENSITIVE_TERMS`, printing only where;
+# without a term list it passes and says nothing was screened.
+sensitive-terms pr:
+    {{rs}} scripts/sensitive_terms.rs {{pr}}
+
 # Enable auto-merge (squash) on pull request `pr`, given by its number or GraphQL node id.
 [positional-arguments]
 dependabot-automerge pr:

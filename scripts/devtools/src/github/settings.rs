@@ -17,7 +17,8 @@
 //! required approvals, an empty bypass list, squash as the only merge method, linear
 //! history, deletion and non-fast-forward blocked, and every required status check pinned
 //! to the GitHub Actions app ([`GITHUB_ACTIONS_APP_ID`]) with the strict up-to-date policy
-//! off. A ruleset that breaks the policy is rejected and nothing is sent.
+//! off, and none of the [`SECRET_CHECKS`] required by any `required_status_checks` rule
+//! (CHARTER L-5). A ruleset that breaks the policy is rejected and nothing is sent.
 
 use super::{Client, Method};
 use crate::{Error, Result};
@@ -32,6 +33,10 @@ pub const SETTINGS_PATH: &str = ".github/settings.json";
 
 /// The app id of GitHub Actions, the only accepted source of a required status check.
 pub const GITHUB_ACTIONS_APP_ID: u64 = 15368;
+
+/// The checks that read a repository secret, which no ruleset may require (CHARTER L-5): the
+/// `judge` check (its service key) and the `sensitive-terms` check (its term list).
+pub const SECRET_CHECKS: [&str; 2] = ["judge", "sensitive-terms"];
 
 /// The repository-scoped GitHub REST calls this module makes, so tests can serve recorded
 /// responses in place of [`Client`].
@@ -125,7 +130,10 @@ pub fn validate_ruleset(ruleset: &Value) -> Result<()> {
     if params["allowed_merge_methods"] != serde_json::json!(["squash"]) {
         return invalid("`allowed_merge_methods` must be exactly [\"squash\"]");
     }
-    if let Some(checks) = rule("required_status_checks") {
+    for checks in rules
+        .iter()
+        .filter(|r| r["type"] == "required_status_checks")
+    {
         let params = &checks["parameters"];
         if params["strict_required_status_checks_policy"] != false {
             return invalid("`strict_required_status_checks_policy` must be false");
@@ -139,6 +147,15 @@ pub fn validate_ruleset(ruleset: &Value) -> Result<()> {
         {
             return invalid(&format!(
                 "required check {} must set `integration_id` to {GITHUB_ACTIONS_APP_ID}",
+                check["context"]
+            ));
+        }
+        if let Some(check) = list
+            .iter()
+            .find(|c| SECRET_CHECKS.iter().any(|s| c["context"] == *s))
+        {
+            return invalid(&format!(
+                "required check {} reads a secret, which no required check may (CHARTER L-5)",
                 check["context"]
             ));
         }
@@ -614,6 +631,63 @@ mod tests {
             "required_status_checks": [{"context": "ci", "integration_id": GITHUB_ACTIONS_APP_ID}]
         }))(&mut ruleset);
         validate_ruleset(&ruleset).unwrap();
+    }
+
+    #[test]
+    fn a_check_that_reads_a_secret_is_never_required() {
+        for context in SECRET_CHECKS {
+            let err = rejection(with_checks(json!({
+                "strict_required_status_checks_policy": false,
+                "required_status_checks": [
+                    {"context": "ci", "integration_id": GITHUB_ACTIONS_APP_ID},
+                    {"context": context, "integration_id": GITHUB_ACTIONS_APP_ID}
+                ]
+            })));
+            assert!(
+                err.contains(&format!("required check \"{context}\" reads a secret")),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_second_required_checks_rule_is_checked_too() {
+        let clean = json!({
+            "strict_required_status_checks_policy": false,
+            "required_status_checks": [{"context": "ci", "integration_id": GITHUB_ACTIONS_APP_ID}]
+        });
+        let secret = json!({
+            "strict_required_status_checks_policy": false,
+            "required_status_checks": [{"context": "judge", "integration_id": GITHUB_ACTIONS_APP_ID}]
+        });
+        let err = rejection(|r| {
+            with_checks(clean)(r);
+            with_checks(secret)(r);
+        });
+        assert!(
+            err.contains("required check \"judge\" reads a secret"),
+            "{err}"
+        );
+    }
+
+    #[cfg(all(feature = "judge", feature = "hooks"))]
+    #[test]
+    fn the_secret_checks_are_the_workflow_jobs_that_read_a_secret() {
+        assert!(SECRET_CHECKS.contains(&crate::sensitive::CONTEXT));
+        for (context, workflow) in [
+            (
+                "judge",
+                include_str!("../../../../.github/workflows/judge.yml"),
+            ),
+            (
+                crate::sensitive::CONTEXT,
+                include_str!("../../../../.github/workflows/sensitive-terms.yml"),
+            ),
+        ] {
+            let jobs = workflow.split_once("\njobs:\n").unwrap().1;
+            assert!(jobs.starts_with(&format!("  {context}:\n")), "{jobs}");
+            assert!(jobs.contains("${{ secrets."), "{context}: {jobs}");
+        }
     }
 
     #[test]

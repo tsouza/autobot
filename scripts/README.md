@@ -8,8 +8,8 @@ A script is invoked as `rust-script --force --debug scripts/<name>.rs` with `RUS
 
 | Feature | Dependency | Gates | Used by |
 | --- | --- | --- | --- |
-| `github` | `ureq` | the `github` module (the GitHub API client), `worktree::cli`, and the `Http` and `Token` variants of `Error` | `scripts/dag.rs`, `scripts/dag_lint.rs`, `scripts/dependabot_automerge.rs`, `scripts/label_gate.rs`, `scripts/main_red.rs`, `scripts/repo_settings.rs`, `scripts/review_gate.rs`, `scripts/wt.rs` |
-| `hooks` | `regex` | the `hooks` module: the hook installer behind `just hooks` and the deny-terms check behind `just hook-pre-push` | `scripts/hooks.rs` |
+| `github` | `ureq` | the `github` module (the GitHub API client), the `scope` module behind `just scope`, `worktree::cli`, and the `Http` and `Token` variants of `Error` | `scripts/dag.rs`, `scripts/dag_lint.rs`, `scripts/dependabot_automerge.rs`, `scripts/label_gate.rs`, `scripts/main_red.rs`, `scripts/repo_settings.rs`, `scripts/review_gate.rs`, `scripts/scope.rs`, `scripts/sensitive_terms.rs`, `scripts/wt.rs` |
+| `hooks` | `regex` | the `hooks` module: the hook installer behind `just hooks` and the deny-terms check behind `just hook-pre-push`, and, with `github`, the `sensitive` module behind `just sensitive-terms` | `scripts/hooks.rs`, `scripts/sensitive_terms.rs` |
 | `doctor` | `toml` | the `doctor` module behind `just doctor` | `scripts/doctor.rs` |
 | `judge` | `ring`, and `github` | the `judge` module: the `judged` charter entries asked of a pull request through the typed-question service, behind `just judge` | `scripts/judge.rs` |
 | `ledger` | `judge` | the `ledger` module: the delivery report over merged pull requests, their review verdicts and `judge` reports, and the red runs on `main`, behind `just delivery-ledger` | `scripts/delivery_ledger.rs` |

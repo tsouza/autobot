@@ -16,7 +16,7 @@
 
 A reviewer is a fresh session that did not write the change. It tries to refute the change, not to confirm it. It checks:
 
-1. Only the task's allowed paths and the inherited paths changed.
+1. Only the task's allowed paths and the inherited paths changed. The `scope` check covers this item; the reviewer reads its result.
 2. Every acceptance item of the task issue is met by evidence in the diff, the checks or the pull request description. The reviewer reads the checks and their logs and does not re-run the suite locally; it runs locally only what an acceptance item needs that CI does not cover.
 3. The change matches the design text it cites; any drift is a defect or a `design` finding.
 4. Tests assert behaviour and would fail if the behaviour were wrong.
