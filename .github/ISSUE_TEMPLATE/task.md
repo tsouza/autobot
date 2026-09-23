@@ -1,6 +1,6 @@
 ---
 name: Task
-about: One reviewable pull request of work, as a scope capsule.
+about: One unit of work as a scope capsule, delivered by a pull request unless the capsule names another output.
 labels: ["type:task"]
 ---
 

@@ -9,10 +9,8 @@
 
 ## While working
 
-- Anything outside the task goes into a finding, never into the diff.
 - If the design text looks wrong, stop and file a `design` finding; do not work around it in code.
 - A local test run is for iteration only. Acceptance is the pull request's checks plus a PASS verdict for its head SHA.
-- Never push to `main`, merge, or enable auto-merge before a PASS verdict names the current head SHA.
 
 ## Reviewer checklist
 

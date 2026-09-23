@@ -1,5 +1,6 @@
 ---
 name: Finding
+title: "Finding: "
 about: Something outside a task's scope, reported instead of fixed.
 labels: ["finding"]
 ---
