@@ -41,6 +41,10 @@ deny:
 machete:
     cargo machete
 
+# Check the design set in docs/design for consistency.
+check-design:
+    {{rs}} scripts/check_design.rs docs/design
+
 # Everything CI checks, locally.
 ci: fmt-check clippy test doc deny machete
 
