@@ -103,7 +103,7 @@ A law is never `advisory`.
 
 **Relation to operational policy.** The two stay separate, and the charter is upstream. The charter says what must be true of the work: Constitution laws, rules, conventions, vocabulary and purpose. Operational policy — `WorkContext.spec` and `Repository.spec` — says how AutoBot runs: credentials, tiers, budgets and execution profiles. Path and consequence rules (§5) are charter rules. Operational policy may reference charter entries and never contradicts them.
 
-**Where it lives.** The `Charter` or `ProjectCharter` resource, with its immutable revisions, is canonical, and edits go through the CLI as new revisions. The charter is projected read-only into the repository as its root charter file; the projection is a view of the resource, never a source (I-7).
+**Where it lives.** The `Charter` or `ProjectCharter` resource, with its immutable revisions, is canonical, and edits go through the CLI as new revisions. The charter is projected read-only into the repository as `CHARTER.md` at its root; the projection is a view of the resource, never a source (I-7).
 
 **Pinning.** Plans pin a charter revision at acceptance; KERNEL §5 states how a later change reaches pinned work.
 
