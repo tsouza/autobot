@@ -51,7 +51,7 @@ Acceptance evidence is produced independently of the worker that made the candid
 
 ## 4. The agent-runtime contract
 
-An `AgentRun` is one session of one role through a runtime adapter, inside a `TaskRun`. Every AgentRun holds its own `ExecutionIdentity` and `CredentialGrant` (KERNEL §6); its model spend draws on the `ATTEMPT` reservation of its TaskRun, and each brokered effect on an `EFFECT` reservation of that TaskRun; and each of its sessions (its continuations, KERNEL §9) is a usage producer with its own entry in that TaskRun's expected records (KERNEL §8). Where each role's sessions run, and what their grant allows:
+An `AgentRun` is one session of one role through a runtime adapter, inside a `TaskRun`. Every AgentRun holds its own `ExecutionIdentity` and `CredentialGrant` (KERNEL §6); its model spend draws on the `ATTEMPT` reservation of its TaskRun, and each brokered effect on the `EFFECT` reservation of its operation (KERNEL §9); and each of its sessions (its continuations, KERNEL §9) is a usage producer, with its own entry in that TaskRun's expected records before it spends (KERNEL §8). Where each role's sessions run, and what their grant allows:
 
 | Role | Runs in | Grant allows |
 |---|---|---|
@@ -61,7 +61,7 @@ An `AgentRun` is one session of one role through a runtime adapter, inside a `Ta
 | Reviewer, Tester | the TaskRun of the task whose candidate it assesses; for a milestone's integrated candidate, a planning TaskRun of its own, of the `Plan` | reads of the pinned candidate and its evidence, and its role's requests (§1); no write to the workspace |
 | MicroManager | the TaskRun it guards | reads of the run's evidence, and its role's requests (§1); no write to the workspace |
 
-A planning TaskRun holds no workspace and no task: its spec names the `Plan` or `Intake` in the task's place, and its capsule allows no path, so its sessions change a repository only through operations the broker sends. Its expected records are those of every TaskRun: one usage entry per session, one for the broker when it sends effects, and an `outcome` entry for the run. A reviewer's session is therefore never the worker's: it is another AgentRun with another identity and grant (§3).
+A planning TaskRun holds no workspace and no task: its spec names the `Plan` or `Intake` in the task's place, and its capsule allows no path, so its sessions change a repository only through operations the broker sends. Its expected records are those of every TaskRun: a usage entry for each session that spends and for the broker before it accepts its first effect, and an `outcome` entry for the run (KERNEL §8). A reviewer's session is therefore never the worker's: it is another AgentRun with another identity and grant (§3).
 
 The contract with the runtime, whatever the harness:
 
@@ -71,7 +71,7 @@ The contract with the runtime, whatever the harness:
 
 **Tools only through the broker.** Every tool call with an effect outside the workspace — forge, CI, deployment, credential — is a `ToolInvocation` under KERNEL §3.3, and a filesystem call inside the workspace is not one: the capsule checks of §2 bound it; every privileged filesystem, forge, CI, deployment or credential action passes the broker's grant, scope and capability checks first. The sandbox gives the session no reusable credential, no egress except to the broker, no mount but the workspace, and a process boundary the fence can stop. Read-only calls may be retried within policy.
 
-**Continuation.** Provider outage, rate limiting, context or session exhaustion, mid-stream disconnect, malformed output, refusal, a refused durable-outbox write (`OutboxRefused`, KERNEL §8 step 2) and process crash are separate categories from model quality and are handled by KERNEL §9: checkpoint, then continue the same `AgentRun` from a verified checkpoint; never truncate context silently; treat a refusal as a semantic outcome, not a transport retry; after an `OutboxRefused`, continue and write the records again from the checkpoint, under the producer key of the session that made them, never fence and preserve for it, and if the refusal lasts until `record_deadline` the gap rule of KERNEL §8 step 5 applies; after a crash, fence and preserve before any replacement.
+**Continuation.** Provider outage, rate limiting, context or session exhaustion, mid-stream disconnect, malformed output, refusal, a refused durable-outbox write (`OutboxRefused`, KERNEL §8 step 2) and process crash are separate categories from model quality and are handled by KERNEL §9: checkpoint, then continue the same `AgentRun` from a verified checkpoint; never truncate context silently; treat a refusal as a semantic outcome, not a transport retry; after an `OutboxRefused`, continue and write the records again from the checkpoint as KERNEL §8 step 2 states, never fence and preserve for it, and if no record lands by the entry's `record_deadline` the gap rule of KERNEL §8 step 5 applies; after a crash, fence and preserve before any replacement.
 
 ## 5. Human intervention — a kernel kind
 
