@@ -69,7 +69,7 @@ mod watch;
 pub use cas::Missing;
 pub use commit::{
     Change, ClearOutcome, ClearSlot, Commit, CommitOutcome, CommitRequest, ControlChange,
-    DomainChange, GuardRefusal, Initialize, InitializeOutcome, Pin, Transition,
+    DomainChange, EventFields, GuardRefusal, Initialize, InitializeOutcome, Pin, Transition,
 };
 pub use create::{Create, CreateOutcome};
 pub use object::{Kind, Object, ObjectKey, Origin, ResourceVersion, Status, fields_digest};

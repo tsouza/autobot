@@ -73,12 +73,28 @@
   ],
   "$defs": {
     "AuditEnvelope": {
-      "description": "The parts of a control commit's `AutoBotEvent` that neither its receipt nor its aggregate\nholds.\n\nWith the receipt they give every field of the event: `aggregate_uid` is the aggregate's\nUID, `lane` is `CONTROL`, `commit_sequence` and `control_revision` are the receipt's, `actor`\nis its principal, `state_digest` is its after-control digest, and `event_digest` is computed\nover the event.",
+      "description": "Every field of a commit's `AutoBotEvent` but its digest: the FORMAL §2 `AuditEnvelope`\nrecord.\n\nA pending commit and a control receipt each hold the envelope of their commit, so a new\nprocess rebuilds the event from the slot or the ring entry alone; `event_digest` is computed\nover the event.",
       "type": "object",
       "properties": {
+        "actor": {
+          "description": "The authenticated writer of the command.",
+          "$ref": "#/$defs/Principal"
+        },
+        "aggregate_uid": {
+          "description": "The UID of the aggregate the commit landed on.",
+          "$ref": "#/$defs/Uid"
+        },
         "causation_id": {
           "description": "The identifier of what caused the event.",
           "type": "string"
+        },
+        "commit_sequence": {
+          "description": "The commit's sequence on the aggregate.",
+          "$ref": "#/$defs/CommitSequence"
+        },
+        "control_revision": {
+          "description": "The aggregate's `control_revision` after the commit.",
+          "$ref": "#/$defs/ControlRevision"
         },
         "correlation_id": {
           "description": "The identifier that correlates the event with others.",
@@ -87,6 +103,10 @@
         "event_type": {
           "description": "The event's type.",
           "type": "string"
+        },
+        "lane": {
+          "description": "The commit's lane.",
+          "$ref": "#/$defs/Lane"
         },
         "schema_version": {
           "description": "The schema version of the event.",
@@ -98,15 +118,25 @@
           "description": "The UID of the event's source.",
           "$ref": "#/$defs/Uid"
         },
+        "state_digest": {
+          "description": "The digest of the aggregate's state the event records: the domain digest after a domain\ncommit, the control digest after a control commit.",
+          "$ref": "#/$defs/Digest"
+        },
         "state_revision": {
-          "description": "The aggregate's `state_revision` when the commit landed.",
+          "description": "The aggregate's `state_revision` after the commit.",
           "$ref": "#/$defs/StateRevision"
         }
       },
       "required": [
+        "aggregate_uid",
+        "commit_sequence",
+        "lane",
         "state_revision",
+        "control_revision",
         "source_uid",
         "event_type",
+        "state_digest",
+        "actor",
         "causation_id",
         "correlation_id",
         "schema_version"
@@ -180,7 +210,7 @@
       ]
     },
     "ControlReceipt": {
-      "description": "The receipt of one control commit, the FORMAL §2 `ControlReceipt` record.\n\nThe control commit appends it to the ring in the same write, so the receipt is durable\nwithout a second write. With its [`AuditEnvelope`] it holds every field of its audit event;\nthe envelope's untyped text fields are open in #329.",
+      "description": "The receipt of one control commit, the FORMAL §2 `ControlReceipt` record.\n\nThe control commit appends it to the ring in the same write, so the receipt is durable\nwithout a second write. Its [`AuditEnvelope`] holds every field of its audit event but the\ndigest.",
       "type": "object",
       "properties": {
         "after_control_digest": {
@@ -188,7 +218,7 @@
           "$ref": "#/$defs/Digest"
         },
         "audit_envelope": {
-          "description": "The parts of the audit event the rest of the receipt does not hold.",
+          "description": "The envelope of the commit's audit event.",
           "$ref": "#/$defs/AuditEnvelope"
         },
         "before_control_digest": {
@@ -259,6 +289,21 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "Lane": {
+      "description": "A commit lane.",
+      "oneOf": [
+        {
+          "description": "The domain lane: precondition `state_revision`, installs the pending commit.",
+          "type": "string",
+          "const": "DOMAIN"
+        },
+        {
+          "description": "The control lane: precondition `control_revision`, appends a control receipt.",
+          "type": "string",
+          "const": "CONTROL"
+        }
+      ]
+    },
     "Namespace": {
       "type": "string",
       "maxLength": 63,
@@ -295,16 +340,16 @@
       ]
     },
     "PendingCommit": {
-      "description": "The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.\n\nThe slot names its command's receipt, prepared before the commit, by `receipt_uid`, binds\nits audit event by `audit_digest`, and holds its effect intents. KERNEL §1 has the slot hold\nthe exact receipt and audit envelope so that a new process can rebuild both from it;\nwhether these fields suffice to rebuild a domain event is open in #329.",
+      "description": "The pending commit a domain commit installs, the FORMAL §2 `PendingCommit` record.\n\nThe slot names its command's receipt, prepared before the commit, by `receipt_uid`, holds\nthe full [`AuditEnvelope`] of the commit, so a new process rebuilds the audit event from the\nslot alone, and holds its effect intents.",
       "type": "object",
       "properties": {
         "after_digest": {
           "description": "The aggregate's domain digest after the commit.",
           "$ref": "#/$defs/Digest"
         },
-        "audit_digest": {
-          "description": "The digest of the commit's audit event.",
-          "$ref": "#/$defs/Digest"
+        "audit_envelope": {
+          "description": "The envelope of the commit's audit event.",
+          "$ref": "#/$defs/AuditEnvelope"
         },
         "before_digest": {
           "description": "The aggregate's domain digest before the commit.",
@@ -355,7 +400,7 @@
         "expected_revision",
         "proposed_revision",
         "control_revision_at_commit",
-        "audit_digest",
+        "audit_envelope",
         "effect_intents",
         "state"
       ]

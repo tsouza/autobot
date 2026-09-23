@@ -1,7 +1,9 @@
 use super::*;
 use crate::profile::{ControlRing, Profile};
-use crate::status::{AuditEnvelope, StatusEnvelope};
-use crate::types::{CommitSequence, ControlRevision, LaneRevision, ObjectRef, StateRevision, Uid};
+use crate::status::StatusEnvelope;
+use crate::types::{
+    CommitSequence, ControlRevision, Lane, LaneRevision, ObjectRef, StateRevision, Uid,
+};
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
@@ -63,6 +65,18 @@ fn status(control_lane: bool) -> Status {
     }
 }
 
+/// The caller's audit-event fields of a command written by `actor`.
+fn event(actor: &str) -> EventFields {
+    EventFields {
+        source_uid: uid("src"),
+        event_type: "Hold".to_owned(),
+        actor: actor.parse().expect("principal"),
+        causation_id: "cause".to_owned(),
+        correlation_id: "corr".to_owned(),
+        schema_version: 1,
+    }
+}
+
 fn domain_change(fields: &str) -> Change {
     Change::Domain(DomainChange {
         fields: fields.to_owned(),
@@ -71,7 +85,7 @@ fn domain_change(fields: &str) -> Change {
             name: "receipt-c1".parse().expect("name"),
             uid: uid("receipt-c1"),
         },
-        audit_digest: fields_digest("audit"),
+        event: event("controller"),
         effect_intents: Vec::new(),
     })
 }
@@ -79,15 +93,7 @@ fn domain_change(fields: &str) -> Change {
 fn control_change(fields: &str) -> Change {
     Change::Control(ControlChange {
         fields: fields.to_owned(),
-        principal: "controller".parse().expect("principal"),
-        audit: AuditEnvelope {
-            state_revision: StateRevision::ZERO,
-            source_uid: uid("src"),
-            event_type: "Hold".to_owned(),
-            causation_id: "cause".to_owned(),
-            correlation_id: "corr".to_owned(),
-            schema_version: 1,
-        },
+        event: event("controller"),
     })
 }
 
@@ -195,6 +201,15 @@ fn domain_commit_writes_the_slot_and_only_the_domain_fields() {
     assert_eq!(slot.before_digest, fields_digest("d0"));
     assert_eq!(slot.after_digest, fields_digest("d1"));
     assert_eq!(slot.state, crate::status::PendingCommitState::Occupied);
+    let audit = &slot.audit_envelope;
+    assert_eq!(audit.aggregate_uid, uid("uid-a"));
+    assert_eq!(audit.commit_sequence, slot.commit_sequence);
+    assert_eq!(audit.lane, Lane::Domain);
+    assert_eq!(audit.state_revision, slot.proposed_revision);
+    assert_eq!(audit.control_revision.get(), 3);
+    assert_eq!(audit.state_digest, fields_digest("d1"));
+    assert_eq!(audit.actor, "controller".parse().expect("principal"));
+    assert_eq!(audit.event_type, "Hold");
     assert_eq!(
         after
             .envelope
@@ -249,6 +264,13 @@ fn control_commit_appends_a_receipt_and_preserves_the_domain_side() {
     assert_eq!(receipt.before_control_digest, fields_digest("c0"));
     assert_eq!(receipt.after_control_digest, fields_digest("c1"));
     assert_eq!(receipt.audit_envelope.state_revision.get(), 2);
+    let audit = &receipt.audit_envelope;
+    assert_eq!(audit.aggregate_uid, uid("uid-a"));
+    assert_eq!(audit.commit_sequence, receipt.commit_sequence);
+    assert_eq!(audit.lane, Lane::Control);
+    assert_eq!(audit.control_revision, receipt.control_revision);
+    assert_eq!(audit.state_digest, fields_digest("c1"));
+    assert_eq!(audit.actor, receipt.principal);
 }
 
 #[test]
