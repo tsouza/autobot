@@ -8,6 +8,7 @@
 //! and not blank (the value is trimmed), otherwise the repository the `origin` remote points at.
 
 pub mod graph;
+pub mod main_red;
 pub mod settings;
 pub mod verdict;
 

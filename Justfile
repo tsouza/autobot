@@ -66,6 +66,12 @@ repo-settings *args:
 review-gate pr:
     {{rs}} scripts/review_gate.rs {{pr}}
 
+# Open or comment on the `urgent` issue for the red main run in GITHUB_EVENT_PATH;
+# `--dry-run <run-url>` only prints what it would do for that run.
+[positional-arguments]
+main-red *args:
+    {{rs}} scripts/main_red.rs "$@"
+
 # CI job: formatting.
 ci-fmt: fmt-check
 

@@ -1,0 +1,71 @@
+# Opens an `urgent` issue, or comments on the one already open, when a push run of ci, formal
+# or kind fails on main. formal and kind are matched by name and start counting once they
+# exist. `just main-red` decides from the run in the event which runs are red; this is never a
+# required check and never reverts anything. A workflow_run workflow runs from the default
+# branch, and nothing from the failed run is checked out or run. A manual dispatch with a run
+# URL prints what the workflow would do for that run and writes nothing.
+name: main-red
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] runs default-branch code only
+    workflows: [ci, formal, kind]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run-url:
+        description: "Workflow run URL: https://github.com/<owner>/<name>/actions/runs/<id>"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  main-red:
+    # Only red push runs start this job, so only they join the concurrency group. The library
+    # checks the same conditions again before it writes anything.
+    if: >-
+      github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'push'
+      && contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    # One red run per workflow at a time, so two red runs in a row cannot both open an issue.
+    # GitHub keeps one pending run per group and cancels it when a newer one queues, so a
+    # third red run arriving while one is pending drops only a repeat comment, never the issue.
+    concurrency:
+      group: main-red-${{ github.event.workflow_run.name }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with:
+          tool: just,rust-script
+      - run: just main-red
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with:
+          tool: just,rust-script
+      - run: just main-red --dry-run "$RUN_URL"
+        env:
+          RUN_URL: ${{ inputs.run-url }}
+          GITHUB_TOKEN: ${{ github.token }}
