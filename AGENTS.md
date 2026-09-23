@@ -10,14 +10,14 @@
 ## While working
 
 - If the design text looks wrong, stop and file a `design` finding; do not work around it in code.
-- A local test run is for iteration only. Acceptance is the pull request's checks plus a PASS verdict for its head SHA.
+- Never run CI locally: `just ci` and the recipes it is made of run only in CI, on the self-hosted runners or on GitHub for what cannot run there. Locally, run only the narrow command you are iterating on, such as one crate's `cargo check` or one test, then push and read the pull request's checks. Acceptance is those checks plus a PASS verdict for the head SHA.
 
 ## Reviewer checklist
 
 A reviewer is a fresh session that did not write the change. It tries to refute the change, not to confirm it. It checks:
 
 1. Only the task's allowed paths and the inherited paths changed.
-2. Every acceptance item of the task issue is met by evidence in the diff, the checks or the pull request description.
+2. Every acceptance item of the task issue is met by evidence in the diff, the checks or the pull request description. The reviewer reads the checks and their logs and does not re-run the suite locally; it runs locally only what an acceptance item needs that CI does not cover.
 3. The change matches the design text it cites; any drift is a defect or a `design` finding.
 4. Tests assert behaviour and would fail if the behaviour were wrong.
 5. Unrelated fixes, deferrals without a tracked reason, and inconsistencies between code, comments, docs and tests are defects.
