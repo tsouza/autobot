@@ -306,6 +306,8 @@ Under these: a pending internal event with a fair controller is eventually proce
 
 Proposed first configuration: one context, two repositories, one plan, two milestones, four tasks, two workers, one reviewer, one tester, one forge, one CI provider, two concurrent attempts, two simulated Managers, two simulated installation identities. Inject: duplicate and reordered deliveries, stale completions, provider timeouts and rate limits, context exhaustion and mid-stream disconnect, lost merge responses, controller restart, broker crash before and after the send-attempt marker, a hold cut interleaved at every position with an acceptance, plan activation interleaved with an old-revision acceptance, quiesce-then-resume with the permit's invalidation lost, a control commit beside a pending domain commit, out-of-order and digest-conflicting audit delivery, storage outage, symlink and rename scope escape, and garbage collection discovering unpushed work.
 
+This configuration is deliberately wider than the M0 profile; the profile bounds the deployment, the model bounds the protocol.
+
 ## 8. Stack and phases
 
 ```text

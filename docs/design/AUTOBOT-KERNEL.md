@@ -145,6 +145,8 @@ The **dispatch ledger** entry is `(operation_uid, operation_key, permit_uid, acc
 
 `manager_authority[plan_uid]` on the `WorkContext` is the Manager's authority: `(lease_uid, epoch, holder, deadline, phase)`. `ManagerLease` and `Plan` status expose acknowledged copies and authorize nothing.
 
+Before a `Plan` exists there is no Manager authority: `Intake` and `PlanProposal` are ordinary aggregates written under §1 with a fixed expected revision and no Manager reservation. The acceptance commit that creates the `Plan` also creates the first `manager_authority[plan]` entry; the plan-scoped rules of this section start there.
+
 A Manager command pins plan UID and revision, holder, lease UID and epoch, exact target UID and revision, and input digest. The Context controller CASes the `WorkContext` to check holder, epoch, `phase = ACTIVE` and deadline and to reserve the single `active_manager_transaction` slot: `(target_uid, expected_revision, command_uid, phase ∈ {RESERVED, APPLYING, RESOLVED}, target_receipt_uid, cancellation_receipt_uid, terminal_state)`. The slot serializes short control mutations, not reasoning, builds or agent execution; it is released only by a CAS that records a non-empty `terminal_state` together with the receipt that proves it. Only the target's owning controller applies the reserved command, under §1 and with the command's **fixed expected revision**, which is never refreshed to force an old command through.
 
 **Takeover drains before the epoch advances**, in three steps that are never merged:
