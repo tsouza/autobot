@@ -1,14 +1,16 @@
 # The `labels` check: fails a pull request whose changed human-lane paths lack the
-# `human-lane` label, or the `design-change` label for docs/design. Adding or removing a label
-# re-runs it. The gate script and recipe are checked out from the default branch, so a pull
-# request cannot change them; the changed files and labels come from the GitHub API. This
-# workflow file itself runs from the pull request, so an edit to it is a human-lane change that
-# the reviewer must see.
+# `human-lane` label, or the `design-change` label for docs/design, or whose title is not a
+# Conventional Commits header. Adding or removing a label, or editing the title, re-runs it.
+# The gate scripts and recipes are checked out from the default branch, so a pull request
+# cannot change them; the changed files and labels come from the GitHub API, the title from
+# the event and reaches the shell only through the environment. This workflow file itself
+# runs from the pull request, so an edit to it is a human-lane change that the reviewer must
+# see.
 name: labels
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
 
 permissions:
   contents: read
@@ -35,3 +37,7 @@ jobs:
         env:
           PR: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ github.token }}
+      - if: ${{ !cancelled() }}
+        run: just pr-title "$PR_TITLE"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
