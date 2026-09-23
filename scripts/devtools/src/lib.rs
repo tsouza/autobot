@@ -10,6 +10,7 @@ pub mod design;
 #[cfg(feature = "doctor")]
 pub mod doctor;
 pub mod formal;
+pub mod gates;
 pub mod git;
 #[cfg(feature = "github")]
 pub mod github;

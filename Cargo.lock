@@ -37,9 +37,11 @@ version = "0.0.0"
 name = "autobot-devtools"
 version = "0.0.0"
 dependencies = [
+ "autobot-kernel",
  "regex",
  "ring",
  "serde_json",
+ "sha2",
  "toml",
  "ureq",
  "yaml-rust2",
