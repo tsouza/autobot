@@ -74,6 +74,7 @@ version = "0.0.0"
 dependencies = [
  "autobot-devtools",
  "autobot-kernel-derive",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",
