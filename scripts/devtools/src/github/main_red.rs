@@ -233,8 +233,9 @@ pub fn apply(api: &impl Api, action: &Action) -> Result<String> {
     }
 }
 
-/// Entry point of `scripts/main_red.rs`. The repository is resolved by
-/// [`super::repository`] from the current directory.
+/// Entry point of `scripts/main_red.rs`. The repository is `GITHUB_REPOSITORY` when it is
+/// set and not blank, otherwise the repository the `origin` remote of the current directory
+/// points at, resolved through [`super::resolve_repo`].
 ///
 /// With no argument, reads the `workflow_run` event at `GITHUB_EVENT_PATH` and, when the run
 /// is red, carries out its [`Action`]. With `--dry-run <run-url>`, reads the run behind the
