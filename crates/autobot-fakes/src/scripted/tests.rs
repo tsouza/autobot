@@ -387,7 +387,7 @@ fn a_refused_outbox_reports_no_end() {
         ..Port::default()
     };
     let result = replay(Fixture::new(vec![tool(1, &[])], complete()), &mut port);
-    assert_eq!(result, Err(RuntimeFailure::Crash));
+    assert_eq!(result, Err(RuntimeFailure::OutboxRefused));
 }
 
 #[test]

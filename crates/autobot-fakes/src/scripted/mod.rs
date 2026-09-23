@@ -25,9 +25,8 @@
 //!   failure. A crash records nothing more: the process is gone.
 //! - An interrupted session writes no records; the session that ends the `AgentRun` writes
 //!   them.
-//! - A session whose outbox write is refused reports [`RuntimeFailure::Crash`]: it cannot hand
-//!   over its records, and the workspace holding its outbox has to be preserved as after a
-//!   crash.
+//! - A session whose outbox write is refused stops at the first refused record and reports
+//!   [`RuntimeFailure::OutboxRefused`].
 //! - Budget is one unit per call asked of the broker.
 //! - A record's name is its kind and the `AgentRun`, so every retry of the same session end
 //!   resolves to the same record; its create key is the digest of its name and input digest.
@@ -338,7 +337,7 @@ impl RuntimeAdapter for ScriptedAgent {
         };
         for record in s.records(&end) {
             port.outbox(&record)
-                .map_err(|_refused| RuntimeFailure::Crash)?;
+                .map_err(|_refused| RuntimeFailure::OutboxRefused)?;
         }
         Ok(end)
     }

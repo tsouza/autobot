@@ -15,6 +15,9 @@ pub enum ProviderFault {
     DroppedRequest,
     /// The provider applies the operation and its acknowledgement is lost.
     LostAcknowledgement,
+    /// The provider refuses the request because it is rate limiting the caller: nothing is
+    /// applied and the provider says so.
+    RateLimited,
 }
 
 /// What the provider suite needs to drive an adapter.
@@ -82,6 +85,9 @@ pub enum ProviderRule {
     /// A send whose request was dropped or whose acknowledgement was lost ends in a transport
     /// fault, never in an acknowledgement or a refusal.
     FaultIsUnknown,
+    /// A send the provider rate limited answers [`SendError::RateLimited`], never an
+    /// acknowledgement or a transport fault, and applies nothing.
+    RateLimitReported,
 }
 
 /// Runs the provider suite against the adapters `harness` makes.
@@ -139,20 +145,13 @@ pub fn run<H: ProviderHarness>(harness: &mut H) -> SuiteResult<ProviderRule> {
     for cap in &capabilities {
         if cap.qualified {
             applied(harness, &mut c, cap, &mut reqs);
-            faulted(
-                harness,
-                &mut c,
-                cap,
+            for fault in [
                 ProviderFault::LostAcknowledgement,
-                &mut reqs,
-            );
-            faulted(
-                harness,
-                &mut c,
-                cap,
                 ProviderFault::DroppedRequest,
-                &mut reqs,
-            );
+                ProviderFault::RateLimited,
+            ] {
+                faulted(harness, &mut c, cap, fault, &mut reqs);
+            }
         } else {
             unqualified(harness, &mut c, cap, &mut reqs);
         }
@@ -415,8 +414,8 @@ fn applied<H: ProviderHarness>(
     check_resend(harness, &mut adapter, c, cap, &req, Some(&remote));
 }
 
-/// A fresh provider whose first send ends in `fault`, then a lookup and, after a lost
-/// acknowledgement, a resend.
+/// A fresh provider whose first send ends in `fault`, then the application count and a lookup
+/// and, after a lost acknowledgement, a resend.
 fn faulted<H: ProviderHarness>(
     harness: &mut H,
     c: &mut Checker<ProviderRule>,
@@ -430,13 +429,28 @@ fn faulted<H: ProviderHarness>(
     let req = reqs.request(op, key, cap.requires_head_base);
     harness.fault_next_send(&mut adapter, fault);
     let sent = adapter.send(&req);
-    c.check(
-        matches!(sent, Err(SendError::Transport(_))),
-        ProviderRule::FaultIsUnknown,
-        || format!("a send of {op} under {fault:?} answered {sent:?}"),
-    );
+    if fault == ProviderFault::RateLimited {
+        c.check(
+            sent == Err(SendError::RateLimited),
+            ProviderRule::RateLimitReported,
+            || format!("a rate-limited send of {op} answered {sent:?}"),
+        );
+        let applied = harness.applications(&adapter, op, &key);
+        c.check(applied == 0, ProviderRule::RateLimitReported, || {
+            format!("a rate-limited send of {op} was applied {applied} times")
+        });
+    } else {
+        c.check(
+            matches!(sent, Err(SendError::Transport(_))),
+            ProviderRule::FaultIsUnknown,
+            || format!("a send of {op} under {fault:?} answered {sent:?}"),
+        );
+    }
     let found = adapter.lookup(op, &key);
     match fault {
+        ProviderFault::RateLimited => {
+            check_not_applied(c, cap, &found, "after a rate-limited send");
+        }
         ProviderFault::DroppedRequest => {
             check_not_applied(c, cap, &found, "after a dropped request");
         }

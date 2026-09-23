@@ -7,7 +7,8 @@ use autobot_adapters::text::OperationName;
 /// Runs [`autobot_adapters::provider::run`] against the fake providers one fixture builds.
 ///
 /// A fault the suite asks for is put ahead of the fixture's script: a dropped request ends in
-/// [`TransportFault::Timeout`] and a lost acknowledgement in [`TransportFault::Disconnect`].
+/// [`TransportFault::Timeout`], a lost acknowledgement in [`TransportFault::Disconnect`] and a
+/// rate limit is a one-call window.
 #[derive(Debug, Clone)]
 pub struct FakeProviderHarness {
     fixture: ProviderFixture,
@@ -34,6 +35,7 @@ impl ProviderHarness for FakeProviderHarness {
             ProviderFault::LostAcknowledgement => {
                 Fault::LostAcknowledgement(TransportFault::Disconnect)
             }
+            ProviderFault::RateLimited => Fault::RateLimited { calls: 1 },
         };
         adapter
             .script_mut()
