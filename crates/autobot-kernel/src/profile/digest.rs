@@ -21,7 +21,9 @@ impl ProfileDigest {
     /// The digest of `canonical`, a canonical form produced by [`canonical_form`].
     pub(super) fn of(canonical: &str) -> Self {
         use sha2::Digest as _;
-        Self(Digest::from_bytes(Sha256::digest(canonical.as_bytes()).into()))
+        Self(Digest::from_bytes(
+            Sha256::digest(canonical.as_bytes()).into(),
+        ))
     }
 
     /// The 32 digest bytes.
