@@ -83,3 +83,8 @@ hooks:
 [positional-arguments]
 hook-pre-push *args:
     {{rs}} scripts/hooks.rs pre-push "$@"
+
+# Check the local build setup; `--measure` also reports the sccache hit split.
+[positional-arguments]
+doctor *args:
+    {{rs}} scripts/doctor.rs "$@"
