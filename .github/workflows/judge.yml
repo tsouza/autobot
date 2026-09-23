@@ -1,0 +1,43 @@
+# The `judge` check: asks the typed-question service whether a pull request violates the
+# charter's `judged` entries, and fails only on a confident "violates". It uses a model and a
+# secret, so it is never one of the ruleset's required checks (CHARTER.md L-5); the `review`
+# backstop of each entry decides regardless of its result.
+#
+# The pull request's base commit is checked out, so the charter entries and thresholds, the
+# recipe and the judge script all come from the base: a pull request cannot change what it is
+# judged by. The pull request's title, body, linked issue and diff are read from the GitHub
+# API when the job runs. Pull requests from forks get no secrets, so the job runs only for
+# branches of this repository.
+name: judge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# A newer event on the same pull request supersedes the running judgement.
+concurrency:
+  group: judge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  judge:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, autobot]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with:
+          tool: just,rust-script
+      - run: just toolchain
+      - run: just judge "$PR"
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}

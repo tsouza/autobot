@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Enables `reducer::Guards::without`, which disables one FORMAL §5 guard for a negative variant.
+testing = []
+
 [dependencies]
 autobot-kernel-derive.workspace = true
 schemars.workspace = true
