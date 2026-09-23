@@ -1,0 +1,144 @@
+name = "control-lane"
+summary = "A control commit moves control_revision and commit_sequence and appends its receipt, preserves the domain fields and slot, needs a control lane, and is refused by a full ring."
+
+[[steps]]
+do = "create"
+object = "plain"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "plain"
+expect = "initialized"
+
+[[steps]]
+do = "commit"
+object = "plain"
+command = "h0"
+lane = "CONTROL"
+pin = 0
+fields = "held"
+expect = "no_control_lane"
+
+[[steps]]
+do = "create"
+object = "ctx"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "ctx"
+control_lane = true
+control = "c0"
+expect = "initialized"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "d1"
+lane = "DOMAIN"
+pin = 0
+fields = "domain-one"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h1"
+lane = "CONTROL"
+pin = 0
+fields = "c1"
+expect = "committed"
+
+[[steps]]
+do = "check"
+object = "ctx"
+state_revision = 1
+control_revision = 1
+commit_sequence = 2
+domain = "domain-one"
+control = "c1"
+slot = "occupied"
+slot_command = "d1"
+ring_entries = 1
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h2"
+lane = "CONTROL"
+pin = 1
+fields = "c2"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h3"
+lane = "CONTROL"
+pin = 2
+fields = "c3"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h4"
+lane = "CONTROL"
+pin = 3
+fields = "c4"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h5"
+lane = "CONTROL"
+pin = 4
+fields = "c5"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h6"
+lane = "CONTROL"
+pin = 5
+fields = "c6"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h7"
+lane = "CONTROL"
+pin = 6
+fields = "c7"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h8"
+lane = "CONTROL"
+pin = 7
+fields = "c8"
+expect = "committed"
+
+[[steps]]
+do = "commit"
+object = "ctx"
+command = "h9"
+lane = "CONTROL"
+pin = 8
+fields = "c9"
+expect = "ring_full"
+
+[[steps]]
+do = "check"
+object = "ctx"
+state_revision = 1
+control_revision = 8
+commit_sequence = 9
+control = "c8"
+ring_entries = 8

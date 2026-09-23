@@ -1,0 +1,52 @@
+name = "crash-between-writes"
+summary = "A process that crashes after a write applied and before it saw the result is replaced by a fresh protocol for the same request, which finds that write by reading and does not repeat it."
+
+[[steps]]
+do = "inject"
+fault = { kind = "crash", after_writes = 1 }
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "inject"
+fault = { kind = "crash", after_writes = 1 }
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "inject"
+fault = { kind = "crash", after_writes = 1 }
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c1"
+lane = "DOMAIN"
+pin = 0
+fields = "one"
+expect = "committed"
+
+[[steps]]
+do = "inject"
+fault = { kind = "crash", after_writes = 1 }
+
+[[steps]]
+do = "clear"
+object = "a"
+command = "c1"
+expect = "cleared"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 1
+commit_sequence = 1
+domain = "one"
+slot = "cleared"
+slot_command = "c1"

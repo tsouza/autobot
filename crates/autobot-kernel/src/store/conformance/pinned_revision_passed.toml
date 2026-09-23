@@ -1,0 +1,39 @@
+name = "pinned-revision-passed"
+summary = "A commit pinned at a revision another commit consumed between its read and its write conflicts, reads again, and ends passed rather than rejected or rebased."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "late"
+lane = "DOMAIN"
+pin = 0
+fields = "late"
+expect = "passed"
+interleave = { object = "a", command = "first", lane = "DOMAIN", pin = 0, fields = "first", expect = "committed" }
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 1
+commit_sequence = 1
+domain = "first"
+slot_command = "first"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "ahead"
+lane = "DOMAIN"
+pin = 5
+fields = "ahead"
+expect = "not_reached"
