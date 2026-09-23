@@ -10,12 +10,12 @@
 ///         /// State docs.
 ///         State = "STATE",
 ///     }
-///     edges { [From, ...] -> [To, ...] if Requirement; ... }
-///     sibling_sets { From -> "field" := Sibling::State; }
+///     edges { [From, ...] -> [To, ...] if Requirement, ...; ... }
+///     sibling_sets { From -> "field" := Sibling::State if Requirement; }
 /// }
 /// ```
 ///
-/// `, field "label"`, `if Requirement` and `sibling_sets` are optional. With `impl Name in ...`
+/// `, field "label"`, `if Requirement, ...` and `sibling_sets` are optional. With `impl Name in ...`
 /// and states without docs it only writes the table of the existing enum `Name`.
 macro_rules! lifecycle {
     (
@@ -56,8 +56,8 @@ macro_rules! lifecycle {
     };
     (
         @table $name:ident in $machine:literal [$($field:literal)?] [$($state:ident = $text:literal,)+]
-        edges { $([$($from:ident),+] -> [$($to:ident),+] $(if $req:ident)?;)* }
-        $(sibling_sets { $($sfrom:ident -> $sfield:literal := $sto:expr;)* })?
+        edges { $([$($from:ident),+] -> [$($to:ident),+] $(if $($req:ident),+)?;)* }
+        $(sibling_sets { $($sfrom:ident -> $sfield:literal := $sty:ident :: $svar:ident $(if $($sreq:ident),+)?;)* })?
     ) => {
         impl $crate::lifecycle::Lifecycle for $name {
             const MACHINE: &'static str = $machine;
@@ -67,11 +67,16 @@ macro_rules! lifecycle {
                 $crate::lifecycle::Edges {
                     from: &[$(Self::$from),+],
                     to: &[$(Self::$to),+],
-                    requires: lifecycle!(@req $($req)?),
+                    requires: &[$($($crate::lifecycle::Requirement::$req),+)?],
                 },
             )*];
             $(const SIBLING_SETS: &'static [$crate::lifecycle::SiblingSet<Self>] = &[$(
-                $crate::lifecycle::SiblingSet { from: Self::$sfrom, field: $sfield, to: $sto.as_str() },
+                $crate::lifecycle::SiblingSet {
+                    from: Self::$sfrom,
+                    field: $sfield,
+                    to: $sty::$svar.as_str(),
+                    requires: &[$($($crate::lifecycle::Requirement::$sreq),+)?],
+                },
             )*];)?
 
             fn as_str(self) -> &'static str {
@@ -83,6 +88,4 @@ macro_rules! lifecycle {
     };
     (@opt) => { None };
     (@opt $v:literal) => { Some($v) };
-    (@req) => { None };
-    (@req $r:ident) => { Some($crate::lifecycle::Requirement::$r) };
 }

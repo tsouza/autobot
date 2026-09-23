@@ -31,10 +31,13 @@ lifecycle! {
         Expired = "EXPIRED",
     }
     edges {
-        [Reserved] -> [Committed, Released];
-        [Reserved] -> [Unknown] if ConsumerUnsettled;
-        [Reserved] -> [Expired] if ConservativeExpiry;
-        [Unknown] -> [Committed, Released, Expired] if Settlement;
+        [Reserved] -> [Committed] if EffectStaysReserved, OnSettlement;
+        [Reserved] -> [Released] if EffectStaysReserved, ProvenZeroUse;
+        [Reserved] -> [Unknown] if EffectStaysReserved, ConsumerUnsettled;
+        [Reserved] -> [Expired] if EffectStaysReserved, ConservativeExpiry;
+        [Unknown] -> [Committed] if Settlement, OnSettlement;
+        [Unknown] -> [Released] if Settlement, ProvenZeroUse;
+        [Unknown] -> [Expired] if Settlement, ConservativeExpiry;
     }
 }
 

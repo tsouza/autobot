@@ -127,127 +127,76 @@ fn tables_list_each_machine_field_once() {
 }
 
 #[test]
-fn every_requirement_is_used_once_in_all() {
+fn every_requirement_is_used_and_quotes_its_own_clause() {
     let all: BTreeSet<Requirement> = Requirement::ALL.iter().copied().collect();
     assert_eq!(all.len(), Requirement::ALL.len());
-    assert!(Requirement::ALL.iter().all(|r| !r.phrases().is_empty()));
+    let phrases: BTreeSet<&str> = Requirement::ALL.iter().map(|r| r.phrase()).collect();
+    assert_eq!(
+        phrases.len(),
+        Requirement::ALL.len(),
+        "two requirements quote one clause"
+    );
     let used: BTreeSet<Requirement> = tables()
         .iter()
-        .flat_map(|t| t.edges.iter().filter_map(|e| e.requires))
+        .flat_map(|t| {
+            t.edges
+                .iter()
+                .flat_map(|e| e.requires)
+                .chain(t.sibling_sets.iter().flat_map(|s| s.requires))
+                .copied()
+        })
         .collect();
     assert_eq!(used, all);
 }
 
-/// The requirement of `from → to`, which the table must allow.
-fn req<L: Lifecycle>(from: L, to: L) -> Option<Requirement> {
+#[test]
+fn no_edge_repeats_a_requirement() {
+    for t in tables() {
+        for e in &t.edges {
+            let set: BTreeSet<_> = e.requires.iter().collect();
+            assert_eq!(set.len(), e.requires.len(), "{} {e:?}", t.machine);
+        }
+    }
+}
+
+/// The requirements of `from → to`, which the table must allow.
+fn req<L: Lifecycle>(from: L, to: L) -> &'static [Requirement] {
     L::edge(from, to)
         .unwrap_or_else(|| panic!("{} has no {from:?} → {to:?}", L::MACHINE))
         .requires
 }
 
 #[test]
-fn transitions_report_their_requirement() {
+fn transitions_report_their_requirements() {
     use OperationState as Op;
     use Requirement as R;
-    assert_eq!(
-        req(Op::Unresolved, Op::Compensated),
-        Some(R::HumanAdjudication)
-    );
-    assert_eq!(req(Op::Reconciling, Op::Unresolved), None);
+    assert_eq!(req(Op::Unresolved, Op::Compensated), [R::HumanAdjudication]);
+    assert_eq!(req(Op::Reconciling, Op::Unresolved), []);
     assert_eq!(
         req(Op::Reconciling, Op::Requested),
-        Some(R::NonApplicationProven)
+        [R::NonApplicationProven]
     );
-    assert_eq!(
-        req(Op::Requested, Op::Confirmed),
-        Some(R::RestoredFoundApplied)
-    );
-    assert_eq!(req(Op::Dispatching, Op::Confirmed), None);
     assert!(!Op::Released.allows(Op::Requested));
     assert!(!Op::Dispatching.allows(Op::Requested));
     assert_eq!(
-        req(UsageReceiptState::Censored, UsageReceiptState::Settled),
-        Some(R::AppendOnlyCorrection)
-    );
-    assert_eq!(
-        req(UsageReceiptState::Partial, UsageReceiptState::Settled),
-        None
-    );
-    assert!(!TaskRunState::Succeeded.allows(TaskRunState::Cancelled));
-}
-
-/// The transitions whose requirement only a machine note states: the sync test binds each to
-/// the states its phrase names but cannot see one go missing, so each is listed here.
-#[test]
-fn conditions_stated_only_in_notes_are_on_their_edges() {
-    use Requirement as R;
-    use TaskRunState as T;
-    for (from, to) in [
-        (T::Preparing, T::Executing),
-        (T::Recovering, T::Executing),
-        (T::Verifying, T::Succeeded),
-    ] {
-        assert_eq!(req(from, to), Some(R::FenceActive));
-    }
-    for from in [T::Verifying, T::Recovering] {
-        assert_eq!(req(from, T::Failed), Some(R::FenceNotPending));
-    }
-    for from in [AgentRunState::Starting, AgentRunState::Running] {
-        assert_eq!(
-            req(from, AgentRunState::Cancelled),
-            Some(R::CancelFencesFirst)
-        );
-    }
-    for to in [FenceState::Fenced, FenceState::FencedUncertain] {
-        assert_eq!(
-            req(FenceState::FencePending, to),
-            Some(R::FenceSessionReached)
-        );
-    }
-    use PlanPhase as P;
-    assert_eq!(req(P::Activating, P::Active), Some(R::ActivationCommitted));
-    assert_eq!(
-        req(P::Activating, P::ActivationFailed),
-        Some(R::ActivationNotUncertain)
-    );
-    for from in [
-        P::Accepted,
-        P::Activating,
-        P::Active,
-        P::Paused,
-        P::Quiescing,
-        P::ActivationFailed,
-    ] {
-        assert_eq!(req(from, P::Cancelled), Some(R::NoUncertainActivation));
-    }
-    assert_eq!(
-        req(HoldState::Releasing, HoldState::Running),
-        Some(R::HoldCausesEmpty)
-    );
-    assert_eq!(
-        req(
-            EffectIntentState::Materialized,
-            EffectIntentState::Acknowledged
-        ),
-        Some(R::OperationTerminal)
-    );
-    use WorkspaceState as W;
-    for to in [W::Conflict, W::Preserving] {
-        assert_eq!(req(W::Quarantined, to), Some(R::QuarantineCleared));
-    }
-    for to in [W::Quarantined, W::Preserving] {
-        assert_eq!(req(W::Conflict, to), Some(R::ConflictAdjudicated));
-    }
-    assert_eq!(
-        req(ArtifactCommitState::Pending, ArtifactCommitState::Verified),
-        Some(R::CustodyCompleted)
+        req(TaskRunState::Preparing, TaskRunState::Failed),
+        [R::SetupFailedOrFenced, R::FenceNotPending]
     );
     assert_eq!(
         req(
             BudgetReservationState::Reserved,
-            BudgetReservationState::Expired
+            BudgetReservationState::Released
         ),
-        Some(R::ConservativeExpiry)
+        [R::EffectStaysReserved, R::ProvenZeroUse]
+    );
+    assert_eq!(
+        req(SendState::AcceptedNotSent, SendState::Acknowledged),
+        [R::EntryRemoved, R::RefusedBeforeSend, R::NoSendAttempt]
+    );
+    assert!(!TaskRunState::Succeeded.allows(TaskRunState::Cancelled));
+    assert_eq!(
+        AgentRunState::SIBLING_SETS[0].requires,
+        [R::ContinuationDeadlinePassed]
     );
 }
 
@@ -308,6 +257,7 @@ fn heartbeat_loss_requests_the_fence_without_moving_the_phase() {
             from: AgentRunState::HeartbeatLost,
             field: "fence_state",
             to: "FENCE_PENDING",
+            requires: &[Requirement::ContinuationDeadlinePassed],
         }]
     );
     assert_eq!(

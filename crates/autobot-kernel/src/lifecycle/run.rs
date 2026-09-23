@@ -32,9 +32,9 @@ lifecycle! {
         [Executing, Verifying] -> [Recovering];
         [Recovering] -> [Executing] if FenceActive;
         [Recovering] -> [Failed] if FenceNotPending;
-        [Preparing] -> [Failed] if SetupFailedOrFenced;
-        [Pending, Admitted, Executing] -> [Failed] if Fenced;
-        [Pending, Admitted, Preparing, Executing, Verifying, Recovering] -> [Cancelled] if FenceSettled;
+        [Preparing] -> [Failed] if SetupFailedOrFenced, FenceNotPending;
+        [Pending, Admitted, Executing] -> [Failed] if Fenced, FenceNotPending;
+        [Pending, Admitted, Preparing, Executing, Verifying, Recovering] -> [Cancelled] if FenceSettled, FenceNotPending;
     }
 }
 
@@ -52,9 +52,9 @@ lifecycle! {
         FencedUncertain = "FENCED_UNCERTAIN",
     }
     edges {
-        [Active] -> [FencePending] if FenceRequested;
+        [Active] -> [FencePending] if FenceFromLivePhase, FenceRequested;
         [FencePending] -> [Fenced, FencedUncertain] if FenceSessionReached;
-        [FencedUncertain] -> [Fenced] if LateFenceConfirmation;
+        [FencedUncertain] -> [Fenced] if FenceSessionReached, LateFenceConfirmation;
     }
 }
 
@@ -82,10 +82,11 @@ lifecycle! {
         [Starting] -> [Cancelled] if CancelFencesFirst;
         [Running] -> [HeartbeatLost];
         [HeartbeatLost] -> [Running] if Continuation;
-        [HeartbeatLost] -> [Failed, Cancelled] if FenceSettled;
+        [HeartbeatLost] -> [Failed] if HeartbeatFenceSettled;
+        [HeartbeatLost] -> [Cancelled] if HeartbeatFenceSettled, CancelFencesFirst;
     }
     sibling_sets {
-        HeartbeatLost -> "fence_state" := FenceState::FencePending;
+        HeartbeatLost -> "fence_state" := FenceState::FencePending if ContinuationDeadlinePassed;
     }
 }
 

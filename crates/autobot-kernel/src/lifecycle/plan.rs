@@ -33,7 +33,7 @@ lifecycle! {
     }
     edges {
         [Active] -> [Draining];
-        [Draining] -> [Active] if NewEpoch;
+        [Draining] -> [Active];
     }
 }
 
@@ -91,16 +91,16 @@ lifecycle! {
         [Activating] -> [Active] if ActivationCommitted;
         [Activating] -> [ActivationFailed] if ActivationNotUncertain;
         [ActivationFailed] -> [Activating] if SameSnapshot;
-        [ActivationFailed] -> [Cancelled] if NoUncertainActivation;
-        [ActivationFailed] -> [Quiescing] if ReplacementRevision;
+        [ActivationFailed] -> [Cancelled] if QuiescedFirst, NoUncertainActivation;
+        [ActivationFailed] -> [Quiescing] if ReplacementRevisionOnly;
         [Active] -> [Paused];
         [Paused] -> [Active];
         [Active, Paused] -> [Quiescing];
         [Quiescing] -> [Active] if SameRevision;
         [Quiescing] -> [Activating] if ReplacementRevision;
         [Active] -> [Completed];
-        [Active, Paused, Quiescing] -> [Failed];
-        [Accepted, Activating, Active, Paused, Quiescing] -> [Cancelled] if NoUncertainActivation;
+        [Active, Paused, Quiescing] -> [Failed] if QuiescedFirst;
+        [Accepted, Activating, Active, Paused, Quiescing] -> [Cancelled] if QuiescedFirst, NoUncertainActivation;
     }
 }
 

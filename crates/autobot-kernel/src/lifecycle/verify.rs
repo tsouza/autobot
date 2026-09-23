@@ -19,8 +19,9 @@ lifecycle! {
     edges {
         [Reserved] -> [Integrating];
         [Integrating] -> [Verified];
-        [Reserved, Integrating, Verified] -> [Stale, Blocked];
-        [Verified] -> [Released] if MergesTerminal;
+        [Reserved, Integrating, Verified] -> [Stale] if RegisterInvalidated;
+        [Reserved, Integrating, Verified] -> [Blocked];
+        [Verified] -> [Released] if RegisterInvalidated, MergesTerminal;
     }
 }
 

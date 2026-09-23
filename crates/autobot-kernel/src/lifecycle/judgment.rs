@@ -85,7 +85,8 @@ lifecycle! {
     }
     edges {
         [None] -> [Open];
-        [Open] -> [None, Permanent];
+        [Open] -> [None];
+        [Open] -> [Permanent] if GapDeclaredPermanent;
     }
 }
 
@@ -98,6 +99,6 @@ lifecycle! {
         DigestConflict = "DIGEST_CONFLICT",
     }
     edges {
-        [Ok] -> [DigestConflict];
+        [Ok] -> [DigestConflict] if DigestConflictRejected;
     }
 }

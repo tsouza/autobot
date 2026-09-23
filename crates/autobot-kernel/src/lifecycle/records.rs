@@ -44,9 +44,9 @@ lifecycle! {
     edges {
         [Issued] -> [BrokerAccepted] if OperationPermitted;
         [BrokerAccepted] -> [Consumed];
-        [Issued] -> [Invalidated];
+        [Issued] -> [Invalidated] if LatePermit;
         [BrokerAccepted] -> [Invalidated] if RevalidationRefused;
-        [Issued] -> [Expired];
+        [Issued] -> [Expired] if LatePermit;
     }
 }
 
@@ -88,7 +88,8 @@ lifecycle! {
         [Reconciling] -> [Confirmed, Failed];
         [Reconciling] -> [Requested] if NonApplicationProven;
         [Reconciling] -> [Unresolved];
-        [Unresolved] -> [Confirmed, Compensated, Failed, Released] if HumanAdjudication;
+        [Unresolved] -> [Confirmed, Compensated, Failed] if HumanAdjudication;
+        [Unresolved] -> [Released] if AdjudicatedNotApplied;
         [Requested, Permitted] -> [BlockedUnsupported];
         [Requested] -> [Released] if UnsentNotApplied;
         [Requested] -> [Confirmed] if RestoredFoundApplied;
@@ -107,8 +108,8 @@ lifecycle! {
         Quarantined = "QUARANTINED",
     }
     edges {
-        [Materialized] -> [Acknowledged] if OperationTerminal;
-        [Materialized] -> [Quarantined];
+        [Materialized] -> [Acknowledged] if OperationTerminal, OperationSettled;
+        [Materialized] -> [Quarantined] if OperationSettled;
     }
 }
 
@@ -158,7 +159,7 @@ lifecycle! {
     edges {
         [Reserved] -> [Applying];
         [Applying] -> [Resolved] if TerminalStateRecorded;
-        [Reserved] -> [Resolved] if ReleasedBeforeClaim;
+        [Reserved] -> [Resolved] if ReleasedBeforeClaim, TerminalStateRecorded;
         [Resolved] -> [Reserved] if NewReservation;
     }
 }
@@ -177,7 +178,7 @@ lifecycle! {
     }
     edges {
         [None] -> [Committed, Cancelled, Rejected] if ReleasedWithReceipt;
-        [Committed, Cancelled, Rejected] -> [None] if NewReservation;
+        [Committed, Cancelled, Rejected] -> [None] if NewReservationClears;
     }
 }
 
@@ -194,7 +195,7 @@ lifecycle! {
     edges {
         [AcceptedNotSent] -> [SendAttempted];
         [SendAttempted] -> [Acknowledged] if EntryRemoved;
-        [AcceptedNotSent] -> [Acknowledged] if RefusedBeforeSend;
+        [AcceptedNotSent] -> [Acknowledged] if EntryRemoved, RefusedBeforeSend, NoSendAttempt;
     }
 }
 
@@ -209,6 +210,6 @@ lifecycle! {
         Gap = "GAP",
     }
     edges {
-        [Pending] -> [Recorded, Gap] if ExpectedBeforeSpend;
+        [Pending] -> [Recorded, Gap];
     }
 }

@@ -29,9 +29,9 @@ lifecycle! {
         [InUse] -> [Preserving];
         [Preserving] -> [Preserved];
         [Preserved] -> [Retired];
-        [Preserved] -> [InUse] if WriteFenceLifted;
+        [Preserved] -> [InUse] if WriteFenceLifted, NotRetireOnly;
         [Requested, Provisioning, Ready, InUse, Preserving, Preserved] -> [Quarantined, Conflict];
-        [Quarantined] -> [Conflict, Preserving] if QuarantineCleared;
+        [Quarantined] -> [Conflict, Preserving] if QuarantineCleared, ConflictAdjudicated;
         [Conflict] -> [Quarantined, Preserving] if ConflictAdjudicated;
     }
 }

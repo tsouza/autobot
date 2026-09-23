@@ -3,10 +3,10 @@
 //! Each §10 machine, and each field a machine labels (`hold_state`, `fence_state`,
 //! `terminal_state`, ...), is one state enum implementing [`Lifecycle`]. The enum lists its
 //! states in printed order, with the initial state first, and its allowed transitions as
-//! [`Edges`]. Transitions §10 says more about carry a [`Requirement`]. The names of the form
-//! *Verb-ed* that §10 calls event types are [`LifecycleEvent`], never a state. [`tables`] lists
-//! every machine in §10 order as a [`Table`]. The `lifecycle_sync` test diffs that list against
-//! the design text through the shared §10 parser.
+//! [`Edges`]. Each transition carries the [`Requirement`]s that §10 states for it. The
+//! names of the form *Verb-ed* that §10 calls event types are [`LifecycleEvent`], never a
+//! state. [`tables`] lists every machine in §10 order as a [`Table`]. The `lifecycle_sync` test
+//! diffs that list against the design text through the shared §10 parser.
 //!
 //! State enums serialize as the printed state names (`OUTCOME_UNKNOWN`, `FENCE_PENDING`), and
 //! their JSON schemas enumerate those names.
@@ -17,17 +17,20 @@
 //!   its own, except `X` itself. No table holds an edge from a state to itself.
 //! - A state is terminal when no edge leaves it ([`Lifecycle::is_terminal`]). A table whose
 //!   every state has an exit, such as [`HoldState`], has no terminal state.
-//! - The parser *annotates* a transition in three ways:
-//!   - a note printed on it (`(same snapshot)`);
-//!   - the line note of the line that prints it, when it is an arrow into that line's last group
-//!     (`(human adjudication only)`);
-//!   - a note of its machine that names it (`BROKER_ACCEPTED → INVALIDATED only …`, `UNKNOWN: …`).
-//!
-//!   Each annotated transition carries the [`Requirement`] that quotes its annotations, whether
-//!   they state a condition or a cause. A transition §10 does not annotate carries a requirement
-//!   only when a machine note states a condition on it and names one of its states, such as
-//!   [`Requirement::FenceActive`] or [`Requirement::HoldCausesEmpty`]. A requirement
-//!   names what must hold or what happened. The controller that takes the transition checks it.
+//! - Every `;`-separated clause of every §10 note is accounted for. A clause is either a
+//!   [`Requirement`], which quotes it verbatim, or descriptive. A clause is a requirement when
+//!   it states a condition or a cause of taking a transition: what must hold, or what happened.
+//!   It is descriptive when it describes the record or the machine, states an effect the
+//!   transition writes, or restates what the table's edges already fix. The descriptive clauses
+//!   are listed, each with its reason, in the `lifecycle_sync` test.
+//! - A requirement is on every transition the clause annotates: through the note printed on the
+//!   transition, the line note of its arrow (the last arrow of the line), or a note that names
+//!   it by `FROM → TO` or a `TO:` clause. It may also be on other transitions into or out of a
+//!   state the clause holds as a word, and on no other transition. A clause that holds no state
+//!   and annotates no transition, such as `fence_state`'s `(control lane, from any non-terminal
+//!   phase, phase unchanged)`, may be on any transition of its machine. A transition carries
+//!   every requirement that applies to it, so an edge's requirements are a set.
+
 //! - `ExternalOperation`'s `(human adjudication only)` closes the line `RECONCILING →
 //!   UNRESOLVED → CONFIRMED | COMPENSATED | FAILED`. It annotates only the exits of
 //!   `UNRESOLVED`, the line's last arrow, which FORMAL §2 records as the human adjudication of an
@@ -35,10 +38,10 @@
 //! - `TaskRun`'s "once `fence_state` leaves `ACTIVE` the phase never moves to `EXECUTING` or
 //!   `SUCCEEDED`" is [`Requirement::FenceActive`], on the edges into those two states only.
 //! - `AgentRun`'s "`CANCELLED` from any phase only once `fence_state` is `FENCED` or
-//!   `FENCED_UNCERTAIN`" is [`Requirement::CancelFencesFirst`] on `STARTING → CANCELLED` and
-//!   `RUNNING → CANCELLED`, and [`Requirement::FenceSettled`] on `HEARTBEAT_LOST → CANCELLED`,
-//!   whose line note states the same condition. "Any phase" is every phase with an edge into
-//!   `CANCELLED`. `COMPLETED`, `FAILED` and `CANCELLED` are terminal and have none.
+//!   `FENCED_UNCERTAIN`" is [`Requirement::CancelFencesFirst`] on every edge into `CANCELLED`.
+//!   `HEARTBEAT_LOST → CANCELLED` also carries [`Requirement::HeartbeatFenceSettled`], its line
+//!   note. "Any phase" is every phase with an edge into `CANCELLED`. `COMPLETED`, `FAILED` and
+//!   `CANCELLED` are terminal and have none.
 //! - `AgentRun`'s `HEARTBEAT_LOST → fence_state := FENCE_PENDING` moves the sibling field and
 //!   leaves the phase where it is: it is a [`SiblingSet`], not an edge.
 //! - `AgentRun.fence_state` is `as TaskRun`. Both use [`FenceState`], whose table is the
@@ -99,15 +102,15 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 /// A group of transitions as a table prints them: every state of `from` may move to every state
-/// of `to`, under `requires` when it is set.
+/// of `to`, under every requirement of `requires`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Edges<S: 'static> {
     /// The source states.
     pub from: &'static [S],
     /// The target states.
     pub to: &'static [S],
-    /// The condition every transition of the group needs, beyond its source state.
-    pub requires: Option<Requirement>,
+    /// What §10 states about every transition of the group beyond its source and target.
+    pub requires: &'static [Requirement],
 }
 
 /// One allowed transition.
@@ -117,8 +120,8 @@ pub struct Edge<S> {
     pub from: S,
     /// The target state.
     pub to: S,
-    /// The condition the transition needs, beyond its source state.
-    pub requires: Option<Requirement>,
+    /// What §10 states about the transition beyond its source and target.
+    pub requires: &'static [Requirement],
 }
 
 /// A move of a machine that sets a sibling field instead of its own state (§10 `field := STATE`).
@@ -130,6 +133,8 @@ pub struct SiblingSet<S> {
     pub field: &'static str,
     /// The printed name of the state the sibling field moves to.
     pub to: &'static str,
+    /// What §10 states about the move beyond its source and target.
+    pub requires: &'static [Requirement],
 }
 
 /// A lifecycle of KERNEL §10: one machine, or one labelled field of a machine.
@@ -233,6 +238,7 @@ impl Table {
                     from: s.from.as_str(),
                     field: s.field,
                     to: s.to,
+                    requires: s.requires,
                 })
                 .collect(),
         }

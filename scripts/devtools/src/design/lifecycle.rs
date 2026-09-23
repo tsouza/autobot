@@ -47,6 +47,9 @@ pub struct Machine {
     pub fields: Vec<Field>,
     /// The notes printed on the machine, in order.
     pub notes: Vec<String>,
+    /// The indexes in [`Machine::notes`] of the notes that are also a transition's
+    /// [`Transition::line_note`].
+    pub line_notes: Vec<usize>,
 }
 
 /// The states and transitions of one field of a machine.
@@ -239,17 +242,13 @@ pub fn render(machines: &[Machine]) -> String {
                 }
             }
         }
-        let line_notes: Vec<&str> = m
-            .fields
-            .iter()
-            .flat_map(|f| &f.transitions)
-            .filter_map(|t| t.line_note.as_deref())
-            .collect();
+        // A line note is printed on its arrow above; every other note stands alone.
         lines.extend(
             m.notes
                 .iter()
-                .filter(|n| !line_notes.contains(&n.as_str()))
-                .map(|n| format!("({n})")),
+                .enumerate()
+                .filter(|(i, _)| !m.line_notes.contains(i))
+                .map(|(_, n)| format!("({n})")),
         );
         let indent = " ".repeat(m.name.chars().count() + 2);
         for (i, line) in lines.iter().enumerate() {
@@ -406,19 +405,21 @@ impl Parser {
                     trailing,
                     hop,
                 } => {
-                    self.machine()?.notes.push(text.clone());
+                    let notes = &mut self.machine()?.notes;
+                    notes.push(text.clone());
+                    let index = notes.len() - 1;
                     if let Some(hop) = hop {
-                        self.annotate(&hop, &text)?;
+                        self.annotate(&hop, &text, index)?;
                     } else if trailing {
-                        line_notes.push(text);
+                        line_notes.push((text, index));
                     }
                 }
                 Tok::Semi => {
                     if !stmt.is_empty() {
                         self.statement(&std::mem::take(&mut stmt), pending.clone(), column)?;
                         if let Some(hop) = self.last_hop.clone() {
-                            for text in line_notes.drain(..) {
-                                self.annotate(&hop, &text)?;
+                            for (text, index) in line_notes.drain(..) {
+                                self.annotate(&hop, &text, index)?;
                             }
                         }
                         line_notes.clear();
@@ -436,11 +437,12 @@ impl Parser {
         Ok(())
     }
 
-    /// Sets `text` as the line note of the transitions of `hop`.
-    fn annotate(&mut self, hop: &Hop, text: &str) -> LineResult {
+    /// Sets `text`, the machine note at `index`, as the line note of the transitions of `hop`.
+    fn annotate(&mut self, hop: &Hop, text: &str, index: usize) -> LineResult {
         let (fi, transitions) = hop;
-        let field = self
-            .machine()?
+        let machine = self.machine()?;
+        machine.line_notes.push(index);
+        let field = machine
             .fields
             .get_mut(*fi)
             .ok_or("a line note on a missing field")?;
@@ -475,6 +477,7 @@ impl Parser {
             subjects: subjects(name),
             fields: Vec::new(),
             notes: Vec::new(),
+            line_notes: Vec::new(),
         });
     }
 
@@ -1110,6 +1113,7 @@ mod tests {
         // A note alone on its line follows no statement.
         assert_eq!(line_note(own, "F", "A"), None);
         assert_eq!(kind.notes, ["only after x", "two lines", "loose"]);
+        assert_eq!(kind.line_notes, [0, 1]);
         let other = find(&machines, "Other").unwrap();
         let t = &other.field(None).unwrap().transitions[0];
         assert_eq!(
@@ -1175,5 +1179,17 @@ mod tests {
         assert!(stamp.notes_naming("ISSUED", "INVALIDATED").is_empty());
         let checkpoint = find(&real, "AgentCheckpoint").unwrap();
         assert_eq!(checkpoint.notes_naming("CREATED", "QUARANTINED").len(), 1);
+    }
+
+    #[test]
+    fn render_keeps_a_standalone_note_that_repeats_a_line_note() {
+        let block = "Kind  A → B   (same text)\n      B → C\n      (same text)\n";
+        let machines = parse_block(block).unwrap();
+        let kind = find(&machines, "Kind").unwrap();
+        assert_eq!(kind.notes, ["same text", "same text"]);
+        assert_eq!(kind.line_notes, [0]);
+        let rendered = render(&machines);
+        assert_eq!(rendered.matches("(same text)").count(), 2, "{rendered}");
+        assert_eq!(parse_block(&rendered).unwrap(), machines);
     }
 }
