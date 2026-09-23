@@ -4,6 +4,7 @@
 //! from `autobot-controllers`.
 #![warn(missing_docs)]
 
+pub mod commit;
 pub mod digest;
 pub mod error;
 pub mod fields;
