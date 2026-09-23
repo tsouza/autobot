@@ -1,9 +1,10 @@
-# Opens an `urgent` issue, or comments on the one already open, when a push run of ci, formal
-# or kind fails on main. formal and kind are matched by name and start counting once they
-# exist. `just main-red` decides from the run in the event which runs are red; this is never a
-# required check and never reverts anything. A workflow_run workflow runs from the default
-# branch, and nothing from the failed run is checked out or run. A manual dispatch with a run
-# URL prints what the workflow would do for that run and writes nothing.
+# Opens an `urgent` issue, or comments on the one already open, when a push or scheduled run
+# of ci, formal or kind fails on main. The scheduled runs cover merges made with the workflow
+# token, which start no push run. formal and kind are matched by name and start counting once
+# they exist. `just main-red` decides from the run in the event which runs are red; this is
+# never a required check and never reverts anything. A workflow_run workflow runs from the
+# default branch, and nothing from the failed run is checked out or run. A manual dispatch
+# with a run URL prints what the workflow would do for that run and writes nothing.
 name: main-red
 
 on:
@@ -22,11 +23,11 @@ permissions: {}
 
 jobs:
   main-red:
-    # Only red push runs start this job, so only they join the concurrency group. The library
-    # checks the same conditions again before it writes anything.
+    # Only red push and scheduled runs start this job, so only they join the concurrency group.
+    # The library checks the same conditions again before it writes anything.
     if: >-
       github.event_name == 'workflow_run'
-      && github.event.workflow_run.event == 'push'
+      && contains(fromJSON('["push","schedule"]'), github.event.workflow_run.event)
       && contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion)
     runs-on: ubuntu-latest
     permissions:

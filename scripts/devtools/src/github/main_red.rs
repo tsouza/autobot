@@ -2,9 +2,10 @@
 //!
 //! The `main-red` workflow hands a completed run of a gate-lane workflow on `main` to [`main`],
 //! and starts only for the runs this module calls red, which [`Run::skip_reason`] checks
-//! again. A run is red when it was started by a push to [`BRANCH`] and its conclusion is one
-//! of [`RED_CONCLUSIONS`], which GitHub reports when a job of the run failed or timed out, or
-//! when the run could not start. Any other run is skipped.
+//! again. A run is red when one of [`EVENTS`] started it on [`BRANCH`] and its conclusion is
+//! one of [`RED_CONCLUSIONS`], which GitHub reports when a job of the run failed or timed out,
+//! or when the run could not start. Any other run is skipped. A scheduled run counts like a
+//! push run: it covers merges made with the workflow token, which start no push run.
 //!
 //! For a red run, the open issues labelled `urgent` are searched for one whose title starts
 //! with the workflow's [`title_prefix`]:
@@ -28,8 +29,11 @@ use super::{Client, Method};
 use crate::{Error, Result};
 use serde_json::{Value, json};
 
-/// The branch whose push runs are watched.
+/// The branch whose runs are watched.
 pub const BRANCH: &str = "main";
+
+/// The events whose runs on [`BRANCH`] are watched.
+pub const EVENTS: [&str; 2] = ["push", "schedule"];
 
 /// Run conclusions that make `main` red.
 pub const RED_CONCLUSIONS: [&str; 3] = ["failure", "timed_out", "startup_failure"];
@@ -88,9 +92,9 @@ impl Run {
     /// Why the run leaves `main` alone, or `None` when it turns `main` red.
     #[must_use]
     pub fn skip_reason(&self) -> Option<String> {
-        if self.event != "push" || self.branch != BRANCH {
+        if !EVENTS.contains(&self.event.as_str()) || self.branch != BRANCH {
             return Some(format!(
-                "`{}` run on {} of `{}`, not a push to {BRANCH}",
+                "`{}` run on {} of `{}`, not a push or schedule on {BRANCH}",
                 self.workflow, self.event, self.branch
             ));
         }
@@ -326,11 +330,12 @@ fn issue_body(run: &Run) -> String {
         sha,
         url,
         conclusion,
+        event,
         ..
     } = run;
     format!(
         "**Objective**\n\
-         Make `{workflow}` pass on {BRANCH} again. Its run on the push of {sha} concluded \
+         Make `{workflow}` pass on {BRANCH} again. Its run on the {event} of {sha} concluded \
          `{conclusion}`: {url}\n\n\
          **Design refs**\n\
          Gate lane (CI on push to main)\n\n\
@@ -397,6 +402,12 @@ mod tests {
     // Recorded from GET repos/tsouza/runnerscout/actions/runs/35276703631, a push run on main
     // that failed, keeping the fields `Run` reads plus `id`, `status` and `run_attempt`.
     const FAILED_RUN: &str = r#"{"id":35276703631,"name":"CI","event":"push","head_branch":"main","head_sha":"47309bae54d56d0899939259a553d01e69cd2a2a","status":"completed","conclusion":"failure","html_url":"https://github.com/tsouza/runnerscout/actions/runs/35276703631","run_attempt":1}"#;
+
+    // Recorded from GET repos/tsouza/cerberus/actions/runs/34202500813, a scheduled run on
+    // main that failed, keeping the fields `Run` reads plus `id`, `status` and `run_attempt`.
+    const FAILED_SCHEDULED_RUN: &str = r#"{"id":34202500813,"name":"e2e","event":"schedule","head_branch":"main","head_sha":"2b744444f22284ae6c7e3bd925f76fef6a3281e5","status":"completed","conclusion":"failure","html_url":"https://github.com/tsouza/cerberus/actions/runs/34202500813","run_attempt":1}"#;
+    const SCHEDULED_SHA: &str = "2b744444f22284ae6c7e3bd925f76fef6a3281e5";
+    const SCHEDULED_RUN_URL: &str = "https://github.com/tsouza/cerberus/actions/runs/34202500813";
 
     // Recorded from GET repos/tsouza/autobot/milestones?state=open&per_page=100, keeping
     // `number`, `title` and `state`.
@@ -582,24 +593,73 @@ mod tests {
     }
 
     #[test]
-    fn only_red_push_runs_on_main_count() {
-        let with = |key: &str, value: &str| {
-            let mut run = parse(FAILED_RUN);
+    fn only_red_push_and_schedule_runs_on_main_count() {
+        let with = |fixture: &str, key: &str, value: &str| {
+            let mut run = parse(fixture);
             run[key] = json!(value);
             Run::from_json(&run).unwrap().skip_reason()
         };
-        for conclusion in RED_CONCLUSIONS {
-            assert_eq!(with("conclusion", conclusion), None, "{conclusion}");
+        for fixture in [FAILED_RUN, FAILED_SCHEDULED_RUN] {
+            for conclusion in RED_CONCLUSIONS {
+                assert_eq!(
+                    with(fixture, "conclusion", conclusion),
+                    None,
+                    "{conclusion}"
+                );
+            }
+            for conclusion in ["success", "cancelled", "skipped", "neutral", ""] {
+                assert!(
+                    with(fixture, "conclusion", conclusion).is_some(),
+                    "{conclusion}"
+                );
+            }
+            assert!(with(fixture, "event", "pull_request").is_some());
+            assert!(with(fixture, "event", "workflow_dispatch").is_some());
+            assert!(with(fixture, "head_branch", "scratch").is_some());
+            let mut run = parse(fixture);
+            run["conclusion"] = Value::Null;
+            assert!(Run::from_json(&run).unwrap().skip_reason().is_some());
         }
-        for conclusion in ["success", "cancelled", "skipped", "neutral", ""] {
-            assert!(with("conclusion", conclusion).is_some(), "{conclusion}");
-        }
-        assert!(with("event", "pull_request").is_some());
-        assert!(with("event", "workflow_dispatch").is_some());
-        assert!(with("head_branch", "scratch").is_some());
-        let mut run = parse(FAILED_RUN);
-        run["conclusion"] = Value::Null;
-        assert!(Run::from_json(&run).unwrap().skip_reason().is_some());
+    }
+
+    #[test]
+    fn a_failed_scheduled_run_on_main_opens_an_issue() {
+        let api = FakeRepo::new(json!([]));
+        let run = Run::from_json(&parse(FAILED_SCHEDULED_RUN)).unwrap();
+        assert_eq!(run.skip_reason(), None);
+        let action = plan(&api, &run).unwrap();
+        let title = format!("main is red: e2e failed at {SCHEDULED_SHA}");
+        let body = format!(
+            "**Objective**\nMake `e2e` pass on main again. Its run on the schedule of \
+             {SCHEDULED_SHA} concluded `failure`: {SCHEDULED_RUN_URL}\n\n**Design refs**\n\
+             Gate lane (CI on push to main)\n\n**Allowed paths**\nThe paths the failure's \
+             cause is in, named when it is triaged.\n\n**Non-goals**\nChanges the failure \
+             does not need.\n\n**Acceptance evidence**\nA `e2e` run on a push to main \
+             concludes `success`.\n"
+        );
+        assert_eq!(
+            action,
+            Action::Open(NewIssue {
+                title: title.clone(),
+                body: body.clone(),
+                milestone: 1,
+                parent: 3,
+            })
+        );
+        apply(&api, &action).unwrap();
+        assert_eq!(
+            api.writes.borrow()[0],
+            (
+                Method::Post,
+                "issues".to_owned(),
+                json!({
+                    "title": title,
+                    "body": body,
+                    "labels": ["urgent", "finding", "bug"],
+                    "milestone": 1,
+                })
+            )
+        );
     }
 
     #[test]
