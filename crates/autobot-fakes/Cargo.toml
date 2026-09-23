@@ -9,10 +9,8 @@ publish.workspace = true
 
 [dependencies]
 autobot-adapters.workspace = true
-sha2.workspace = true
-
-[dev-dependencies]
 autobot-kernel.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

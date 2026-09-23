@@ -1,0 +1,51 @@
+name = "watch-reorder"
+summary = "Reordered watch events make every changed object due; a stale event read last costs one extra read at the next relist and loses nothing."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "create"
+object = "b"
+expect = "created"
+
+[[steps]]
+do = "relist"
+expect = ["a", "b"]
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "initialize"
+object = "b"
+expect = "initialized"
+
+[[steps]]
+do = "commit"
+object = "a"
+command = "c1"
+lane = "DOMAIN"
+pin = 0
+fields = "one"
+expect = "committed"
+
+[[steps]]
+do = "inject"
+fault = { kind = "reorder_events" }
+
+[[steps]]
+do = "poll"
+expect = ["a", "b"]
+
+[[steps]]
+do = "relist"
+expect = ["a"]
+
+[[steps]]
+do = "relist"
+expect = []
