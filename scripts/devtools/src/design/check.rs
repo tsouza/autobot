@@ -658,7 +658,7 @@ fn resolve(file: &str, target: &str) -> std::result::Result<Option<String>, &'st
 
 fn links(set: &DesignSet, out: &mut Vec<Violation>) {
     for (file, text) in &set.docs {
-        let mut fence = super::Fence::default();
+        let mut fence = markdown::Fence::default();
         for (n, line) in text.lines().enumerate() {
             if fence.step(line) {
                 continue;
