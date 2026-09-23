@@ -187,10 +187,10 @@ ReserveCreateIdentity · AtomicCreate · RecoverCreateByName
 
 \* WorkContext registers and permits (each a CAS by the Context controller, on WorkContext or AdmissionStamp)
 RequestHold                 control; applies a HOLD or KILL_SWITCH: adds it to hold_causes; from RUNNING also RUNNING → FREEZE_PENDING (the cut), else hold_state unchanged
-PropagateHold               control; FREEZE_PENDING → PROPAGATING; after every ISSUED permit of the context is INVALIDATED
+PropagateHold               control; FREEZE_PENDING → PROPAGATING; after every ISSUED permit of the context that no ledger entry and no COMMITTED AcceptDispatch receipt names is INVALIDATED
 EnforceHold                 control; PROPAGATING → ENFORCED; precondition dispatch_ledger empty
 ReleaseHold                 control; applies a RESUME in ENFORCED or RELEASING: removes only the cause it answers; ENFORCED → RELEASING when hold_causes becomes empty
-CompleteHoldRelease         control; RELEASING → RUNNING; precondition hold_causes empty; after every permit ISSUED under an earlier hold_generation is INVALIDATED
+CompleteHoldRelease         control; RELEASING → RUNNING; precondition hold_causes empty; after every permit ISSUED under an earlier hold_generation that no ledger entry and no COMMITTED AcceptDispatch receipt names is INVALIDATED
 InstallManagerAuthority     domain; creates manager_authority[plan] with epoch 1 and deadline now + lease duration, phase unwritten (reads ACTIVE, KERNEL §1); precondition no entry for the plan ∧ fewer entries than the profile's plans
 RenewManagerAuthority       domain; deadline := now + lease duration; precondition holder, lease_uid, epoch match ∧ phase = ACTIVE ∧ now < deadline
 DrainManager                control; phase := DRAINING; precondition deadline passed ∨ takeover requested
@@ -205,9 +205,9 @@ QuiescePlan                 domain; revision_phase := QUIESCING; precondition AC
 ResumePlanRevision          domain; revision_phase := ACTIVE, same revision; precondition QUIESCING
 SupersedePlanRevision       domain; plan_authority[plan] := (R2, snapshot, receipt, ACTIVE, plan_generation+1); precondition QUIESCING at R1 ∧ R2 ≠ R1
                             (ActivatePlanRevision, QuiescePlan, ResumePlanRevision, SupersedePlanRevision: plan_generation+1 each)
-InvalidatePlanPermits       after QuiescePlan: every ISSUED permit pinning the plan at an earlier plan_generation → INVALIDATED
+InvalidatePlanPermits       after QuiescePlan: every ISSUED permit pinning the plan at an earlier plan_generation that no ledger entry and no COMMITTED AcceptDispatch receipt names → INVALIDATED
 RetirePlanAuthority         domain; removes plan_authority[plan] and manager_authority[plan]; precondition the Plan terminal ∧ manager_authority[plan].phase = ACTIVE ∧ no RESERVED or APPLYING slot for the plan
-ReserveIntegrationBasis     domain; basis_generation+1, state := RESERVED; refuses a new basis when the entries equal the profile's bases
+ReserveIntegrationBasis     domain; basis_generation+1, state := RESERVED; refuses a new basis when the entries equal the profile's bases, and a basis with a source or base head at a target a blocked_targets pair names
 InvalidateIntegrationBasis  domain; basis_generation+1, state := INVALIDATED
 RetireIntegrationBasis      domain; removes integration_authority[basis]; precondition the IntegrationBasis terminal ∧ state = INVALIDATED
 AdvanceDispatchAuthorityGeneration   control; dispatch_authority_generation := the witness_generation of a recorded RestoreWitnessReceipt
