@@ -73,10 +73,10 @@ lifecycle! {
         Unresolved = "UNRESOLVED",
         /// Adjudicated as compensated.
         Compensated = "COMPENSATED",
+        /// Proven not applied, with no attempt that will send it.
+        Released = "RELEASED",
         /// Its provider or target does not support it.
         BlockedUnsupported = "BLOCKED_UNSUPPORTED",
-        /// Unsent and proven not applied after its task ended.
-        Released = "RELEASED",
     }
     edges {
         [Requested] -> [Permitted];
@@ -88,7 +88,7 @@ lifecycle! {
         [Reconciling] -> [Confirmed, Failed];
         [Reconciling] -> [Requested] if NonApplicationProven;
         [Reconciling] -> [Unresolved];
-        [Unresolved] -> [Confirmed, Compensated, Failed] if HumanAdjudication;
+        [Unresolved] -> [Confirmed, Compensated, Failed, Released] if HumanAdjudication;
         [Requested, Permitted] -> [BlockedUnsupported];
         [Requested] -> [Released] if UnsentNotApplied;
         [Requested] -> [Confirmed] if RestoredFoundApplied;

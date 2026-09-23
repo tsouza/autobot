@@ -58,14 +58,12 @@ requirements! {
     NonApplicationProven => ["non-application proven"];
     /// Only a human adjudication takes the transition.
     HumanAdjudication => ["human adjudication only"];
-    /// Unsent, its task terminal, and proven not applied.
-    UnsentNotApplied => ["unsent, its task terminal, proven not applied"];
+    /// Unsent, no attempt will send it, and proven not applied.
+    UnsentNotApplied => ["unsent, no attempt will send it, proven not applied"];
     /// Restored and unsent, and a lookup finds it applied.
     RestoredFoundApplied => ["restored, unsent, a lookup finds it applied"];
-    /// Restored and unsent, on a provider offering neither idempotency nor lookup.
-    RestoredUnverifiable => [
-        "restored, unsent, a provider offering neither idempotency nor lookup",
-    ];
+    /// Restored and unsent, on a provider offering no lookup.
+    RestoredUnverifiable => ["restored, unsent, a provider offering no lookup"];
     /// The intent's operation is terminal.
     OperationTerminal => [
         "the Broker writes ACKNOWLEDGED once the intent's operation is terminal",
