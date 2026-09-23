@@ -133,7 +133,7 @@ impl<'a> OnWrite<'a> {
 impl Driver for OnWrite<'_> {
     fn perform(&mut self, op: StoreOp) -> Execution {
         if op.kind() == self.op
-            && *target_kind(&op) == self.kind
+            && target_kind(&op) == self.kind
             && let Some(fault) = self.fault.take()
         {
             self.inner.arm(fault);
@@ -166,7 +166,7 @@ impl<'a> Outage<'a> {
 
 impl Driver for Outage<'_> {
     fn perform(&mut self, op: StoreOp) -> Execution {
-        if !self.down.contains(target_kind(&op)) {
+        if !self.down.contains(&target_kind(&op)) {
             return self.inner.perform(op);
         }
         if op.kind().is_write() {
@@ -182,13 +182,26 @@ impl Driver for Outage<'_> {
 }
 
 /// The kind of the objects `op` reads or writes.
-fn target_kind(op: &StoreOp) -> &Kind {
+fn target_kind(op: &StoreOp) -> Kind {
     match op {
         StoreOp::Get { key } | StoreOp::Create { key, .. } | StoreOp::UpdateStatus { key, .. } => {
-            &key.kind
+            key.kind.clone()
         }
-        StoreOp::List { kind, .. } | StoreOp::Watch { kind, .. } => kind,
+        StoreOp::List { kind, .. } | StoreOp::Watch { kind, .. } => kind.clone(),
+        // No public accessor names a StoreOp target: an unnamed operation reads its Debug form.
+        #[allow(unreachable_patterns)]
+        other => debug_kind(other),
     }
+}
+
+/// The first `kind` field of `op`'s `Debug` form.
+fn debug_kind(op: &StoreOp) -> Kind {
+    let text = format!("{op:?}");
+    let kind = text
+        .split_once("kind: Kind(\"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map_or_else(|| panic!("{text} names no kind"), |(kind, _)| kind);
+    parse(kind)
 }
 
 /// Reads `key` with a linearizable `Get`.
