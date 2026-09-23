@@ -198,12 +198,11 @@ fn current_pins(index: usize, aggregate: &Versioned<Toy>, command: &ToyCommand) 
 }
 
 fn random_command(rng: &mut Rng) -> ToyCommand {
-    match rng.below(6) {
+    match rng.below(5) {
         0 | 1 => ToyCommand::Add(rng.below(10)),
         2 => ToyCommand::Emit(u32::try_from(rng.below(4)).expect("small")),
         3 => ToyCommand::Hold,
-        4 => ToyCommand::Release,
-        _ => ToyCommand::HoldAndAdd(rng.below(3)),
+        _ => ToyCommand::Release,
     }
 }
 
@@ -424,11 +423,20 @@ fn a_reducer_refusal_records_the_revision_it_read() {
 }
 
 #[test]
-fn a_control_commit_touching_a_domain_field_is_refused_under_every_guard() {
+fn a_control_transition_touching_a_domain_field_is_an_error_while_its_guard_is_enabled() {
     let command = ToyCommand::HoldAndAdd(2);
     let p = current_pins(0, &initial(), &command);
-    let r = refusal(&initial(), &p, &command, &Guards::all());
-    assert_eq!(r.ground, RefusalGround::Guard(GuardId::ControlFieldsOnly));
+    for guards in [
+        Guards::all(),
+        Guards::all().without(GuardId::AcceptanceInOneCas),
+    ] {
+        assert_eq!(
+            step::<ToyReducer>(&initial(), &p, &command, &guards),
+            Err(ReducerError::LanePartition {
+                lane: Lane::Control
+            })
+        );
+    }
 }
 
 #[test]
@@ -443,15 +451,17 @@ fn without_the_control_fields_guard_the_domain_digest_moves_under_a_control_comm
 }
 
 #[test]
-fn a_domain_commit_touching_a_control_field_is_refused_even_without_the_guard() {
+fn a_domain_transition_touching_a_control_field_is_an_error_even_without_the_guard() {
     let command = ToyCommand::AddAndFlip;
     let p = current_pins(0, &initial(), &command);
     for guards in [
         Guards::all(),
         Guards::all().without(GuardId::ControlFieldsOnly),
     ] {
-        let r = refusal(&initial(), &p, &command, &guards);
-        assert_eq!(r.ground, RefusalGround::DomainCommitTouchesControl);
+        assert_eq!(
+            step::<ToyReducer>(&initial(), &p, &command, &guards),
+            Err(ReducerError::LanePartition { lane: Lane::Domain })
+        );
     }
 }
 
@@ -557,6 +567,34 @@ fn parsing_refuses_a_receipt_that_breaks_its_invariants() {
             "{what}: accepted"
         );
     }
+}
+
+/// Whether `value` parses as a receipt, and the error if it does not.
+fn parse(value: Value) -> Result<TransitionReceipt, String> {
+    serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
+#[test]
+fn parsing_refuses_a_domain_receipt_whose_control_digest_moved() {
+    let (_, mut value) = receipt_json();
+    value["after_digests"]["control"] = value["before_digests"]["domain"].clone();
+    let refused = ReceiptError::LanePartition(Lane::Domain).to_string();
+    assert_eq!(parse(value.clone()).err(), Some(refused.clone()));
+    value["disabled_guards"] = json!(["control-fields-only"]);
+    assert_eq!(parse(value).err(), Some(refused));
+}
+
+#[test]
+fn parsing_refuses_a_control_receipt_whose_domain_digest_moved_unless_its_guard_was_off() {
+    let (_, receipt) = commit(&initial(), &ToyCommand::Hold, &Guards::all());
+    let mut value = serde_json::to_value(&receipt).expect("serializes");
+    value["after_digests"]["domain"] = value["before_digests"]["control"].clone();
+    let refused = ReceiptError::LanePartition(Lane::Control).to_string();
+    assert_eq!(parse(value.clone()).err(), Some(refused.clone()));
+    value["disabled_guards"] = json!(["acceptance-in-one-cas"]);
+    assert_eq!(parse(value.clone()).err(), Some(refused));
+    value["disabled_guards"] = json!(["acceptance-in-one-cas", "control-fields-only"]);
+    assert!(parse(value).is_ok());
 }
 
 #[test]
