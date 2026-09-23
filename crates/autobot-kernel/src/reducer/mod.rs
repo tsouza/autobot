@@ -48,6 +48,10 @@
 //!   by a negative variant is never mistaken for one made under every guard. It holds the
 //!   disabled guards as a list rather than a [`Guards`] value, so reading a receipt never
 //!   constructs a [`Guards`] with a guard disabled.
+//! - [`step`] records the digests the state gives through [`ReducerState`]. The domain commit
+//!   ([`DomainCommit`](crate::commit::DomainCommit)) reports the store's digests of the status
+//!   instead, through [`TransitionReceipt::with_digests`], so that the receipt and the pending
+//!   slot it fills name one digest.
 //! - A receipt names its action by its FORMAL §3 name; whether the transition is an allowed
 //!   model transition is the refinement check of G-FORMAL, not the receipt's.
 //! - The effect intents are [`SlotEffectIntent`]s, as the [`status`](crate::status) module

@@ -222,6 +222,23 @@ impl TransitionReceipt {
         Ok(Self(Box::new(fields)))
     }
 
+    /// The receipt with its state digests replaced by `before` and `after`, checked again as
+    /// [`TransitionReceipt::new`] checks a receipt.
+    ///
+    /// # Errors
+    ///
+    /// [`ReceiptError::LanePartition`] if the new digests change the other lane's digest.
+    pub fn with_digests(
+        self,
+        before: StateDigests,
+        after: StateDigests,
+    ) -> Result<Self, ReceiptError> {
+        let mut fields = *self.0;
+        fields.before_digests = before;
+        fields.after_digests = after;
+        Self::new(fields)
+    }
+
     /// The receipt's fields.
     #[must_use]
     pub fn fields(&self) -> &TransitionReceiptFields {

@@ -164,7 +164,12 @@ where
     }
 }
 
-/// One lane commit of one command on one aggregate.
+/// One lane commit of one command on one aggregate, with the ring limits a control commit
+/// appends within.
+///
+/// A domain commit never reads the ring limits: [`DomainCommitRequest`] requests one without
+/// them. A `CommitRequest` whose pin names the domain lane commits as that request does and
+/// leaves `ring` unread.
 #[derive(Debug, Clone)]
 pub struct CommitRequest<T> {
     /// The aggregate.
@@ -178,6 +183,23 @@ pub struct CommitRequest<T> {
     /// The profile's ring limits, which a control commit appends within.
     pub ring: ControlRing,
     /// The transition.
+    pub transition: T,
+}
+
+/// One domain commit of one command on one aggregate. It carries no ring limits: a domain
+/// commit appends nothing to the control-receipt ring.
+#[derive(Debug, Clone)]
+pub struct DomainCommitRequest<T> {
+    /// The aggregate.
+    pub target: ObjectKey,
+    /// The aggregate's UID, which the command pins.
+    pub uid: Uid,
+    /// The UID of the command.
+    pub command_uid: Uid,
+    /// The `state_revision` the command pins, or `None` for a commit at the revision read
+    /// ([`Pin::Current`]).
+    pub expected_revision: Option<StateRevision>,
+    /// The transition; a control change it returns ends [`CommitOutcome::LaneMismatch`].
     pub transition: T,
 }
 
@@ -243,9 +265,28 @@ impl<T: Transition> Commit<T> {
     /// The protocol for `request`.
     #[must_use]
     pub fn new(request: CommitRequest<T>) -> Self {
-        let key = request.target.clone();
-        let uid = request.uid.clone();
-        Self(Cas::new(key, uid, LaneCommit(request)))
+        let decider = LaneCommit {
+            command_uid: request.command_uid,
+            pin: request.pin,
+            ring: Some(request.ring),
+            transition: request.transition,
+        };
+        Self(Cas::new(request.target, request.uid, decider))
+    }
+
+    /// The domain commit protocol for `request`.
+    #[must_use]
+    pub fn domain(request: DomainCommitRequest<T>) -> Self {
+        let pin = request
+            .expected_revision
+            .map_or(Pin::Current, |r| Pin::Revision(LaneRevision::State(r)));
+        let decider = LaneCommit {
+            command_uid: request.command_uid,
+            pin,
+            ring: None,
+            transition: request.transition,
+        };
+        Self(Cas::new(request.target, request.uid, decider))
     }
 }
 
@@ -261,8 +302,14 @@ impl<T: Transition> Protocol for Commit<T> {
     }
 }
 
-/// The decider of a lane commit.
-struct LaneCommit<T>(CommitRequest<T>);
+/// The decider of a lane commit. `ring` is `None` for a [`DomainCommitRequest`], whose pin
+/// is always on the domain lane.
+struct LaneCommit<T> {
+    command_uid: Uid,
+    pin: Pin,
+    ring: Option<ControlRing>,
+    transition: T,
+}
 
 impl<T: Transition> Decide for LaneCommit<T> {
     type Outcome = CommitOutcome;
@@ -272,17 +319,16 @@ impl<T: Transition> Decide for LaneCommit<T> {
         object: &Object,
         uncertain_base: Option<&Object>,
     ) -> Decision<CommitOutcome> {
-        let request = &self.0;
         let Some(status) = &object.status else {
             return Decision::Done(CommitOutcome::Uninitialized);
         };
-        let lane = request.pin.lane();
-        if let Some(committed) = committed(status, lane, &request.command_uid) {
+        let lane = self.pin.lane();
+        if let Some(committed) = committed(status, lane, &self.command_uid) {
             return Decision::Done(committed);
         }
         let observed = status.revision(lane);
         let at = status.envelope.commit_sequence;
-        let anchor = match request.pin {
+        let anchor = match self.pin {
             Pin::Revision(pinned) => Some(pinned),
             Pin::Current => uncertain_base
                 .and_then(|base| base.status.as_ref())
@@ -304,7 +350,7 @@ impl<T: Transition> Decide for LaneCommit<T> {
                 slot_command: slot.command_uid.clone(),
             });
         }
-        let change = match request.transition.apply(object, status) {
+        let change = match self.transition.apply(object, status) {
             Ok(change) => change,
             Err(refusal) => {
                 return Decision::Done(CommitOutcome::Refused {
@@ -314,17 +360,15 @@ impl<T: Transition> Decide for LaneCommit<T> {
                 });
             }
         };
-        let written = match change {
-            Change::Domain(change) if lane == Lane::Domain => {
-                domain_commit(status, &request.uid, &request.command_uid, change)
+        // The loop decides only on an object with the request's UID.
+        let aggregate = &object.uid;
+        let written = match (change, &self.ring) {
+            (Change::Domain(change), _) if lane == Lane::Domain => {
+                domain_commit(status, aggregate, &self.command_uid, change)
             }
-            Change::Control(change) if lane == Lane::Control => control_commit(
-                status,
-                &request.uid,
-                &request.command_uid,
-                change,
-                &request.ring,
-            ),
+            (Change::Control(change), Some(ring)) if lane == Lane::Control => {
+                control_commit(status, aggregate, &self.command_uid, change, ring)
+            }
             _ => Err(CommitOutcome::LaneMismatch),
         };
         match written {
@@ -365,13 +409,14 @@ fn committed(status: &Status, lane: Lane, command: &Uid) -> Option<CommitOutcome
     }
 }
 
-/// The status after the domain commit of `command` applies `change` to `status`.
-fn domain_commit(
-    status: &Status,
-    aggregate: &Uid,
-    command: &Uid,
-    change: DomainChange,
-) -> Result<Status, CommitOutcome> {
+/// The status a domain commit writing `fields` makes of `status`, before it installs its
+/// pending slot and receipt reference, which are outside the domain digest: the domain fields
+/// replaced and `state_revision` and `commit_sequence` incremented.
+///
+/// # Errors
+///
+/// [`CommitOutcome::Overflow`] if a counter would pass `i64::MAX`.
+pub(crate) fn domain_successor(status: &Status, fields: String) -> Result<Status, CommitOutcome> {
     let envelope = &status.envelope;
     let commit_sequence = envelope
         .commit_sequence
@@ -382,9 +427,23 @@ fn domain_commit(
         .next()
         .map_err(|_| CommitOutcome::Overflow)?;
     let mut next = status.clone();
-    next.domain = change.fields;
+    next.domain = fields;
     next.envelope.state_revision = proposed_revision;
     next.envelope.commit_sequence = commit_sequence;
+    Ok(next)
+}
+
+/// The status after the domain commit of `command` applies `change` to `status`.
+fn domain_commit(
+    status: &Status,
+    aggregate: &Uid,
+    command: &Uid,
+    change: DomainChange,
+) -> Result<Status, CommitOutcome> {
+    let envelope = &status.envelope;
+    let mut next = domain_successor(status, change.fields)?;
+    let commit_sequence = next.envelope.commit_sequence;
+    let proposed_revision = next.envelope.state_revision;
     let before_digest = domain_digest(status).map_err(CommitOutcome::Unencodable)?;
     let after_digest = domain_digest(&next).map_err(CommitOutcome::Unencodable)?;
     let audit_envelope = change.event.envelope(CommitFacts {

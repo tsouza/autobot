@@ -487,6 +487,71 @@ fn a_change_of_the_other_lane_is_not_written() {
     assert_eq!(expect_done(&mut p), CommitOutcome::LaneMismatch);
 }
 
+/// The domain commit of `c1` with no ring limits, pinned at `expected`.
+fn domain_request(expected: Option<u64>, transition: Apply) -> Commit<Apply> {
+    Commit::domain(DomainCommitRequest {
+        target: key("a"),
+        uid: uid("uid-a"),
+        command_uid: uid("c1"),
+        expected_revision: expected.map(|r| StateRevision::new(r).expect("rev")),
+        transition,
+    })
+}
+
+#[test]
+fn a_domain_request_writes_what_a_domain_pinned_lane_request_writes() {
+    let mut read = status(true);
+    read.envelope.commit_sequence = CommitSequence::new(2).expect("seq");
+    for expected in [Some(0), None] {
+        let mut p = domain_request(expected, set_domain);
+        expect_op(&mut p);
+        p.resume(StoreResult::Object(boxed(3, Some(read.clone()))))
+            .expect("read");
+        let (written_by_domain, rv) = written(expect_op(&mut p));
+        assert_eq!(rv, ResourceVersion::from(3));
+        let mut lane = commit(expected.map_or(Pin::Current, domain_pin), set_domain);
+        expect_op(&mut lane);
+        lane.resume(StoreResult::Object(boxed(3, Some(read.clone()))))
+            .expect("read");
+        assert_eq!(written_by_domain, written(expect_op(&mut lane)).0);
+        assert_eq!(written_by_domain.domain, "d1");
+    }
+}
+
+#[test]
+fn a_domain_request_writes_no_control_change() {
+    let mut p = domain_request(Some(0), set_control);
+    expect_op(&mut p);
+    p.resume(StoreResult::Object(boxed(1, Some(status(true)))))
+        .expect("read");
+    assert_eq!(expect_done(&mut p), CommitOutcome::LaneMismatch);
+}
+
+#[test]
+fn a_domain_request_is_passed_or_not_reached_at_its_pinned_revision() {
+    let mut read = status(true);
+    read.envelope.state_revision = StateRevision::new(1).expect("rev");
+    read.envelope.commit_sequence = CommitSequence::new(1).expect("seq");
+    let mut passed = domain_request(Some(0), set_domain);
+    expect_op(&mut passed);
+    passed
+        .resume(StoreResult::Object(boxed(2, Some(read.clone()))))
+        .expect("read");
+    assert!(matches!(
+        expect_done(&mut passed),
+        CommitOutcome::Passed { .. }
+    ));
+    let mut not_reached = domain_request(Some(2), set_domain);
+    expect_op(&mut not_reached);
+    not_reached
+        .resume(StoreResult::Object(boxed(2, Some(read))))
+        .expect("read");
+    assert!(matches!(
+        expect_done(&mut not_reached),
+        CommitOutcome::NotReached { .. }
+    ));
+}
+
 #[test]
 fn create_resolves_a_lost_acknowledgement_by_reading_the_name() {
     let mut p = Create::new(key("a"), "spec".to_owned(), origin());

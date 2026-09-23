@@ -10,11 +10,12 @@
 //! - [`StoreOp`] is the whole vocabulary: a linearizable `Get`, create-by-name, a status update
 //!   and a delete, each conditioned on the object's UID and resource version, `List` for
 //!   relisting, and `Watch`, whose [`WatchEvent`]s name an object and carry none of its state.
-//! - [`Commit`] runs one domain or control commit of one command (KERNEL §1); [`Initialize`]
-//!   writes an aggregate's first status; [`ClearSlot`] is the reconciliation-only CAS that marks
-//!   a pending slot `CLEARED`; [`Create`] creates by name and [`Delete`] deletes behind a
-//!   tombstone (KERNEL §2); [`Triggers`] turns watch events and relists into the set of objects
-//!   to read.
+//! - [`Commit`] runs one domain or control commit of one command (KERNEL §1): a
+//!   [`DomainCommitRequest`] carries no ring limits, a [`CommitRequest`] the ring limits a
+//!   control commit appends within; [`Initialize`] writes an aggregate's first status;
+//!   [`ClearSlot`] is the reconciliation-only CAS that marks a pending slot `CLEARED`;
+//!   [`Create`] creates by name and [`Delete`] deletes behind a tombstone (KERNEL §2);
+//!   [`Triggers`] turns watch events and relists into the set of objects to read.
 //! - A write that returns `UNCERTAIN` is resolved only by reading: every protocol follows it
 //!   with a `Get` of the same object and decides from what it reads. A domain commit that
 //!   finds its command in the pending slot, or a control commit that finds it in the ring, has
@@ -103,9 +104,11 @@ mod op;
 mod watch;
 
 pub use cas::Missing;
+pub(crate) use commit::domain_successor;
 pub use commit::{
     Change, ClearOutcome, ClearSlot, Commit, CommitOutcome, CommitRequest, ControlChange,
-    DomainChange, EventFields, GuardRefusal, Initialize, InitializeOutcome, Pin, Transition,
+    DomainChange, DomainCommitRequest, EventFields, GuardRefusal, Initialize, InitializeOutcome,
+    Pin, Transition,
 };
 pub use create::{Create, CreateOutcome};
 pub use delete::{Delete, DeleteOutcome, DeleteRequest, ReceiptCheck};
