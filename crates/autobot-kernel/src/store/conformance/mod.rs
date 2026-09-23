@@ -26,7 +26,8 @@
 //! - `delete`: delete `object` behind the tombstone `tombstone` (default `tombstone-<object>`)
 //!   with `spec`, reading the create receipt `receipt` (default `create-<object>`), expecting
 //!   `deleted`, `refused`, `tombstone_taken`, `tombstone_vanished`, `tombstone_is_target`,
-//!   `not_found` or `replaced`.
+//!   `not_found` or `replaced`. With `interleave`, that commit step runs to its end after this
+//!   delete's first read and before its first write.
 //!   The create receipt is terminal when it is the object named by the target's create
 //!   receipt UID and its domain fields name a terminal `CommandReceipt` state of KERNEL §10:
 //!   `COMMITTED`, `REJECTED`, `CANCELLED` or `REPLAY_EXPIRED`.
@@ -73,7 +74,7 @@ pub const KIND: &str = "ConformanceProbe";
 pub const NAMESPACE: &str = "conformance";
 
 /// The embedded suite, one TOML document per script.
-const SUITE: [&str; 16] = [
+const SUITE: [&str; 19] = [
     include_str!("stale_resource_version.toml"),
     include_str!("uid_precondition.toml"),
     include_str!("uncertain_write.toml"),
@@ -86,6 +87,9 @@ const SUITE: [&str; 16] = [
     include_str!("delete_after_terminal_create_receipt.toml"),
     include_str!("delete_preconditions.toml"),
     include_str!("uncertain_delete.toml"),
+    include_str!("delete_absent_target_tombstone_taken.toml"),
+    include_str!("delete_tombstone_is_target.toml"),
+    include_str!("crash_after_several_writes.toml"),
     include_str!("watch_drop.toml"),
     include_str!("watch_duplicate.toml"),
     include_str!("watch_reorder.toml"),
@@ -251,6 +255,8 @@ pub struct DeleteStep {
     /// The tombstone's encoded spec.
     #[serde(default)]
     pub spec: String,
+    /// A commit step run after this delete's first read and before its first write.
+    pub interleave: Option<Box<CommitStep>>,
     /// The expected outcome.
     pub expect: String,
 }

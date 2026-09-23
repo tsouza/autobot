@@ -1,5 +1,6 @@
 //! The delivery channel between a fake provider and the observation source that polls it.
 
+use crate::hmac_sha256;
 use autobot_adapters::backoff::BackOff;
 use autobot_adapters::observation::{
     CiConclusion, Delivery, Fact, Observation, ObservationHarness, ObservationSource, SourceError,
@@ -309,14 +310,9 @@ fn semantic_key(observation: &Observation) -> Digest {
     Digest::from_bytes(Sha256::digest(fact_bytes(observation)).into())
 }
 
-/// The signature of `observation` under `key`: SHA-256 of the key followed by
-/// [`signed_bytes`].
+/// The signature of `observation` under `key`: HMAC-SHA256 of [`signed_bytes`].
 fn sign(key: &[u8; 32], observation: &Observation) -> [u8; 32] {
-    Sha256::new()
-        .chain_update(key)
-        .chain_update(signed_bytes(observation))
-        .finalize()
-        .into()
+    hmac_sha256(key, &signed_bytes(observation))
 }
 
 /// Appends `bytes` with its length in front, so no two field sequences encode alike.

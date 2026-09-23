@@ -55,9 +55,10 @@ pub enum DeleteOutcome {
     /// when the object under the tombstone name has the request's create receipt UID in its
     /// origin and the request's tombstone spec.
     Deleted(Box<Object>),
-    /// The target's create receipt is not terminal, or is absent: nothing was written.
+    /// The target's origin names another create receipt UID than the request's, or the
+    /// target's create receipt is not terminal, or is absent: nothing was written.
     Refused {
-        /// The create receipt as read, if one was found.
+        /// The create receipt as read, if one was read and found.
         create_receipt: Option<Box<Object>>,
     },
     /// The tombstone name holds an object with another origin, or, with the target absent,
@@ -99,7 +100,8 @@ enum Next {
 
 /// The protocol that deletes one object.
 ///
-/// It reads the target, then its create receipt, and refuses unless the receipt is terminal.
+/// It reads the target, refuses unless the target's origin names the request's create receipt
+/// UID, then reads the create receipt and refuses unless it is terminal.
 /// It then creates the tombstone by name, with the target's origin, as [`Create`] does, and
 /// only then deletes the target conditioned on the target's UID and the resource version it
 /// read. A conflicting or `UNCERTAIN` delete is followed by a read of the target: the same
@@ -138,6 +140,11 @@ impl<C: ReceiptCheck> Delete<C> {
         }
         match tombstone {
             Some(tombstone) => Next::Delete { target, tombstone },
+            None if target.origin.create_receipt_uid != self.request.create_receipt_uid => {
+                Next::Done(DeleteOutcome::Refused {
+                    create_receipt: None,
+                })
+            }
             None => Next::ReadReceipt { target },
         }
     }

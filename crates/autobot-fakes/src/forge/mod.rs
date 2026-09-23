@@ -28,9 +28,10 @@
 //! - The semantic key is SHA-256 over what an observation states: the provider, the object,
 //!   its generation, heads and protection, and the fact, each length-prefixed. Two deliveries
 //!   of one fact share it, and observations that state different things do not.
-//! - An answer is signed with SHA-256 over a key shared by the fake provider and its source,
-//!   followed by every field of the observation, each length-prefixed. It detects a forged or
-//!   altered answer in tests and claims no cryptographic strength.
+//! - An answer is signed with HMAC-SHA256 (RFC 2104), the crate's one keyed hash, under a key
+//!   shared by the fake provider and its source, over every field of the observation, each
+//!   length-prefixed. It detects a forged or altered answer in tests and claims no
+//!   cryptographic strength.
 //! - A rate-limited call answers [`SourceError::RateLimited`] with the back-off the fixture
 //!   throttled it with ([`Feed::throttle`]); it fails closed like an unreachable forge.
 //! - Permissions are the three ordered levels of [`Permission`]; an actor with no grant has

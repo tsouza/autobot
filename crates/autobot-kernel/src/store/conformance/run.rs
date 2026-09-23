@@ -263,7 +263,7 @@ impl<'s> ScriptRun<'s> {
         let frame = self.frame.take().ok_or("frame lost")?;
         if frame.interleave.is_some() {
             return Err(
-                "the commit ended before its first read, so its interleave never ran".to_owned(),
+                "the step ended before its first read, so its interleave never ran".to_owned(),
             );
         }
         self.finish(frame.main)?;
@@ -411,6 +411,11 @@ impl<'s> ScriptRun<'s> {
                 expect: s.expect.clone(),
             },
             ScriptStep::Delete(s) => {
+                if let Some(inner) = &s.interleave
+                    && !self.interleaved
+                {
+                    interleave = Some(self.commit(inner)?);
+                }
                 let named = |given: &Option<String>, prefix: &str| {
                     given
                         .clone()

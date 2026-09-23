@@ -1,0 +1,43 @@
+name = "crash-after-several-writes"
+summary = "A crash armed to follow three writes fires on the third write of one step, a commit that lands between a delete's read and its write, the delete's tombstone and its target delete retried at the new resource version, and is reported as it was armed; a fresh protocol for the same delete finds its tombstone and ends deleted."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "create"
+object = "create-a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "create-a"
+domain = "COMMITTED"
+expect = "initialized"
+
+[[steps]]
+do = "inject"
+fault = { kind = "crash", after_writes = 3 }
+
+[[steps]]
+do = "delete"
+object = "a"
+expect = "deleted"
+interleave = { object = "a", command = "c1", lane = "DOMAIN", pin = 0, fields = "one", expect = "committed" }
+
+[[steps]]
+do = "check"
+object = "a"
+absent = true
+
+[[steps]]
+do = "check"
+object = "tombstone-a"
+create_receipt = "create-a"
