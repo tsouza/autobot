@@ -44,7 +44,7 @@ It cannot:
 
 - write protected status of any kind, or create a command under any principal but its own execution identity;
 - obtain a reusable credential, reach the network except through the broker, or mount anything;
-- accept, verify, or merge its own work (I-6: review is independent and fixed-tier);
+- accept, verify, or merge its own work (I-6: review is by another session, at the review tier fixed for the consequence class);
 - change its capsule, its budget, its acceptance contract, or the plan (I-8);
 - act after it is fenced: its grant is revoked, its execution epoch is stale, and the broker refuses it (KERNEL §6);
 - reference or affect another WorkContext or namespace: cross-context references are deny-by-default and a grant is bound to namespace, WorkContext UID, target UID, audience and repository membership;

@@ -1421,7 +1421,7 @@ mod tests {
         assert_eq!(d.invariants.len(), 10);
         assert_eq!(d.properties.len(), 44);
         assert_eq!(d.groups.len(), 9);
-        assert_eq!(d.variants.len(), 22);
+        assert_eq!(d.variants.len(), 24);
         let f37 = d.properties.iter().find(|p| p.id == 37).unwrap();
         assert_eq!(f37.invariant, Some(10));
         let f33 = d.properties.iter().find(|p| p.id == 33).unwrap();

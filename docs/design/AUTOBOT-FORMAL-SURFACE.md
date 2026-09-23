@@ -17,7 +17,7 @@ The model represents bounded abstract values, hashes and finite sets; it does no
 
 ## 2. Typed correspondence
 
-The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine. Kinds without a record are abstracted, each as what the model keeps instead: an `Intervention` enters only as the register or adjudication action it becomes (§3); `Plan.phase` is outside the model, which admits against `plan_authority` and the verified `ACTIVATED` snapshot (F-13); a `Finding` enters only as opened by `AskJudgedQuestion` (F-42) and as linked by `LinkFindingHistorically`, which changes no other record (F-24); a `VerificationRun` enters only as the `EvidenceBundle` it records; a `RestoreRequest` is `RestoreLineage`; `PlanProposal`, `Project` and `WorkBrief` enter only as the `IntakeWrite` and `ProposalAcceptance` records that name them; the `Charter` and `ProjectCharter` kind states enter only as their `CharterRevision`s; a `CustodyPolicy` enters only as the cadence at which `CustodyCheckpoint`s occur; and an `Artifact` enters only as the digests its `CustodyCheckpoint` verifies.
+The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine. Kinds without a record are abstracted, each as what the model keeps instead: an `Intervention` enters only as the register or adjudication action it becomes (§3); `Plan.phase` is outside the model, which admits against `plan_authority` and the verified `ACTIVATED` snapshot (F-13); a `Finding` enters only as opened by `AskJudgedQuestion` (F-42), as classified by `ClassifyFinding` and as linked by `LinkFindingHistorically`, which changes no other record (F-24); a `VerificationRun` enters only as the `EvidenceBundle` it records; a `RestoreRequest` is `RestoreLineage`; `PlanProposal`, `Project` and `WorkBrief` enter only as the `IntakeWrite` and `ProposalAcceptance` records that name them; the `Charter` and `ProjectCharter` kind states enter only as their `CharterRevision`s; a `CustodyPolicy` enters only as the cadence at which `CustodyCheckpoint`s occur; and an `Artifact` enters only as the digests its `CustodyCheckpoint` verifies.
 
 ```text
 \* commit, receipt, audit                                         KERNEL §1–§2
@@ -109,6 +109,7 @@ EvidenceBundle       = [uid, candidate_digest, base_head, head, plan_revision, s
                         charter_digest, criteria_digest, environment_digest,
                         provider_runs, ci_attestations, review_attestations, reviewer_identity,
                         correlated,              \* the reviewer ran on the worker's model (ROLES §3); set by the recording controller from the reviewer configuration and the TaskRun's routing pin, never from a claim
+                        exceptions,              \* uid of every APPLIED EXCEPTION Intervention the bundle relies on
                         remote_generation, expiry, state]
 IntegrationBasis     = [uid, plan_uid, basis_generation, source_heads, base_head, overlap_set,
                         merge_order, integrated_candidate, verification_uid, state]
@@ -256,7 +257,8 @@ BlockUnsupportedOperation
 \* plans and evidence
 VerifyPlanSnapshot · VerifyGraphMembers · RecordGraphActivationReceipt · AdmitGraphMember · InvalidateEvidence
 FailGraphActivation         precondition no activation command submitted, or its receipt REJECTED; never while it is UNCERTAIN
-RecordEvidenceBundle        refuses a reviewer below reviewTier of the class, a reviewer in the worker's session, a correlated review as the required review of a class other than REVERSIBLE, and a required SECURITY_OR_DATA_INTEGRITY review from a configuration outside securityReviewers
+RecordEvidenceBundle        refuses a reviewer below reviewTier of the class, a reviewer in the worker's session, a correlated review as the required review of a class other than REVERSIBLE, and a required SECURITY_OR_DATA_INTEGRITY review from a configuration outside securityReviewers; a missing required check is covered only by an APPLIED, unexpired EXCEPTION answered by the no-test approver for that check and candidate, listed in exceptions
+AcceptPlanRevision          Plan controller; a revision proposed on the Plan (RevisionPending), pinned to that revision and its snapshot digest; refuses every principal but WorkContext.spec.revisionAuthority
 RecordAcceptanceAdjudication   Task controller; precondition every bundle it references RECORDED, unexpired and at the current remote generation; records the uid and digest of each
 
 \* charter
@@ -306,6 +308,7 @@ SUPERSEDE                   QuiescePlan, then SupersedePlanRevision
 FAIL, CANCEL                QuiescePlan if the register holds the revision ACTIVE, then RetirePlanAuthority once the Plan is terminal, if it holds entries
 ADJUDICATE_OPERATION        AdjudicateUnresolvedOperation
 ADJUDICATE_CONFLICT         AdjudicateConflict
+EXCEPTION                   none of its own: an APPLIED one enters only as an EvidenceBundle.exceptions entry (RecordEvidenceBundle)
 PAUSE, RESUME of a PAUSE    none: they change only Plan.phase, which gates TaskRun admission, revokes no accepted effect and weakens no hold (KERNEL §5), so no invariant of §4 depends on them
                             (the role a principal needs for each action, ROLES §5, is admission's and the owning controller's check, assumed by KERNEL §11 and not modelled)
 
@@ -396,6 +399,8 @@ A check is vacuous unless removing a guard produces a counterexample. Each varia
 | lexical glob check on the requested string | F-23 |
 | no gap created at `record_deadline` | F-32 |
 | reviewer identity equal to worker session | F-28 |
+| a `correlated` review accepted as the required review of `COMPATIBILITY_RISK` work | F-28 |
+| a required `SECURITY_OR_DATA_INTEGRITY` review accepted from a configuration outside `securityReviewers` | F-28 |
 | admission without the floor comparison | F-37 |
 | plan acceptance without a pinned charter revision | F-38 |
 | a project entry that weakens an inherited law | F-39 |

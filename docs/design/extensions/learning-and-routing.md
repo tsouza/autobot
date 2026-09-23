@@ -3,7 +3,7 @@
 Intent: minimize expected total cost per accepted milestone by learning which worker-strategy configuration to route each class of work to, above the consequence-class floor (THESIS goal 3, I-10).
 Gate: the ledger exists from M0-Q; comparison at **G-EVALUATION**; promotion at **G-ADAPT**; production use additionally at **G-PROD**. Until G-ADAPT, routing is one fixed revision.
 
-Relies on (kernel): the routing pin on every `TaskRun` (KERNEL §3.1, F-14); the canonical-record obligation and censoring (KERNEL §8, F-32); the consequence class and floor (ONBOARD §5); reviewer independence and the fixed review tier (ROLES §3); evidence freshness (F-27).
+Relies on (kernel): the routing pin on every `TaskRun` (KERNEL §3.1, F-14); the canonical-record obligation and censoring (KERNEL §8, F-32); the consequence class and floor (ONBOARD §5); reviewer independence and the review tier of each consequence class (ROLES §3); evidence freshness (F-27).
 
 Decisions:
 

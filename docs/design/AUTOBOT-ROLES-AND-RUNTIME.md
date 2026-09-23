@@ -47,7 +47,7 @@ A `ScopeCapsule` is the immutable assignment contract of one `TaskRun`, issued b
 
 ## 3. Reviewer independence — I-6, I-10
 
-Acceptance evidence is produced independently of the worker that made the candidate. A reviewer is always a session other than the worker's. A reviewer may run on the worker's model; the `EvidenceBundle` then records its review as `correlated`, and a correlated review satisfies required review only for `REVERSIBLE` work — `COMPATIBILITY_RISK` and `SECURITY_OR_DATA_INTEGRITY` work needs a reviewer on another model. Reviewers are never routed below the review tier fixed for the consequence class, `WorkContext.spec.reviewTier[class]` (ONBOARD §5), whatever the worker cost; the required review of `SECURITY_OR_DATA_INTEGRITY` work comes only from a reviewer configuration `WorkContext.spec.securityReviewers` names, and its evidence includes the relevant security checks. A reviewer checks the candidate against every `review` and `judged` entry of the charter in force (KERNEL §5); a violation is a blocking finding, and a `judged` answer never replaces this check. A worker cannot delete a required check. Every exception, in every consequence class, is a recorded decision of the human no-test approver (`WorkContext.spec.noTestApprover`), taken within policy, that stays visible in the outcome as an exception, never as a pass.
+Acceptance evidence is produced independently of the worker that made the candidate. A reviewer is always a session other than the worker's. A reviewer may run on the worker's model; the `EvidenceBundle` then records its review as `correlated`, and a correlated review satisfies required review only for `REVERSIBLE` work — `COMPATIBILITY_RISK` and `SECURITY_OR_DATA_INTEGRITY` work needs a reviewer on another model. Reviewers are never routed below the review tier fixed for the consequence class, `WorkContext.spec.reviewTier[class]` (ONBOARD §5), whatever the worker cost; the required review of `SECURITY_OR_DATA_INTEGRITY` work comes only from a reviewer configuration `WorkContext.spec.securityReviewers` names, and its evidence includes the relevant security checks. A reviewer checks the candidate against every `review` and `judged` entry of the charter in force (KERNEL §5); a violation is a blocking finding, and a `judged` answer never replaces this check. A worker cannot delete a required check. Every exception, in every consequence class, is an `EXCEPTION` `Intervention` (§5) answered by the human no-test approver (`WorkContext.spec.noTestApprover`) within policy, and the `EvidenceBundle` that relies on it references it; it stays visible in the outcome as an exception, never as a pass.
 
 ## 4. The agent-runtime contract
 
@@ -66,7 +66,7 @@ An `AgentRun` is one session of one role through a runtime adapter, inside a `Ta
 Humans act through the same command path as everything else, never by editing status. An `Intervention` is an authenticated request with a scope, an expiry and one action, submitted by a human principal or raised by an owning controller under its own principal to summon one — in which case the human's answer is a further `Intervention` that references it:
 
 ```text
-HOLD | RESUME | PAUSE | QUIESCE | SUPERSEDE | FAIL | CANCEL | KILL_SWITCH | ADJUDICATE_OPERATION | ADJUDICATE_CONFLICT
+HOLD | RESUME | PAUSE | QUIESCE | SUPERSEDE | FAIL | CANCEL | KILL_SWITCH | ADJUDICATE_OPERATION | ADJUDICATE_CONFLICT | EXCEPTION
 ```
 
 Each action becomes the command of the owning controller of what it changes:
@@ -77,6 +77,7 @@ Each action becomes the command of the owning controller of what it changes:
 - `FAIL` ends a plan that is `ACTIVE`, `PAUSED` or `QUIESCING` in `FAILED`, and `CANCEL` ends any plan not yet terminal in `CANCELLED`. The Plan controller first submits `QuiescePlan` if the register holds the plan's revision `ACTIVE`, waits as KERNEL §5 waits for active attempts, and then commits the terminal phase, never while an activation receipt is `UNCERTAIN`; retirement of the plan's register entries follows (KERNEL §3.1).
 - `RESUME` names the `Intervention` it answers. A `RESUME` of a `HOLD` or of a `KILL_SWITCH` becomes `ReleaseHold`, which removes only that cause, so answering one hold never lifts another; the context returns to `RUNNING` through `CompleteHoldRelease` once no cause is left. A `RESUME` of a `PAUSE` moves the plan `PAUSED → ACTIVE`, except that a `RESUME` of the budget-exhausted pause is `REJECTED` (ONBOARD §4). A `RESUME` of a `QUIESCE` or of a `SUPERSEDE` resumes the same revision with `ResumePlanRevision`, and is applied only while the plan is `QUIESCING`; during a replacement's activation it is `REJECTED`.
 - `ADJUDICATE_OPERATION` is the only exit from `UNRESOLVED` (KERNEL §3.3); `ADJUDICATE_CONFLICT` is the only exit from a `WorkspaceConflict` (KERNEL §7).
+- `EXCEPTION` requests a no-test exception for one required check of one candidate. It is `APPLIED` only by the no-test approver's answer, which carries the rationale, compensating evidence, residual risk and expiry; the `EvidenceBundle` that relies on it references it, and an expired one covers nothing. It changes no register.
 
 A paused plan leaves `PAUSED` only by `RESUME` (to `ACTIVE`), by `QUIESCE` or `SUPERSEDE` (to `QUIESCING`), by `FAIL` or by `CANCEL`, and never on its own when work becomes eligible again; a budget-exhausted pause leaves only by a revision or by `CANCEL` (ONBOARD §4). No action completes a plan: the Plan controller commits `COMPLETED` under the condition of ONBOARD §4.
 
@@ -87,7 +88,8 @@ A paused plan leaves `PAUSED` only by `RESUME` (to `ACTIVE`), by `QUIESCE` or `S
 - a `RESUME` of a `KILL_SWITCH` hold, only from the kill-switch operator;
 - a `RESUME` of any other `HOLD`, of a `PAUSE`, of a `QUIESCE` or of a `SUPERSEDE`, only from the reviser;
 - `QUIESCE`, `SUPERSEDE`, `FAIL` and `CANCEL`, only from the reviser;
-- `ADJUDICATE_OPERATION` and `ADJUDICATE_CONFLICT`, only from the adjudicator.
+- `ADJUDICATE_OPERATION` and `ADJUDICATE_CONFLICT`, only from the adjudicator;
+- the answer to an `EXCEPTION`, only from the no-test approver.
 
 No agent identity, the Manager's included, can issue a `RESUME`. Besides lease expiry, a Manager takeover (KERNEL §4) is requested only by the reviser, and the Context controller applies the request as `DrainManager`.
 

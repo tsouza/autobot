@@ -116,6 +116,7 @@ pub const VOCABULARY: &[&str] = &[
     "KILL_SWITCH",
     "ADJUDICATE_OPERATION",
     "ADJUDICATE_CONFLICT",
+    "EXCEPTION",
     // Enumerated schema values that are not lifecycle states.
     "DOMAIN",
     "CONTROL",
