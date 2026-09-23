@@ -24,7 +24,7 @@ concurrency:
 jobs:
   review-gate:
     if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
-    runs-on: [self-hosted, autobot]
+    runs-on: [self-hosted, autobot-light]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -13,7 +13,7 @@ Spec == Init /\ [][Next]_vars /\ Liveness
 
 `Init` is a finite valid kernel state. `Next` is the disjunction of the actions in §3, of external observations, timers, faults and recovery. Safety properties are invariants (§4). Liveness is conditional on the named assumptions of §6 and is never promised unconditionally.
 
-The model represents bounded abstract values, hashes and finite sets; it does not model source trees, unbounded logs, tokens or CI output. `CommitAggregateCAS` and `CommitControlCAS` are the only transitions that commit canonical state; `ReconciliationCAS` records progress of already-committed intents and never changes a digest. Audit events, effect materialization and projections are modelled so that they can explain or repair a missing record and never roll back, overwrite or reconstruct a newer aggregate. Extensions (learning, decision policy, mirroring, observability, CLI) are outside this model; a claim about them is not a claim of this surface.
+The model represents bounded abstract values, hashes and finite sets; it does not model source trees, unbounded logs, tokens or CI output. `CommitAggregateCAS` and `CommitControlCAS` are the only transitions that commit canonical state; `ReconciliationCAS` records progress of already-committed intents and never changes a digest. Audit events, effect materialization and projections are modelled so that they can explain or repair a missing record and never roll back, overwrite or reconstruct a newer aggregate. Extensions (learning, decision policy, mirroring, observability, CLI, the onboarding MCP server) are outside this model; a claim about them is not a claim of this surface.
 
 ## 2. Typed correspondence
 
@@ -133,7 +133,16 @@ TelemetryGap         = [uid, gap_kind ∈ {OUTCOME_MISSING, USAGE_MISSING}, task
 CharterRevision      = [uid, charter_uid, charter_kind ∈ {Charter, ProjectCharter}, owner_uid,
                         inherited_charter_uid, revision, entries, digest, accepted_by, state]
 CharterEntry         = [entry_id, section, mode ∈ {mechanical, review, judged, advisory},
-                        statement, threshold, source]
+                        statement, threshold, provenance]           \* provenance: a list of Provenance, non-empty for a proposed entry
+
+\* intake                                                         ONBOARD §1; TRUST
+Provenance           = [source, content_digest,
+                        trust_label ∈ {UNTRUSTED_REPOSITORY_CONTENT, UNTRUSTED_ISSUE_OR_PR_TEXT, INTERVIEW_ANSWER}]
+SourcedValue         = [value_digest, provenance]                     \* provenance: a non-empty list of Provenance
+IntakeWrite          = [command_uid, principal, client, target_kind, target_uid, expected_revision,
+                        attributes]                                  \* attributes: field → SourcedValue
+ProposalAcceptance   = [intake_uid, intake_revision, proposal_set_digest, principal,
+                        accepts ∈ {context_configuration, plan_proposal}]   \* a charter revision: AcceptCharterRevision
 
 \* judgment                                                       THESIS I-8
 Decision             = [uid, question_class, evidence_digest, eligible_set_digest, selected,
@@ -195,6 +204,14 @@ ComputeEffectiveCharter     union of the context and project entries; a conflict
 DenyCharterViolation        mechanical entry: broker refusal before effect, or the candidate ineligible at the checkpoint
 ApplyTightenedLaw           new or tightened law: in force at once for the broker and for evidence; fresh capsule at the next continuation, the old one revoked
 AskJudgedQuestion           violates above the threshold → candidate blocked, Finding opened; any other answer or none → the review backstop alone
+
+\* intake (admission and the Intake controller)
+AdmitIntakeWrite            intake-submitter identity: intake kinds in proposal state only; refuses an attribute without provenance, a Charter entry with any provenance entry not INTERVIEW_ANSWER, a proposal other than the configuration that references an Intake in the intake namespace, and every accept
+VerifyRepositoryBinding     condition ForgeVerified on a PROPOSED Repository only on an authenticated forge-adapter answer matching it
+VerifyBriefDigest           over the stored content, or the forge adapter's answer for a path at a commit
+ProposeIntake               Intake CAPTURED → PROPOSED only when every held proposal is valid, every named repository ForgeVerified and every brief digest verified; any new or revised held proposal returns it to CAPTURED
+AcceptProposal              from PROPOSED only, pinned to the Intake revision and proposal-set digest: by the principal ONBOARD §1 step 6 names for it: a context configuration creates the WorkContext, ends the intake-namespace Intake ACCEPTED and creates its bound successor in the context namespace; a plan proposal creates the Plan and moves its projects and repositories to ADOPTED
+RejectIntake                by the principal who may accept that Intake (ONBOARD §1 step 6) only; rejects every proposal it holds in proposal state
 
 \* scope, identity, fencing, continuation
 IssueScopeCapsule · CanonicalizeScopeCheck · DenyOutOfScopeAction · DetectOutOfScopeAtCheckpoint
@@ -274,6 +291,8 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 - F-31 Every `Decision.selected` is a member of the eligible set computed before the question; no decision grants credential, scope, budget, acceptance or merge; an absent judge takes the conservative branch and widens nothing.
 - F-41 *Charter authority.* Only a human principal accepts a charter revision or any of its entries; a model output never promotes a candidate entry; no law is waived, and no agent grants a waiver.
 - F-42 *Block-only judgment.* A `judged` answer can only block: "violates" above the entry's threshold blocks the candidate and opens a `Finding`; "complies" satisfies nothing the `review` backstop has not; an outage or abstention leaves the backstop as the only check, never a pass.
+- F-43 *Proposal authority.* An accept of a context configuration or a plan proposal, and an `intake reject`, commits only from the principal ONBOARD §1 step 6 names for it, never from the intake-submitter identity; each commits only at the `Intake` revision and proposal-set digest it pins, and a plan accept only from `PROPOSED`; the intake-submitter identity commits nothing but intake kinds in proposal state, and nothing it writes is canonical before an accept.
+- F-44 *Provenance and binding.* Every attribute the intake-submitter identity writes carries at least one provenance entry with a source, a content digest and a trust label, and every provenance entry of a `Charter` entry it writes is `INTERVIEW_ANSWER`; an `Intake` is `PROPOSED` only while every repository it names is `ForgeVerified` and every brief digest is verified; a `Repository` is `ADOPTED` only by a plan accept of an `Intake` that was `PROPOSED` with it `ForgeVerified`.
 
 **I-9 Ledger** — F-32 A terminal `TaskRun` whose `record_deadline` has passed has `expected_records.outcome` and `.usage` each `RECORDED` or `GAP`, and no `TaskRun` is counted by any outcome or cost computation while either is `PENDING`; a `CENSORED` receipt carries `min(reservation ceiling, rate-card bound)` and counts at it; an `UNKNOWN` reservation stays held.
 
@@ -307,6 +326,8 @@ A check is vacuous unless removing a guard produces a counterexample. Each varia
 | continuation keeping its capsule after a law was tightened | F-40 |
 | charter revision accepted by an agent principal | F-41 |
 | a `judged` "complies" satisfying the `review` backstop | F-42 |
+| an accept admitted from the intake-submitter identity | F-43 |
+| an `Intake` reaching `PROPOSED` with a repository lacking a forge-adapter answer | F-44 |
 
 ## 6. Conditional liveness
 
