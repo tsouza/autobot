@@ -1,0 +1,117 @@
+# The M0 artifact-store fixture: one MinIO server in `autobot-artifact-store`, applied by
+# `just artifact-store-up` after namespace.yaml and after it has created the Secret
+# `minio-credentials` (MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, MINIO_KMS_SECRET_KEY).
+# The image is pinned by digest; `autobot_devtools::artifact_store` refuses any manifest here
+# whose image is not.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: autobot-artifact-store
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: autobot
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: autobot-artifact-store
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: autobot
+spec:
+  replicas: 1
+  # One writer of the volume at a time.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/part-of: autobot
+    spec:
+      automountServiceAccountToken: false
+      # Only the worker labelled and tainted for the store in deploy/kind/cluster.yaml.
+      nodeSelector:
+        autobot/role: artifact-store
+      tolerations:
+        - key: autobot/role
+          operator: Equal
+          value: artifact-store
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: minio
+          image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          args: [server, /data, --address, ":9000", --console-address, ":9001", --certs-dir, /tmp/certs]
+          envFrom:
+            - secretRef:
+                name: minio-credentials
+          env:
+            - name: HOME
+              value: /tmp
+            - name: MC_CONFIG_DIR
+              value: /tmp/mc
+            # The `local` alias of the bundled mc client, which `just artifact-store-up` runs
+            # through `kubectl exec` to configure and inspect the bucket.
+            - name: MC_HOST_local
+              value: http://$(MINIO_ROOT_USER):$(MINIO_ROOT_PASSWORD)@127.0.0.1:9000
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: s3
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: autobot-artifact-store
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: autobot
+spec:
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3

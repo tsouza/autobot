@@ -1,0 +1,81 @@
+# The pods of `just artifact-store-check`, applied after workspace-probe-namespace.yaml and after
+# the check has created the Secret `store-client` (MC_HOST_store). `writer` uploads one object
+# named after its own UID to the store through the store's Service and exits; `intruder` asks
+# for the store's node without tolerating its taint.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: writer
+  namespace: autobot-workspace-probe
+  labels:
+    app.kubernetes.io/name: workspace-probe
+    app.kubernetes.io/part-of: autobot
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: writer
+      image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+      command: [sh, -c, 'printf "%s\n" "$POD_NAMESPACE" | mc pipe "store/artifacts/workspace-probe/$POD_UID"']
+      envFrom:
+        - secretRef:
+            name: store-client
+      env:
+        - name: MC_CONFIG_DIR
+          value: /tmp/mc
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir: {}
+---
+# A workspace pod that asks for the store's node and does not tolerate its taint: it must stay
+# unscheduled.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: intruder
+  namespace: autobot-workspace-probe
+  labels:
+    app.kubernetes.io/name: workspace-probe
+    app.kubernetes.io/part-of: autobot
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  nodeSelector:
+    autobot/role: artifact-store
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: intruder
+      image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+      command: ["true"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
