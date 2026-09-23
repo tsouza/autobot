@@ -26,7 +26,7 @@ Laws are absolute: a law changes only through a new revision of this charter, an
 | Id | Law | Mode | Threshold |
 |---|---|---|---|
 | L-1 | The project is never presented in comparison with another project. Another project may be cited only as a reference for a specific decision, never as a competitor. | `judged` | 0.8 |
-| L-2 | Committed content — code, comments, tests, fixtures, documentation, commit messages and pull request text — names no maintainer account and no local tooling. | `judged` | 0.9 |
+| L-2 | Committed content — code, comments, tests, fixtures, documentation, commit messages and pull request text — names no maintainer account and no local tooling. | `review` | |
 | L-3 | Committed content names no internal review process. | `judged` | 0.9 |
 | L-4 | `main` changes only through pull requests that pass every required check, including a review verdict bound to the pull request's head. | `mechanical` | |
 | L-5 | No required check depends on a model, an API key or a secret. | `review` | |
@@ -46,7 +46,7 @@ Laws are absolute: a law changes only through a new revision of this charter, an
 
 | Id | Convention | Mode | Threshold |
 |---|---|---|---|
-| C-1 | Work items, findings, worktrees, branches and the pull request title and description follow [CONTRIBUTING](CONTRIBUTING.md). | `judged` | 0.8 |
+| C-1 | Work items, findings, worktrees, branches and the pull request title and description follow [CONTRIBUTING](CONTRIBUTING.md). | `review` | |
 | C-2 | Reviews follow the checklist in [AGENTS.md](AGENTS.md): only blocking findings fail a verdict. | `review` | |
 | C-3 | A document describes what the thing is; its rationale goes to a companion `XXX.background.md` when that reaches both floors in CONTRIBUTING, and stays inline otherwise. | `review` | |
 | C-4 | The Rust toolchain is pinned in `rust-toolchain.toml` and kept at the latest stable release. | `advisory` | |
