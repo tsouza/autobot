@@ -8,11 +8,20 @@ fn run_value(line: &str) -> Option<&str> {
     key.strip_prefix("run:").map(str::trim)
 }
 
+/// Shell syntax that chains, pipes, backgrounds or substitutes commands.
+const SHELL_CONTROL: [&str; 5] = [";", "|", "&", "`", "$("];
+
+/// Whether `value` is one `just …` command with no other command beside it.
+fn is_single_just(value: &str) -> bool {
+    (value.starts_with("just ") || value == "just")
+        && !SHELL_CONTROL.iter().any(|op| value.contains(op))
+}
+
 /// The `run:` steps in `text` that are not a single `just …` command.
 fn offending_steps(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(run_value)
-        .filter(|value| !(value.starts_with("just ") || *value == "just"))
+        .filter(|value| !is_single_just(value))
         .map(str::to_owned)
         .collect()
 }
@@ -40,4 +49,25 @@ fn raw_multiline_and_non_just_steps_are_found() {
         vec!["rustup toolchain install", "|", "cargo test"]
     );
     assert!(offending_steps("      - run: just toolchain\n").is_empty());
+    assert!(offending_steps("      - run: just label-gate \"$PR\"\n").is_empty());
+}
+
+#[test]
+fn just_steps_chained_with_shell_commands_are_found() {
+    let chained = [
+        "just ci && cargo test",
+        "just ci || cargo test",
+        "just ci; rustup toolchain install",
+        "just x | sh",
+        "just ci & cargo test",
+        "just ci `cargo test`",
+        "just ci $(cargo test)",
+    ];
+    for value in chained {
+        assert_eq!(
+            offending_steps(&format!("      - run: {value}\n")),
+            vec![value],
+            "{value}"
+        );
+    }
 }
