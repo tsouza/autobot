@@ -111,9 +111,12 @@ pub const VOCABULARY: &[&str] = &[
     "PAUSE",
     "QUIESCE",
     "SUPERSEDE",
+    "FAIL",
+    "CANCEL",
     "KILL_SWITCH",
     "ADJUDICATE_OPERATION",
     "ADJUDICATE_CONFLICT",
+    "EXCEPTION",
     // Enumerated schema values that are not lifecycle states.
     "DOMAIN",
     "CONTROL",
@@ -151,6 +154,7 @@ pub const VOCABULARY: &[&str] = &[
     "ON_TRACK",
     "DRIFT_RISK",
     "DRIFTED",
+    "STUCK",
     "COMPROMISED",
     "INSUFFICIENT_EVIDENCE",
     // Extension-gate states named but not printed in a core document.

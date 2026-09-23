@@ -1,4 +1,5 @@
 use super::*;
+use crate::digest::{control_digest, digest, domain_digest};
 use crate::profile::{ControlRing, Profile};
 use crate::status::StatusEnvelope;
 use crate::types::{
@@ -31,7 +32,7 @@ fn uid(s: &str) -> Uid {
 fn origin() -> Origin {
     Origin {
         create_receipt_uid: uid("create-a"),
-        input_digest: fields_digest("spec"),
+        input_digest: digest("spec").expect("digest"),
         context_uid: uid("ctx"),
     }
 }
@@ -198,8 +199,8 @@ fn domain_commit_writes_the_slot_and_only_the_domain_fields() {
     assert_eq!(slot.expected_revision.get(), 0);
     assert_eq!(slot.proposed_revision.get(), 1);
     assert_eq!(slot.control_revision_at_commit.get(), 3);
-    assert_eq!(slot.before_digest, fields_digest("d0"));
-    assert_eq!(slot.after_digest, fields_digest("d1"));
+    assert_eq!(slot.before_digest, domain_digest(&before).expect("digest"));
+    assert_eq!(slot.after_digest, domain_digest(&after).expect("digest"));
     assert_eq!(slot.state, crate::status::PendingCommitState::Occupied);
     let audit = &slot.audit_envelope;
     assert_eq!(audit.aggregate_uid, uid("uid-a"));
@@ -207,7 +208,7 @@ fn domain_commit_writes_the_slot_and_only_the_domain_fields() {
     assert_eq!(audit.lane, Lane::Domain);
     assert_eq!(audit.state_revision, slot.proposed_revision);
     assert_eq!(audit.control_revision.get(), 3);
-    assert_eq!(audit.state_digest, fields_digest("d1"));
+    assert_eq!(audit.state_digest, slot.after_digest);
     assert_eq!(audit.actor, "controller".parse().expect("principal"));
     assert_eq!(audit.event_type, "Hold");
     assert_eq!(
@@ -261,16 +262,86 @@ fn control_commit_appends_a_receipt_and_preserves_the_domain_side() {
     assert_eq!(receipt.control_uid, uid("c1"));
     assert_eq!(receipt.control_revision.get(), 1);
     assert_eq!(receipt.commit_sequence.get(), 3);
-    assert_eq!(receipt.before_control_digest, fields_digest("c0"));
-    assert_eq!(receipt.after_control_digest, fields_digest("c1"));
+    assert_eq!(
+        receipt.before_control_digest,
+        control_digest(&before).expect("digest")
+    );
+    assert_eq!(
+        receipt.after_control_digest,
+        control_digest(&after).expect("digest")
+    );
     assert_eq!(receipt.audit_envelope.state_revision.get(), 2);
     let audit = &receipt.audit_envelope;
     assert_eq!(audit.aggregate_uid, uid("uid-a"));
     assert_eq!(audit.commit_sequence, receipt.commit_sequence);
     assert_eq!(audit.lane, Lane::Control);
     assert_eq!(audit.control_revision, receipt.control_revision);
-    assert_eq!(audit.state_digest, fields_digest("c1"));
+    assert_eq!(audit.state_digest, receipt.after_control_digest);
     assert_eq!(audit.actor, receipt.principal);
+}
+
+/// The status `transition` writes when it commits at `pin` on `before`.
+fn commit_once(pin: Pin, transition: Apply, before: &Status) -> Status {
+    let mut p = commit(pin, transition);
+    expect_op(&mut p);
+    p.resume(StoreResult::Object(boxed(1, Some(before.clone()))))
+        .expect("read");
+    written(expect_op(&mut p)).0
+}
+
+#[test]
+fn a_slot_digest_is_the_canonical_digest_of_the_domain_text_and_the_state_revision() {
+    let after = commit_once(domain_pin(0), set_domain, &status(true));
+    let slot = after.envelope.pending_commit.expect("slot");
+    let at = |revision: u64| {
+        digest(&serde_json::json!({"domain": "d1", "state_revision": revision})).expect("digest")
+    };
+    assert_eq!(slot.after_digest, at(1));
+    assert_ne!(slot.after_digest, at(2));
+    assert_eq!(
+        slot.before_digest,
+        digest(&serde_json::json!({"domain": "d0", "state_revision": 0})).expect("digest")
+    );
+}
+
+#[test]
+fn the_same_domain_text_at_another_state_revision_has_another_digest() {
+    let first = commit_once(domain_pin(0), set_domain, &status(true));
+    let mut later = status(true);
+    later.envelope.state_revision = StateRevision::new(1).expect("rev");
+    let second = commit_once(domain_pin(1), set_domain, &later);
+    let digest_of = |s: Status| s.envelope.pending_commit.expect("slot").after_digest;
+    assert_eq!(first.domain, second.domain);
+    assert_ne!(digest_of(first), digest_of(second));
+}
+
+#[test]
+fn a_control_receipt_digest_is_the_canonical_digest_of_the_control_text_and_revision() {
+    let after = commit_once(
+        Pin::Revision(LaneRevision::Control(ControlRevision::ZERO)),
+        set_control,
+        &status(true),
+    );
+    let ring = after.envelope.control_receipt_ring.expect("ring");
+    let receipt = ring.entries().last().expect("receipt");
+    let at = |control: &str, revision: u64| {
+        digest(&serde_json::json!({"control": control, "control_revision": revision}))
+            .expect("digest")
+    };
+    assert_eq!(receipt.before_control_digest, at("c0", 0));
+    assert_eq!(receipt.after_control_digest, at("c1", 1));
+}
+
+#[test]
+fn each_lane_s_commit_leaves_the_other_lane_s_digest() {
+    let before = status(true);
+    let control_pin = Pin::Revision(LaneRevision::Control(ControlRevision::ZERO));
+    let after_control = commit_once(control_pin, set_control, &before);
+    assert_eq!(domain_digest(&after_control), domain_digest(&before));
+    assert_ne!(control_digest(&after_control), control_digest(&before));
+    let after_domain = commit_once(domain_pin(0), set_domain, &before);
+    assert_eq!(control_digest(&after_domain), control_digest(&before));
+    assert_ne!(domain_digest(&after_domain), domain_digest(&before));
 }
 
 #[test]
@@ -441,7 +512,7 @@ fn create_finding_another_origin_or_an_empty_name_after_exists_creates_nothing()
     p.resume(StoreResult::AlreadyExists).expect("exists");
     expect_op(&mut p);
     let mut other = object(1, None);
-    other.origin.input_digest = fields_digest("other");
+    other.origin.input_digest = digest("other").expect("digest");
     p.resume(StoreResult::Object(Box::new(other.clone())))
         .expect("read");
     assert_eq!(expect_done(&mut p), CreateOutcome::Taken(Box::new(other)));

@@ -7,7 +7,8 @@
 //! disconnect the operation is `OUTCOME_UNKNOWN`, and reconciliation proves definitive
 //! non-application only through [`ProviderAdapter::lookup`] or through deduplication by
 //! [`ProviderAdapter::send`] of the same `operation_key`, and only where the operation's
-//! [`ProviderCapability`] declares it.
+//! [`ProviderCapability`] declares it. A rate-limit answer proves non-application only where
+//! the capability declares its rate-limit answers authoritative.
 //!
 //! Choices this module makes where the design is open:
 //!
@@ -23,11 +24,12 @@
 //!   send that lacks the source and base heads its capability requires. The broker refuses both
 //!   before any send (KERNEL §3.3); the adapter's refusal is a second fence, not the first.
 //! - A rate-limited send is [`SendError::RateLimited`], not a transport fault: the provider
-//!   answered that it did not take the request. Whether that answer proves nothing was applied
-//!   is decided in #390: only when the provider's declared capability says its rate-limit
-//!   answers are authoritative; otherwise the send is treated as an unknown outcome. This
-//!   module reports the answer and claims neither.
-//! - `COMPENSATED` has no contract yet (#318): this module offers no compensation call.
+//!   answered that it did not take the request. The answer claims non-application exactly
+//!   when the operation's capability declares `rate_limit_authoritative`; any other
+//!   rate-limit answer proves nothing and the broker treats it like a timeout (KERNEL §3.3).
+//! - `COMPENSATED` is an outcome a human adjudication of an `UNRESOLVED` operation records
+//!   with evidence of compensation outside AutoBot (KERNEL §3.3): AutoBot sends no
+//!   compensating effect, so this module offers no compensation call.
 
 mod contract;
 
@@ -77,6 +79,8 @@ pub struct ProviderCapability {
     pub requires_head_base: bool,
     /// The operation can be validated without being applied.
     pub supports_dry_run: bool,
+    /// A rate-limit answer to a send proves the provider applied nothing (KERNEL §3.3).
+    pub rate_limit_authoritative: bool,
     /// How an operation in `RECONCILING` is resolved.
     pub reconciliation_method: ReconciliationMethod,
     /// The adapter is qualified for this operation; an unqualified operation is never sent.
@@ -196,9 +200,13 @@ pub enum SendError {
     MissingHeadBase,
     /// The provider answered that it is rate limiting the caller and did not take the request.
     /// Unlike a transport fault this is an answer: the provider says it did not take the
-    /// request. Whether that proves nothing was applied depends on the provider's capability
-    /// (#390).
-    RateLimited,
+    /// request.
+    RateLimited {
+        /// The answer proves the provider applied nothing. It is true exactly when the
+        /// operation's capability declares `rate_limit_authoritative`; otherwise the send
+        /// is treated like a timeout (KERNEL §3.3).
+        proves_non_application: bool,
+    },
     /// The request may or may not have reached the provider.
     Transport(TransportFault),
 }

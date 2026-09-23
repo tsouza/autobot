@@ -24,7 +24,7 @@ Kubernetes custom resources are the source of truth. A Rust operator reconciles 
 Cost pulls toward weak models; safety pulls toward strong ones. The principle: **quality is a constraint, cost is the objective.**
 
 - A task's **consequence class** — `REVERSIBLE` → `COMPATIBILITY_RISK` → `SECURITY_OR_DATA_INTEGRITY` — sets a **floor on the worker tier**. A charter entry can raise the floor; a typed-question judgment can only raise it, never lower it.
-- **Reviewers are never routed below the fixed review tier** and are never the worker's model or session. Review is always present, so minimizing worker cost is minimizing total cost.
+- **Reviewers are never routed below the review tier fixed for the consequence class** and are never the worker's session. A reviewer on the worker's model is recorded as correlated, and a correlated review satisfies required review only for `REVERSIBLE` work. Review is always present, so minimizing worker cost is minimizing total cost.
 - The router minimizes expected total cost **above the floor**, and every review, repair and escalation cost is attributed to the strategy that caused it. A strategy that is cheap up front and expensive to repair is an expensive strategy.
 
 ## Invariants the core exists to make true
@@ -42,7 +42,7 @@ Every core document states which of these it serves. A mechanism with no invaria
 | **I-7 Projection** | The forge is never the source of truth; a remote object is a projection of a canonical record, and remote text cannot change an accepted contract. |
 | **I-8 Judgment** | A model output never grants authority, scope, budget or acceptance; a semantic judgment selects only from a deterministically computed eligible set, and its absence widens no permission. |
 | **I-9 Ledger** | Every outcome and every cost lands in the canonical ledger or becomes a visible, linked gap; nothing silently leaves a denominator. |
-| **I-10 Economics** | Quality is a constraint — consequence-class worker floor, fixed-tier independent review — and cost is the objective. |
+| **I-10 Economics** | Quality is a constraint — consequence-class worker floor, fixed-tier review by a session other than the worker's — and cost is the objective. |
 
 Liveness is never promised unconditionally. Every "eventually" in the design is conditional on a named bound with an explicit degraded terminal state.
 

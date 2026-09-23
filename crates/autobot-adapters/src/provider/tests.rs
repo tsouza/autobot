@@ -19,6 +19,8 @@ enum Break {
     HidesLostAck,
     RateLimitAsTimeout,
     AppliesWhenRateLimited,
+    ClaimsNonApplicationUnauthoritatively,
+    WithholdsAuthoritativeNonApplication,
 }
 
 fn name<T: std::str::FromStr>(s: &str) -> T
@@ -38,6 +40,7 @@ fn cap(operation: &str, flags: [bool; 5], method: ReconciliationMethod) -> Provi
         supports_remote_marker: marker,
         requires_head_base: head_base,
         supports_dry_run: dry_run,
+        rate_limit_authoritative: false,
         reconciliation_method: method,
         qualified: true,
     }
@@ -47,8 +50,10 @@ fn cap(operation: &str, flags: [bool; 5], method: ReconciliationMethod) -> Provi
 fn mixed() -> Vec<ProviderCapability> {
     let mut unqualified = cap("merge", [false; 5], ReconciliationMethod::HumanAdjudication);
     unqualified.qualified = false;
+    let mut authoritative = cap("comment", [true; 5], ReconciliationMethod::ProviderLookup);
+    authoritative.rate_limit_authoritative = true;
     vec![
-        cap("comment", [true; 5], ReconciliationMethod::ProviderLookup),
+        authoritative,
         cap("label", [false; 5], ReconciliationMethod::HumanAdjudication),
         cap(
             "push",
@@ -112,7 +117,10 @@ impl ProviderAdapter for Double {
             return Err(SendError::Unqualified);
         }
         let heads = req.source_head.is_some() && req.base_head.is_some();
-        if cap.is_some_and(|c| c.requires_head_base) && !heads && !self.is(Break::IgnoresHeads) {
+        if cap.as_ref().is_some_and(|c| c.requires_head_base)
+            && !heads
+            && !self.is(Break::IgnoresHeads)
+        {
             return Err(SendError::MissingHeadBase);
         }
         match self.fault.take() {
@@ -134,7 +142,15 @@ impl ProviderAdapter for Double {
                 if self.is(Break::AppliesWhenRateLimited) {
                     self.apply(req);
                 }
-                Err(SendError::RateLimited)
+                let authoritative = cap.is_some_and(|c| c.rate_limit_authoritative);
+                let proves_non_application = if authoritative {
+                    !self.is(Break::WithholdsAuthoritativeNonApplication)
+                } else {
+                    self.is(Break::ClaimsNonApplicationUnauthoritatively)
+                };
+                Err(SendError::RateLimited {
+                    proves_non_application,
+                })
             }
             None => Ok(self.apply(req)),
         }
@@ -262,6 +278,14 @@ fn each_broken_double_fails_its_rule() {
             Break::AppliesWhenRateLimited,
             ProviderRule::RateLimitReported,
         ),
+        (
+            Break::ClaimsNonApplicationUnauthoritatively,
+            ProviderRule::RateLimitAuthority,
+        ),
+        (
+            Break::WithholdsAuthoritativeNonApplication,
+            ProviderRule::RateLimitAuthority,
+        ),
     ];
     for (broken, rule) in cases {
         assert_breaks(&run(&mut Harness::new(Some(broken))), &rule);
@@ -330,7 +354,14 @@ fn a_capability_reconciles_only_by_what_it_supports() {
 fn only_refusals_are_before_send() {
     assert!(SendError::Unqualified.before_send());
     assert!(SendError::MissingHeadBase.before_send());
-    assert!(!SendError::RateLimited.before_send());
+    for proves_non_application in [false, true] {
+        assert!(
+            !SendError::RateLimited {
+                proves_non_application
+            }
+            .before_send()
+        );
+    }
     assert!(!SendError::Transport(TransportFault::Timeout).before_send());
     assert!(!SendError::Transport(TransportFault::Disconnect).before_send());
 }

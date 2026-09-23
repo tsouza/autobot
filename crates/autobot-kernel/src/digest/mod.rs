@@ -97,7 +97,7 @@
 //! - KERNEL §1 reads an absent control field as its initial value, and creating a keyed entry
 //!   leaves the control digest unchanged. The digest reads the serde form, so a kind whose
 //!   entries are created with a control field at its initial value serializes that value as
-//!   absent for the two to agree.
+//!   absent for the two to agree, which [`check_initial_entry`] checks for one entry.
 //! - [`operation_key`] is the digest of the array `[installation_lineage, aggregate_uid,
 //!   committed_revision, effect_index, payload_digest]`, the design's order. The
 //!   `installation_lineage` is the one a pending slot's intent holds in place of its key, and
@@ -127,7 +127,7 @@ pub use name::{
 use crate::fields::{FieldClass, FieldClasses};
 use crate::status::{AuditEnvelope, SlotEffectIntent};
 use crate::types::{Digest, StateRevision, Uid};
-use cbor::Value;
+use cbor::{Identity, Value};
 use serde::Serialize;
 use sha2::Sha256;
 use std::fmt;
@@ -155,6 +155,9 @@ pub enum EncodeError {
     /// A serialized value does not have the shape its declaration implies; the payload is its
     /// path.
     Shape(String),
+    /// A keyed entry at its initial values serializes a control field; the payload is the
+    /// field's serialized name.
+    InitialControl(String),
     /// A `Serialize` implementation failed.
     Custom(String),
 }
@@ -170,6 +173,12 @@ impl fmt::Display for EncodeError {
                 write!(f, "`{p}` folds to the name of another declared field")
             }
             Self::Shape(p) => write!(f, "`{p}` does not have its declared shape"),
+            Self::InitialControl(n) => {
+                write!(
+                    f,
+                    "`{n}` is a control field serialized at its initial value"
+                )
+            }
             Self::Custom(m) => f.write_str(m),
         }
     }
@@ -197,10 +206,9 @@ fn value_digest(value: &Value) -> Result<Digest, EncodeError> {
     Ok(sha256(ENCODING_VERSION, &value.encode()?))
 }
 
-/// The digest of an identity value, at [`IDENTITY_VERSION`]. Identity values hold text,
-/// integers, `null` and arrays only, which always encode.
-fn identity_digest(value: &Value) -> Digest {
-    sha256(IDENTITY_VERSION, &value.encode().unwrap_or_default())
+/// The digest of an identity value, at [`IDENTITY_VERSION`].
+fn identity_digest(value: &Identity) -> Digest {
+    sha256(IDENTITY_VERSION, &value.encode())
 }
 
 /// The RFC 8949 core deterministic CBOR encoding of `value`'s serde form.
@@ -253,6 +261,29 @@ pub fn control_digest<S: Serialize + FieldClasses>(status: &S) -> Result<Digest,
     class_digest(status, FieldClass::Control)
 }
 
+/// Checks that `entry`, an entry of a keyed status map with every control field at its
+/// initial value, serializes no control field (KERNEL §1, keyed entries).
+///
+/// A domain commit creates such an entry by writing its domain fields only, and the control
+/// digest must not change; since the digest reads the serde form, that holds exactly when the
+/// initial entry serializes no control field. A kind calls this on each keyed entry type it
+/// declares, with the entry as it is created.
+///
+/// # Errors
+///
+/// [`EncodeError::InitialControl`] naming the first control field `entry` serializes, and the
+/// errors of [`control_digest`] for an `entry` that does not follow the fields `E` declares.
+pub fn check_initial_entry<E: Serialize + FieldClasses>(entry: &E) -> Result<(), EncodeError> {
+    match project::project::<E>(&cbor::to_value(entry)?, FieldClass::Control)? {
+        Value::Map(fields) => match fields.into_iter().next() {
+            None => Ok(()),
+            Some((Value::Text(name), _)) => Err(EncodeError::InitialControl(name)),
+            Some(_) => Err(EncodeError::Shape(String::new())),
+        },
+        _ => Err(EncodeError::Shape(String::new())),
+    }
+}
+
 fn class_digest<S: Serialize + FieldClasses>(
     status: &S,
     class: FieldClass,
@@ -272,12 +303,12 @@ pub fn operation_key(
     effect_index: u32,
     payload_digest: &Digest,
 ) -> Digest {
-    identity_digest(&Value::Array(vec![
-        Value::Text(installation_lineage.to_owned()),
-        Value::Text(aggregate_uid.as_str().to_owned()),
-        Value::Uint(committed_revision.get()),
-        Value::Uint(effect_index.into()),
-        Value::Text(payload_digest.to_string()),
+    identity_digest(&Identity::Array(vec![
+        Identity::Text(installation_lineage.to_owned()),
+        Identity::Text(aggregate_uid.as_str().to_owned()),
+        Identity::Uint(committed_revision.get()),
+        Identity::Uint(effect_index.into()),
+        Identity::Text(payload_digest.to_string()),
     ]))
 }
 

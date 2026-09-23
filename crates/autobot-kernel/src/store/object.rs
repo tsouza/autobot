@@ -1,9 +1,11 @@
 //! The objects the store holds: keys, resource versions, origins and status.
 
+use crate as autobot_kernel;
 use crate::error::ValueError;
+use crate::fields::FieldClasses;
 use crate::status::StatusEnvelope;
 use crate::types::{Digest, Lane, LaneRevision, Namespace, ObjectName, Uid};
-use sha2::Sha256;
+use serde::Serialize;
 use std::fmt;
 use std::str::FromStr;
 
@@ -90,13 +92,22 @@ pub struct Origin {
 /// `domain` and `control` are the kind's encoded domain and control fields. The store moves
 /// them as opaque text and never interprets them; a domain commit replaces `domain` only and a
 /// control commit `control` only.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// The status declares its field partition like any kind's: the envelope's classes, `domain`
+/// as a domain field and `control` as a control field. Its domain and control digests are
+/// therefore [`domain_digest`](crate::digest::domain_digest) and
+/// [`control_digest`](crate::digest::control_digest) of the status itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, FieldClasses)]
 pub struct Status {
     /// The envelope: revisions, commit sequence, pending slot and control-receipt ring.
+    #[serde(flatten)]
+    #[field(nested)]
     pub envelope: StatusEnvelope,
     /// The encoded domain fields.
+    #[field(domain)]
     pub domain: String,
     /// The encoded control fields; empty on an aggregate without a control lane.
+    #[field(control)]
     pub control: String,
 }
 
@@ -126,13 +137,6 @@ pub struct Object {
     pub spec: String,
     /// The status; absent until the owning controller initializes it.
     pub status: Option<Status>,
-}
-
-/// The domain or control digest of encoded fields: the SHA-256 of their text.
-#[must_use]
-pub fn fields_digest(fields: &str) -> Digest {
-    use sha2::Digest as _;
-    Digest::from_bytes(Sha256::digest(fields.as_bytes()).into())
 }
 
 impl From<u64> for ResourceVersion {

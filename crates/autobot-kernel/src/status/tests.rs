@@ -69,7 +69,10 @@ fn slot() -> PendingCommit {
             effect_index: 0,
             installation_lineage: "install-a".to_owned(),
             payload_digest: digest(4),
-            provider_binding: "fake-forge".to_owned(),
+            provider_binding: ProviderBinding {
+                provider: "fake-forge".to_owned(),
+                operation: "comment".to_owned(),
+            },
             desired_outcome: "comment-posted".to_owned(),
             target_identity: "pr/7".to_owned(),
             contract_revision: "v1".to_owned(),
@@ -307,6 +310,52 @@ fn a_slot_effect_intent_is_the_formal_record_without_its_derived_key() {
     assert!(props.remove("installation_lineage"));
     props.insert("operation_key".to_owned());
     assert_eq!(props, formal);
+}
+
+/// The fields FORMAL §2 names for `provider_binding` in the comment on its line of
+/// `EffectIntentRecord`.
+fn formal_provider_binding() -> Vec<String> {
+    let line = FORMAL
+        .lines()
+        .skip_while(|l| !l.starts_with("EffectIntentRecord "))
+        .find(|l| l.trim_start().starts_with("provider_binding,"))
+        .expect("EffectIntentRecord has provider_binding");
+    let (_, comment) = line
+        .split_once("\\*")
+        .expect("provider_binding is commented");
+    let open = comment.find('[').expect("the comment names a pair");
+    let close = comment.find(']').expect("the pair closes");
+    comment[open + 1..close]
+        .split(',')
+        .map(|f| f.trim().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_slot_effect_intents_provider_binding_is_the_formal_provider_and_operation_pair() {
+    let pair = formal_provider_binding();
+    assert_eq!(pair, ["provider", "operation"]);
+    assert_eq!(formal_fields("ProviderCapability")[..2], pair[..]);
+    assert_eq!(
+        properties::<ProviderBinding>(),
+        pair.iter().cloned().collect::<BTreeSet<_>>()
+    );
+    let schema = schema_for!(SlotEffectIntent);
+    assert_eq!(
+        schema
+            .get("properties")
+            .and_then(|p| p.get("provider_binding"))
+            .and_then(|b| b.get("$ref")),
+        Some(&json!("#/$defs/ProviderBinding"))
+    );
+    let binding = ProviderBinding {
+        provider: "fake-forge".to_owned(),
+        operation: "comment".to_owned(),
+    };
+    assert_eq!(
+        serde_json::to_value(&binding).expect("serializes"),
+        json!({ "provider": "fake-forge", "operation": "comment" })
+    );
 }
 
 /// The fields of FORMAL §2 `RejectionProof` by ground, as the comment beside each line of the

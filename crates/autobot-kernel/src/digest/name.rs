@@ -1,6 +1,6 @@
 //! Deterministic object names: the lowercased kind, `-`, and 32 base32 characters of a digest.
 
-use super::cbor::Value;
+use super::cbor::Identity;
 use super::identity_digest;
 use crate::error::ValueError;
 use crate::types::{Digest, Namespace, ObjectName, Principal, Uid};
@@ -71,7 +71,7 @@ pub fn object_name(kind: &str, identity: &Digest) -> Result<ObjectName, ValueErr
 pub fn command_receipt_name(idempotency_key: &str) -> Result<ObjectName, ValueError> {
     object_name(
         "CommandReceipt",
-        &identity_digest(&Value::Text(idempotency_key.to_owned())),
+        &identity_digest(&Identity::Text(idempotency_key.to_owned())),
     )
 }
 
@@ -118,14 +118,14 @@ impl CreateIndex {
     /// client_request_key]`, an absent parent being `null`.
     #[must_use]
     pub fn digest(&self) -> Digest {
-        let text = |s: &str| Value::Text(s.to_owned());
-        identity_digest(&Value::Array(vec![
+        let text = |s: &str| Identity::Text(s.to_owned());
+        identity_digest(&Identity::Array(vec![
             text(self.context_uid.as_str()),
             text(self.principal.as_str()),
             text(&self.kind),
             self.parent_uid
                 .as_ref()
-                .map_or(Value::Null, |u| text(u.as_str())),
+                .map_or(Identity::Null, |u| text(u.as_str())),
             text(&self.client_request_key),
         ]))
     }

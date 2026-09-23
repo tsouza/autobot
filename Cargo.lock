@@ -105,6 +105,7 @@ name = "autobot-testkit"
 version = "0.0.0"
 dependencies = [
  "autobot-fakes",
+ "autobot-kernel",
 ]
 
 [[package]]
