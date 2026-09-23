@@ -2,24 +2,25 @@
 //! separation, the reconciliation-only clear and the full ring (F-4), and a hold on the
 //! control lane beside a pending domain commit with digest-verified repair.
 
-use super::harness::{
-    AGGREGATE, Driver, Effect, Fault, MemDriver, Run, aggregate, clear, commit, control_change,
-    control_pin, domain_change, list, namespace, parse, read, ring, state_pin, status,
-    write_status,
+use super::store::{
+    AGGREGATE, OnWrite, Outage, aggregate, attempt, clear, commit, control_change, control_pin,
+    domain_change, list, namespace, parse, port, read, ring, run, state_pin, status, write_status,
 };
-use super::ports::{self, DomainCommand, ReceiptState, RepairOutcome};
-use autobot_kernel::digest::event_digest;
+use autobot_kernel::digest::{control_digest, digest, domain_digest, event_digest};
 use autobot_kernel::error::RingError;
 use autobot_kernel::reducer::{
     self, CommandPins, Counters, Decision, Guards, Reducer, ReducerError, ReducerState,
     StateDigests, Transition, Versioned,
 };
 use autobot_kernel::status::{ControlReceiptState, PendingCommit, PendingCommitState};
-use autobot_kernel::store::{
-    ClearOutcome, CommitOutcome, ObjectKey, OpKind, Protocol, fields_digest,
-};
+use autobot_kernel::store::{ClearOutcome, CommitOutcome, ObjectKey, OpKind};
 use autobot_kernel::types::{
-    CommitObservation, CommitSequence, ControlRevision, Lane, LaneRevision, StateRevision, Uid,
+    CommitObservation, CommitSequence, ControlRevision, Digest, Lane, LaneRevision, StateRevision,
+    Uid,
+};
+use autobot_testkit::harness::{Driver, Run};
+use autobot_testkit::registry::g_commit::{
+    CommandsPort, DomainCommand, ReceiptState, RepairOutcome, RepairPort,
 };
 
 /// The kinds of the receipt store: command receipts and audit events.
@@ -48,13 +49,15 @@ fn command(key: &str, target: &(ObjectKey, Uid), expected: u64, input: &str) -> 
     }
 }
 
-/// The fault that kills the process right after its next status write to an aggregate.
-fn crash_after_domain_write() -> Fault {
-    Fault {
-        kind: parse(AGGREGATE),
-        op: OpKind::UpdateStatus,
-        effect: Effect::Crash,
-    }
+/// `driver`, with the process killed right after its next status write to an aggregate: the
+/// domain commit of a submitted command.
+fn crash_after_domain_write(driver: &mut dyn Driver) -> OnWrite<'_> {
+    OnWrite::crash(driver, AGGREGATE, OpKind::UpdateStatus)
+}
+
+/// The digest `result` holds; every status and input of the scenarios encodes.
+fn digest_of<E: std::fmt::Display>(result: Result<Digest, E>) -> Digest {
+    result.unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// The pending slot of `target`, which must hold one.
@@ -73,50 +76,42 @@ fn committed(slot: &PendingCommit) -> CommitObservation {
     }
 }
 
-/// Runs `protocol` to its outcome.
-fn done<O: std::fmt::Debug>(
-    driver: &mut dyn Driver,
-    mut protocol: Box<dyn Protocol<Outcome = O>>,
-) -> O {
-    super::harness::run(driver, &mut *protocol).done()
-}
-
-/// Runs `protocol` and returns how it ended.
-fn attempt<O>(driver: &mut dyn Driver, mut protocol: Box<dyn Protocol<Outcome = O>>) -> Run<O> {
-    super::harness::run(driver, &mut *protocol)
-}
-
 /// C1 submits a command and dies right after its domain commit lands, before the receipt's
 /// terminal write; C2, a new process, repairs from the slot. The command ends with exactly one
 /// `COMMITTED` receipt and one event, both rebuilt from the slot; the `PREPARED` receipt C1
 /// left was no evidence of commitment; a later commit does not erase the receipt, and a replay
 /// returns it without a second commit.
-pub(crate) fn c1_crash_then_c2_repair(driver: &mut dyn Driver) {
-    let commands = ports::commands();
-    let repair = ports::repair();
+pub(crate) fn c1_crash_then_c2_repair(driver: &mut dyn Driver, guards: &Guards) {
+    let repair = port::<RepairPort>();
+    let commands = port::<CommandsPort>();
     let target = aggregate(driver, "durable", false);
     let first = command("k-durable", &target, 0, "after-c1");
 
-    driver.arm(crash_after_domain_write());
-    assert_eq!(attempt(driver, commands.submit(&first, 0)), Run::Crashed);
+    assert_eq!(
+        attempt(
+            &mut crash_after_domain_write(driver),
+            &mut *commands.submit(&first, 0)
+        ),
+        Run::Crashed
+    );
     let c1 = slot(driver, &target.0);
     assert_eq!(c1.state, PendingCommitState::Occupied);
     assert_eq!(
-        done(driver, commands.receipt(&namespace(), "k-durable")),
+        run(driver, &mut *commands.receipt(&namespace(), "k-durable")),
         ReceiptState::Prepared
     );
 
     assert_eq!(
-        done(driver, repair.repair(&target.0, &target.1)),
+        run(driver, &mut *repair.repair(&target.0, &target.1, guards)),
         RepairOutcome::Cleared
     );
     assert_eq!(
-        done(driver, commands.receipt(&namespace(), "k-durable")),
+        run(driver, &mut *commands.receipt(&namespace(), "k-durable")),
         ReceiptState::Terminal(committed(&c1))
     );
-    let event = done(
+    let event = run(
         driver,
-        repair.event(&namespace(), &target.1, c1.commit_sequence),
+        &mut *repair.event(&namespace(), &target.1, c1.commit_sequence),
     )
     .unwrap_or_else(|| panic!("no event at commit sequence {}", c1.commit_sequence));
     assert_eq!(event.envelope, c1.audit_envelope);
@@ -127,40 +122,48 @@ pub(crate) fn c1_crash_then_c2_repair(driver: &mut dyn Driver) {
     assert_eq!(list(driver, "AutoBotEvent").len(), 1);
 
     let second = command("k-later", &target, 1, "later");
-    let later = done(driver, commands.submit(&second, 0));
+    let later = run(driver, &mut *commands.submit(&second, 0));
     assert!(
         matches!(later, CommitObservation::Committed { .. }),
         "{later:?}"
     );
     assert_eq!(
-        done(driver, commands.receipt(&namespace(), "k-durable")),
+        run(driver, &mut *commands.receipt(&namespace(), "k-durable")),
         ReceiptState::Terminal(committed(&c1))
     );
-    assert_eq!(done(driver, commands.submit(&first, 0)), committed(&c1));
+    assert_eq!(
+        run(driver, &mut *commands.submit(&first, 0)),
+        committed(&c1)
+    );
     assert_eq!(status(driver, &target.0).envelope.state_revision, state(2));
 }
 
 /// While a slot is `OCCUPIED` no other domain commit lands; while the receipt store is down,
 /// repair runs any number of rounds and never clears the slot, so the barrier keeps holding;
 /// once the store is back, repair verifies and clears the slot and the next commit lands.
-pub(crate) fn receipt_barrier_until_verified(driver: &mut dyn Driver) {
-    let commands = ports::commands();
-    let repair = ports::repair();
+pub(crate) fn receipt_barrier_until_verified(driver: &mut dyn Driver, guards: &Guards) {
+    let repair = port::<RepairPort>();
+    let commands = port::<CommandsPort>();
     let target = aggregate(driver, "barrier-repair", false);
 
-    driver.arm(crash_after_domain_write());
     let first = command("k-first", &target, 0, "first");
-    assert_eq!(attempt(driver, commands.submit(&first, 0)), Run::Crashed);
+    assert_eq!(
+        attempt(
+            &mut crash_after_domain_write(driver),
+            &mut *commands.submit(&first, 0)
+        ),
+        Run::Crashed
+    );
     let held = slot(driver, &target.0);
 
-    for kind in RECEIPT_STORE {
-        driver.outage(&parse(kind), true);
-    }
     for _ in 0..3 {
-        assert_eq!(
-            attempt(driver, repair.repair(&target.0, &target.1)),
-            Run::Stalled
-        );
+        assert!(matches!(
+            attempt(
+                &mut Outage::new(driver, &RECEIPT_STORE),
+                &mut *repair.repair(&target.0, &target.1, guards)
+            ),
+            Run::Stalled(_)
+        ));
         assert_ne!(slot(driver, &target.0).state, PendingCommitState::Cleared);
         let blocked = commit(
             driver,
@@ -170,24 +173,21 @@ pub(crate) fn receipt_barrier_until_verified(driver: &mut dyn Driver) {
             domain_change("command-next", "next"),
         );
         assert_eq!(
-            blocked.done(),
+            blocked,
             CommitOutcome::Barrier {
                 slot_command: held.command_uid.clone()
             }
         );
         assert_eq!(status(driver, &target.0).domain, "first");
     }
-    for kind in RECEIPT_STORE {
-        driver.outage(&parse(kind), false);
-    }
 
     assert_eq!(
-        done(driver, repair.repair(&target.0, &target.1)),
+        run(driver, &mut *repair.repair(&target.0, &target.1, guards)),
         RepairOutcome::Cleared
     );
     assert_eq!(slot(driver, &target.0).state, PendingCommitState::Cleared);
     assert_eq!(
-        done(driver, commands.receipt(&namespace(), "k-first")),
+        run(driver, &mut *commands.receipt(&namespace(), "k-first")),
         ReceiptState::Terminal(committed(&held))
     );
     let next = commit(
@@ -198,7 +198,7 @@ pub(crate) fn receipt_barrier_until_verified(driver: &mut dyn Driver) {
         domain_change("command-next", "next"),
     );
     assert_eq!(
-        next.done(),
+        next,
         CommitOutcome::Committed {
             revision: LaneRevision::State(state(2)),
             commit_sequence: seq(2)
@@ -210,6 +210,7 @@ pub(crate) fn receipt_barrier_until_verified(driver: &mut dyn Driver) {
 /// the barrier while the slot is `OCCUPIED` and while it is `REPAIRING`, and writes nothing.
 pub(crate) fn domain_commit_waits_on_the_barrier(driver: &mut dyn Driver) {
     let target = aggregate(driver, "barrier", false);
+    let initial = status(driver, &target.0);
     let first = commit(
         driver,
         &target,
@@ -218,7 +219,7 @@ pub(crate) fn domain_commit_waits_on_the_barrier(driver: &mut dyn Driver) {
         domain_change("command-a", "a"),
     );
     assert_eq!(
-        first.done(),
+        first,
         CommitOutcome::Committed {
             revision: LaneRevision::State(state(1)),
             commit_sequence: seq(1)
@@ -229,8 +230,13 @@ pub(crate) fn domain_commit_waits_on_the_barrier(driver: &mut dyn Driver) {
     assert_eq!(installed.state, PendingCommitState::Occupied);
     assert_eq!(installed.expected_revision, state(0));
     assert_eq!(installed.proposed_revision, state(1));
-    assert_eq!(installed.before_digest, fields_digest("initial"));
-    assert_eq!(installed.after_digest, fields_digest("a"));
+    assert_eq!(installed.before_digest, digest_of(domain_digest(&initial)));
+    let committed_status = status(driver, &target.0);
+    assert_eq!(committed_status.domain, "a");
+    assert_eq!(
+        installed.after_digest,
+        digest_of(domain_digest(&committed_status))
+    );
 
     for slot_state in [PendingCommitState::Occupied, PendingCommitState::Repairing] {
         let object = read(driver, &target.0).unwrap_or_else(|| panic!("{} is missing", target.0));
@@ -247,7 +253,7 @@ pub(crate) fn domain_commit_waits_on_the_barrier(driver: &mut dyn Driver) {
             domain_change("command-b", "b"),
         );
         assert_eq!(
-            blocked.done(),
+            blocked,
             CommitOutcome::Barrier {
                 slot_command: parse("command-a")
             }
@@ -261,7 +267,7 @@ pub(crate) fn domain_commit_waits_on_the_barrier(driver: &mut dyn Driver) {
 /// were, so the domain digest still equals the slot's after-digest. A control transition that
 /// writes the domain is refused on both paths that could carry it: the store's control commit
 /// and the reducer's lane-partition check.
-pub(crate) fn lane_separation(driver: &mut dyn Driver) {
+pub(crate) fn lane_separation(driver: &mut dyn Driver, guards: &Guards) {
     let target = aggregate(driver, "lanes", true);
     let pending = commit(
         driver,
@@ -270,7 +276,7 @@ pub(crate) fn lane_separation(driver: &mut dyn Driver) {
         state_pin(0),
         domain_change("command-a", "a"),
     );
-    assert!(matches!(pending.done(), CommitOutcome::Committed { .. }));
+    assert!(matches!(pending, CommitOutcome::Committed { .. }));
     let before = status(driver, &target.0);
 
     let hold = commit(
@@ -281,7 +287,7 @@ pub(crate) fn lane_separation(driver: &mut dyn Driver) {
         control_change("hold-1", "HOLD"),
     );
     assert_eq!(
-        hold.done(),
+        hold,
         CommitOutcome::Committed {
             revision: LaneRevision::Control(
                 ControlRevision::new(1).unwrap_or_else(|e| panic!("{e}"))
@@ -307,7 +313,7 @@ pub(crate) fn lane_separation(driver: &mut dyn Driver) {
     assert_eq!(after.control, "HOLD");
     let slot = slot(driver, &target.0);
     assert_eq!(slot.state, PendingCommitState::Occupied);
-    assert_eq!(fields_digest(&after.domain), slot.after_digest);
+    assert_eq!(digest_of(domain_digest(&after)), slot.after_digest);
     let ring_entries = after
         .envelope
         .control_receipt_ring
@@ -318,8 +324,14 @@ pub(crate) fn lane_separation(driver: &mut dyn Driver) {
     let receipt = &ring_entries[0];
     assert_eq!(receipt.control_uid, parse::<Uid>("hold-1"));
     assert_eq!(receipt.commit_sequence, seq(2));
-    assert_eq!(receipt.before_control_digest, fields_digest("RUNNING"));
-    assert_eq!(receipt.after_control_digest, fields_digest("HOLD"));
+    assert_eq!(
+        receipt.before_control_digest,
+        digest_of(control_digest(&before))
+    );
+    assert_eq!(
+        receipt.after_control_digest,
+        digest_of(control_digest(&after))
+    );
     assert_eq!(receipt.audit_envelope.lane, Lane::Control);
     assert_eq!(receipt.state, ControlReceiptState::Unpublished);
 
@@ -330,7 +342,7 @@ pub(crate) fn lane_separation(driver: &mut dyn Driver) {
         control_pin(1),
         domain_change("hold-2", "forged"),
     );
-    assert_eq!(crossing.done(), CommitOutcome::LaneMismatch);
+    assert_eq!(crossing, CommitOutcome::LaneMismatch);
     assert_eq!(status(driver, &target.0), after);
 
     let probe = Versioned {
@@ -344,10 +356,10 @@ pub(crate) fn lane_separation(driver: &mut dyn Driver) {
     let pins = CommandPins {
         command_uid: parse("hold-3"),
         principal: parse("controller"),
-        input_digest: fields_digest("hold-3"),
+        input_digest: digest_of(digest("hold-3")),
         expected_revision: LaneRevision::Control(ControlRevision::ZERO),
     };
-    match reducer::step::<HoldReducer>(&probe, &pins, &HoldCommand::Hold, &Guards::all()) {
+    match reducer::step::<HoldReducer>(&probe, &pins, &HoldCommand::Hold, guards) {
         Ok(reducer::Step::Committed { receipt, aggregate }) => {
             let fields = receipt.fields();
             assert_eq!(fields.before_digests.domain, fields.after_digests.domain);
@@ -357,12 +369,7 @@ pub(crate) fn lane_separation(driver: &mut dyn Driver) {
         other => panic!("a hold did not commit: {other:?}"),
     }
     assert_eq!(
-        reducer::step::<HoldReducer>(
-            &probe,
-            &pins,
-            &HoldCommand::HoldWritingDomain,
-            &Guards::all()
-        ),
+        reducer::step::<HoldReducer>(&probe, &pins, &HoldCommand::HoldWritingDomain, guards),
         Err(ReducerError::LanePartition {
             lane: Lane::Control
         })
@@ -380,7 +387,7 @@ pub(crate) fn clearing_is_reconciliation_only(driver: &mut dyn Driver) {
         state_pin(0),
         domain_change("command-a", "a"),
     );
-    assert!(matches!(pending.done(), CommitOutcome::Committed { .. }));
+    assert!(matches!(pending, CommitOutcome::Committed { .. }));
     let before = status(driver, &target.0);
 
     assert_eq!(clear(driver, &target, "command-a"), ClearOutcome::Cleared);
@@ -410,10 +417,7 @@ pub(crate) fn full_ring_refuses(driver: &mut dyn Driver) {
             control_pin(i),
             control_change(name, name),
         );
-        assert!(
-            matches!(outcome.done(), CommitOutcome::Committed { .. }),
-            "{name}"
-        );
+        assert!(matches!(outcome, CommitOutcome::Committed { .. }), "{name}");
     }
     let full = status(driver, &target.0);
 
@@ -426,7 +430,7 @@ pub(crate) fn full_ring_refuses(driver: &mut dyn Driver) {
     );
     let unpublished = usize::try_from(capacity).unwrap_or(usize::MAX);
     assert_eq!(
-        refused.done(),
+        refused,
         CommitOutcome::Ring(RingError::Full { unpublished })
     );
     let after = status(driver, &target.0);
@@ -445,39 +449,41 @@ pub(crate) fn full_ring_refuses(driver: &mut dyn Driver) {
 /// unresolved; repair cannot finish until the store is back, then verifies the domain digest
 /// against the slot and clears it. On an aggregate whose domain fields no longer match the
 /// slot's after-digest, repair keeps the slot.
-pub(crate) fn hold_beside_pending_commit_then_repair(driver: &mut dyn Driver) {
-    let commands = ports::commands();
-    let repair = ports::repair();
+pub(crate) fn hold_beside_pending_commit_then_repair(driver: &mut dyn Driver, guards: &Guards) {
+    let repair = port::<RepairPort>();
+    let commands = port::<CommandsPort>();
     let target = aggregate(driver, "hold", true);
 
-    driver.arm(crash_after_domain_write());
     let pending = command("k-pending", &target, 0, "pending");
-    assert_eq!(attempt(driver, commands.submit(&pending, 0)), Run::Crashed);
+    assert_eq!(
+        attempt(
+            &mut crash_after_domain_write(driver),
+            &mut *commands.submit(&pending, 0)
+        ),
+        Run::Crashed
+    );
     let held = slot(driver, &target.0);
 
-    for kind in RECEIPT_STORE {
-        driver.outage(&parse(kind), true);
-    }
     let hold = commit(
-        driver,
+        &mut Outage::new(driver, &RECEIPT_STORE),
         &target,
         "hold-1",
         control_pin(0),
         control_change("hold-1", "HOLD"),
     );
-    assert!(matches!(hold.done(), CommitOutcome::Committed { .. }));
+    assert!(matches!(hold, CommitOutcome::Committed { .. }));
     assert_eq!(slot(driver, &target.0).after_digest, held.after_digest);
-    assert_eq!(
-        attempt(driver, repair.repair(&target.0, &target.1)),
-        Run::Stalled
-    );
+    assert!(matches!(
+        attempt(
+            &mut Outage::new(driver, &RECEIPT_STORE),
+            &mut *repair.repair(&target.0, &target.1, guards)
+        ),
+        Run::Stalled(_)
+    ));
     assert_ne!(slot(driver, &target.0).state, PendingCommitState::Cleared);
-    for kind in RECEIPT_STORE {
-        driver.outage(&parse(kind), false);
-    }
 
     assert_eq!(
-        done(driver, repair.repair(&target.0, &target.1)),
+        run(driver, &mut *repair.repair(&target.0, &target.1, guards)),
         RepairOutcome::Cleared
     );
     let repaired = status(driver, &target.0);
@@ -487,20 +493,25 @@ pub(crate) fn hold_beside_pending_commit_then_repair(driver: &mut dyn Driver) {
     );
     assert_eq!(repaired.control, "HOLD");
     assert_eq!(
-        done(driver, commands.receipt(&namespace(), "k-pending")),
+        run(driver, &mut *commands.receipt(&namespace(), "k-pending")),
         ReceiptState::Terminal(committed(&held))
     );
 
     let drifted = aggregate(driver, "drifted", true);
-    driver.arm(crash_after_domain_write());
     let lost = command("k-drifted", &drifted, 0, "committed");
-    assert_eq!(attempt(driver, commands.submit(&lost, 0)), Run::Crashed);
+    assert_eq!(
+        attempt(
+            &mut crash_after_domain_write(driver),
+            &mut *commands.submit(&lost, 0)
+        ),
+        Run::Crashed
+    );
     let object = read(driver, &drifted.0).unwrap_or_else(|| panic!("{} is missing", drifted.0));
     let mut foreign = object.status.clone().unwrap_or_else(|| panic!("no status"));
     foreign.domain = "foreign".to_owned();
     write_status(driver, &object, foreign);
     assert_eq!(
-        done(driver, repair.repair(&drifted.0, &drifted.1)),
+        run(driver, &mut *repair.repair(&drifted.0, &drifted.1, guards)),
         RepairOutcome::DigestMismatch
     );
     assert_ne!(slot(driver, &drifted.0).state, PendingCommitState::Cleared);
@@ -516,8 +527,8 @@ struct Probe {
 impl ReducerState for Probe {
     fn digests(&self) -> StateDigests {
         StateDigests {
-            domain: fields_digest(&self.domain),
-            control: fields_digest(&self.control),
+            domain: digest_of(digest(&self.domain)),
+            control: digest_of(digest(&self.control)),
         }
     }
 }
@@ -550,46 +561,4 @@ impl Reducer for HoldReducer {
         };
         Decision::Commit(Transition::control("CommitControlCAS", after))
     }
-}
-
-#[test]
-#[ignore = "awaiting #84"]
-fn f2_receipt_durability() {
-    c1_crash_then_c2_repair(&mut MemDriver::new());
-}
-
-#[test]
-#[ignore = "awaiting #84"]
-fn f3_receipt_barrier() {
-    receipt_barrier_until_verified(&mut MemDriver::new());
-}
-
-#[test]
-#[ignore = "awaiting #80"]
-fn domain_commit_is_held_by_an_unresolved_slot() {
-    domain_commit_waits_on_the_barrier(&mut MemDriver::new());
-}
-
-#[test]
-#[ignore = "awaiting #81"]
-fn f4_lane_separation() {
-    lane_separation(&mut MemDriver::new());
-}
-
-#[test]
-#[ignore = "awaiting #82"]
-fn slot_clearing_changes_only_reconciliation_fields() {
-    clearing_is_reconciliation_only(&mut MemDriver::new());
-}
-
-#[test]
-#[ignore = "awaiting #81"]
-fn full_ring_refuses_the_next_control_transition() {
-    full_ring_refuses(&mut MemDriver::new());
-}
-
-#[test]
-#[ignore = "awaiting #84"]
-fn hold_beside_a_pending_domain_commit_with_verified_repair() {
-    hold_beside_pending_commit_then_repair(&mut MemDriver::new());
 }

@@ -1,13 +1,15 @@
 //! The projection scenario (F-6): audit events delivered out of order and with a conflicting
 //! digest.
 
-use super::harness::{
-    Driver, MemDriver, aggregate, clear, commit, domain_change, profile, state_pin, status,
-};
-use super::ports::{self, Delivery, Event, Gap, Integrity, ProjectionView};
+use super::store::{aggregate, clear, commit, domain_change, port, profile, state_pin, status};
 use autobot_kernel::digest::event_digest;
+use autobot_kernel::reducer::Guards;
 use autobot_kernel::store::{ClearOutcome, CommitOutcome};
 use autobot_kernel::types::{CommitSequence, Uid};
+use autobot_testkit::harness::Driver;
+use autobot_testkit::registry::g_commit::{
+    Delivery, Event, Gap, Integrity, ProjectionView, ProjectionsPort,
+};
 
 /// The events of `count` domain commits on a new aggregate `name`, in commit order: each is
 /// rebuilt from the audit envelope its commit put in the slot. Returns the aggregate's UID.
@@ -23,7 +25,7 @@ fn events(driver: &mut dyn Driver, name: &str, count: u64) -> (Uid, Vec<Event>) 
             state_pin(revision),
             domain_change(&command, &command),
         );
-        assert!(matches!(outcome.done(), CommitOutcome::Committed { .. }));
+        assert!(matches!(outcome, CommitOutcome::Committed { .. }));
         let slot = status(driver, &target.0)
             .envelope
             .pending_commit
@@ -49,9 +51,9 @@ fn sequences(n: u64) -> Vec<CommitSequence> {
 /// second 1 changes nothing, and 2 closes the gap and releases 3, so events apply in commit
 /// order. A same-identity event with another digest is rejected and marks the projection's
 /// integrity, and a gap that is never filled stays visible until declared permanent.
-pub(crate) fn out_of_order_and_conflicting(driver: &mut dyn Driver) {
+pub(crate) fn out_of_order_and_conflicting(driver: &mut dyn Driver, guards: &Guards) {
     let buffer = profile().values().objects.late_event_buffer.get();
-    let mut projection = ports::projections().projection(buffer);
+    let mut projection = port::<ProjectionsPort>().projection(buffer, guards);
     let (uid, delivered) = events(driver, "projected", 3);
     let [first, second, third] = &delivered[..] else {
         panic!("three events expected, got {}", delivered.len());
@@ -99,10 +101,4 @@ pub(crate) fn out_of_order_and_conflicting(driver: &mut dyn Driver) {
     assert_eq!(projection.view(&gapped).gap, Gap::Permanent);
     assert!(!projection.view(&gapped).applied.contains(&sequences(2)[1]));
     assert_eq!(projection.view(&uid), quarantined);
-}
-
-#[test]
-#[ignore = "awaiting #85"]
-fn f6_projection_order() {
-    out_of_order_and_conflicting(&mut MemDriver::new());
 }

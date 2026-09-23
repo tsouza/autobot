@@ -1,13 +1,13 @@
 //! The create scenarios (F-5): a create whose acknowledgement is lost, and deletion or
 //! recreation before the create receipt is terminal.
 
-use super::harness::{
-    AGGREGATE, Driver, Effect, Fault, MemDriver, Run, key, list, namespace, parse, read, run,
-};
-use super::ports::{self, CreateCommand, CreateResult, DeleteResult};
+use super::store::{AGGREGATE, OnWrite, attempt, key, list, namespace, parse, port, read, run};
 use autobot_kernel::digest::{CreateIndex, digest};
+use autobot_kernel::store::conformance::Fault;
 use autobot_kernel::store::{Object, OpKind};
 use autobot_kernel::types::{RejectionProof, Uid};
+use autobot_testkit::harness::{Driver, Run};
+use autobot_testkit::registry::g_commit::{CreateCommand, CreateResult, CreatesPort, DeleteResult};
 
 /// The create command for client request key `request` with `spec`.
 fn create_command(request: &str, spec: &str) -> CreateCommand {
@@ -31,24 +31,15 @@ fn only_object(driver: &mut dyn Driver) -> Object {
     objects.remove(0)
 }
 
-/// A fault on the next create of the target kind.
-fn on_create(effect: Effect) -> Fault {
-    Fault {
-        kind: parse(AGGREGATE),
-        op: OpKind::Create,
-        effect,
-    }
-}
-
 /// A create whose acknowledgement is lost resolves by reading its name to the one object it
 /// made, whose origin metadata equals its receipt; a retry resolves to the same object, and a
 /// changed payload under the same index conflicts instead of creating a second one.
 pub(crate) fn lost_create_ack(driver: &mut dyn Driver) {
-    let creates = ports::creates();
+    let creates = port::<CreatesPort>();
     let command = create_command("request-1", "spec-1");
 
-    driver.arm(on_create(Effect::LostAck));
-    let created = run(driver, &mut *creates.create(&command)).done();
+    let mut lost_ack = OnWrite::new(driver, AGGREGATE, OpKind::Create, Fault::LostCreateAck);
+    let created = run(&mut lost_ack, &mut *creates.create(&command));
     let object = only_object(driver);
     assert_eq!(
         created,
@@ -74,14 +65,14 @@ pub(crate) fn lost_create_ack(driver: &mut dyn Driver) {
     );
     assert_eq!(object.origin.context_uid, parse::<Uid>("context"));
 
-    assert_eq!(run(driver, &mut *creates.create(&command)).done(), created);
+    assert_eq!(run(driver, &mut *creates.create(&command)), created);
     let changed = create_command("request-1", "spec-2");
     let bound = RejectionProof::ReplayConflict {
         existing_receipt_uid: receipt.uid.clone(),
         bound_digest: object.origin.input_digest,
     };
     assert_eq!(
-        run(driver, &mut *creates.create(&changed)).done(),
+        run(driver, &mut *creates.create(&changed)),
         CreateResult::Rejected(bound)
     );
     assert_eq!(only_object(driver), object);
@@ -91,34 +82,25 @@ pub(crate) fn lost_create_ack(driver: &mut dyn Driver) {
 /// target is refused while that receipt is not terminal, and C2's replay of the create
 /// resolves to the same object instead of creating another.
 pub(crate) fn no_delete_or_recreate_before_terminal_receipt(driver: &mut dyn Driver) {
-    let creates = ports::creates();
+    let creates = port::<CreatesPort>();
     let command = create_command("request-2", "spec");
 
-    driver.arm(on_create(Effect::Crash));
-    assert_eq!(run(driver, &mut *creates.create(&command)), Run::Crashed);
+    let mut crash = OnWrite::crash(driver, AGGREGATE, OpKind::Create);
+    assert_eq!(
+        attempt(&mut crash, &mut *creates.create(&command)),
+        Run::Crashed
+    );
     let object = only_object(driver);
 
     let mut delete = creates.delete(&object.key, &object.uid, &parse("writer"));
-    assert_eq!(run(driver, &mut *delete).done(), DeleteResult::Refused);
+    assert_eq!(run(driver, &mut *delete), DeleteResult::Refused);
     assert_eq!(only_object(driver), object);
 
     assert_eq!(
-        run(driver, &mut *creates.create(&command)).done(),
+        run(driver, &mut *creates.create(&command)),
         CreateResult::Created {
             uid: object.uid.clone()
         }
     );
     assert_eq!(only_object(driver).uid, object.uid);
-}
-
-#[test]
-#[ignore = "awaiting #86"]
-fn f5_create_identity() {
-    lost_create_ack(&mut MemDriver::new());
-}
-
-#[test]
-#[ignore = "awaiting #86"]
-fn no_delete_or_recreate_before_a_terminal_create_receipt() {
-    no_delete_or_recreate_before_terminal_receipt(&mut MemDriver::new());
 }

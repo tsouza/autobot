@@ -1,21 +1,20 @@
 //! The replay-identity scenario (F-1): duplicate, different-payload, different-principal and
 //! expired commands.
 
-use super::harness::{
-    Driver, MemDriver, aggregate, key, namespace, parse, profile, read, run, status,
-};
-use super::ports::{self, DomainCommand, ReceiptState};
+use super::store::{aggregate, key, namespace, parse, port, profile, read, run, status};
 use autobot_kernel::digest::{command_receipt_name, digest};
 use autobot_kernel::types::{
     CommitObservation, CommitSequence, LaneRevision, RejectionProof, StateRevision,
 };
+use autobot_testkit::harness::Driver;
+use autobot_testkit::registry::g_commit::{CommandsPort, DomainCommand, ReceiptState};
 
 /// One command commits once. Within the replay window its replay returns the original
 /// receipt and never commits again; the same key with another payload or another principal
 /// is rejected with the receipt and digest the key is bound to; after the window the replay
 /// is `REPLAY_EXPIRED`. None of them changes the target or rewrites the receipt.
 pub(crate) fn replay_identity(driver: &mut dyn Driver) {
-    let commands = ports::commands();
+    let commands = port::<CommandsPort>();
     let target = aggregate(driver, "replay", false);
     let once = DomainCommand {
         idempotency_key: "k-once".to_owned(),
@@ -27,7 +26,7 @@ pub(crate) fn replay_identity(driver: &mut dyn Driver) {
         issued_day: 0,
     };
     let submit = |driver: &mut dyn Driver, command: &DomainCommand, today: u32| {
-        run(driver, &mut *commands.submit(command, today)).done()
+        run(driver, &mut *commands.submit(command, today))
     };
 
     let first = submit(driver, &once, 0);
@@ -77,13 +76,7 @@ pub(crate) fn replay_identity(driver: &mut dyn Driver) {
 
     assert_eq!(status(driver, &target.0), committed);
     assert_eq!(
-        run(driver, &mut *commands.receipt(&namespace(), "k-once")).done(),
+        run(driver, &mut *commands.receipt(&namespace(), "k-once")),
         ReceiptState::Terminal(first)
     );
-}
-
-#[test]
-#[ignore = "awaiting #83"]
-fn f1_idempotency() {
-    replay_identity(&mut MemDriver::new());
 }

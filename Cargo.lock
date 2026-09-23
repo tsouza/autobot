@@ -73,7 +73,9 @@ name = "autobot-kernel"
 version = "0.0.0"
 dependencies = [
  "autobot-devtools",
+ "autobot-fakes",
  "autobot-kernel-derive",
+ "autobot-testkit",
  "proptest",
  "schemars",
  "serde",

@@ -3,11 +3,10 @@
 //! The G-COMMIT fixture group of `docs/design/AUTOBOT-M0-AND-GATES.md` §3: the commit, receipt
 //! and audit properties F-1 … F-6 of `docs/design/AUTOBOT-FORMAL-SURFACE.md` §4.
 //!
-//! Every scenario is a function over `&mut dyn Driver` ([`harness::Driver`]) and names no
-//! concrete store; each test runs one scenario on the in-memory [`harness::MemDriver`], and a
-//! driver for the Kubernetes store replays the same functions. The bounds a scenario depends
-//! on, the ring capacity, the replay window and the late-event buffer, are read from the M0
-//! profile, never restated.
+//! The store-agnostic scripts are in [`scenarios`]; each fixture test of [`tests`] runs one of
+//! them on the in-memory store of `autobot-fakes`, and one more test checks the store faults
+//! the scripts position themselves. The bounds a scenario depends on, the ring capacity, the
+//! replay window and the late-event buffer, are read from the M0 profile, never restated.
 //!
 //! | Test | Scenario | Awaiting |
 //! |---|---|---|
@@ -27,33 +26,28 @@
 //! `OCCUPIED` `WorkContext` slot belongs to G-DISPATCH.
 //!
 //! FORMAL §5 variants of the group, for the guard-removal report, with the
-//! [`GuardId`](autobot_kernel::reducer::GuardId) of each guard:
+//! [`GuardId`](autobot_kernel::reducer::GuardId) of each guard and the surface the scenario
+//! passes its [`Guards`](autobot_kernel::reducer::Guards) to:
 //!
-//! | Guard removed | `GuardId` | Must violate | Violating test |
-//! |---|---|---|---|
-//! | clearing a pending slot on elapsed time | `SlotClearedOnVerification` | F-3 | `f3_receipt_barrier` |
-//! | control commit touching a domain field | `ControlFieldsOnly` | F-4 | `f4_lane_separation` |
-//! | projection applying a later event first | `ProjectionInOrder` | F-6 | `f6_projection_order` |
+//! | Guard removed | `GuardId` | Must violate | Violating test | Guards reach |
+//! |---|---|---|---|---|
+//! | clearing a pending slot on elapsed time | `SlotClearedOnVerification` | F-3 | `f3_receipt_barrier` | `Repair::repair` |
+//! | control commit touching a domain field | `ControlFieldsOnly` | F-4 | `f4_lane_separation` | `reducer::step` |
+//! | projection applying a later event first | `ProjectionInOrder` | F-6 | `f6_projection_order` | `Projections::projection` |
 //!
 //! The variant "takeover as one CAS, or `ResumeManager` before `AdvanceManagerEpoch`"
 //! (`ManagerTakeoverSequence`) must violate F-4 or F-11; its scenario is G-MANAGER's.
 //!
 //! Gaps in what the scenarios can reach today:
 //!
-//! - No testkit harness or reducer registry exists yet (#79), and this crate's tests have no
-//!   dependency on `autobot-testkit` or `autobot-fakes`. [`harness::MemDriver`] is the group's
-//!   own in-memory store, and [`ports`] resolves every port to a failure naming the task it
-//!   awaits.
 //! - The command path, slot repair and audit publication, projections and the create command
-//!   path have no kernel API yet. Their scenarios are written against the ports in [`ports`],
-//!   the smallest surfaces the scenarios need in the kernel's own types.
+//!   path have no kernel API yet; their scenarios resolve the ports of
+//!   `autobot_testkit::registry::g_commit`, and each implementation task registers its port.
 //! - The store has no delete operation, so the delete scenario observes only a refused delete.
 //! - The design names no condition type for the ring-full degraded condition, so the ring
 //!   scenario checks the refusal and the kept receipts, not a condition.
+//! - The in-memory store has no per-kind outage; the receipt-store outage is the scenarios'
+//!   own [`Outage`](scenarios::store::Outage) driver over whichever driver they run on.
 
-mod commands;
-mod commit;
-mod create;
-mod harness;
-mod ports;
-mod projection;
+pub(crate) mod scenarios;
+mod tests;

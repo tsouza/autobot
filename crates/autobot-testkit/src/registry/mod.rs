@@ -12,6 +12,8 @@
 //!   that message until the implementation's registration is installed; installing it changes
 //!   nothing in the scenario.
 //!
+//! The ports of each fixture group are declared in its own module: [`g_commit`].
+//!
 //! Choices this module makes where the design is open:
 //!
 //! - Registration is a line in `installed.rs`, not a declaration in the implementing crate:
@@ -26,6 +28,7 @@
 //!   with [`Unresolved::Duplicate`], so the conflict is reported by the scenario that needs
 //!   the port, and a self-test checks that the installed registry has none.
 
+pub mod g_commit;
 mod installed;
 
 use std::any::{Any, TypeId};
