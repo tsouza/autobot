@@ -4,8 +4,9 @@
 //! A profile is a versioned TOML document. [`Profile::parse`] reads it from a `&str`: this
 //! module reads no file, so the operator and the tests supply the text, for M0 the contents of
 //! `profiles/m0.toml`. The document's `version` key is its schema version; this module accepts
-//! [`SCHEMA_VERSION`] only, and a document with an unknown key, a missing key or a zero where a
-//! [`NonZeroU32`](std::num::NonZeroU32) is expected is refused. Each design area is one TOML
+//! [`SCHEMA_VERSION`] only, and a document with an unknown key, a missing key, a zero where a
+//! [`NonZeroU32`](std::num::NonZeroU32) is expected, or an empty or repeating
+//! [`ApiBudget::reserved_control`] is refused. Each design area is one TOML
 //! table ([`ProfileValues`] lists them) and each key ends in its unit, in the unit the design
 //! states it in (`window_days`, `entry_max_kib`, `max_active_work_secs`).
 //!
@@ -26,7 +27,9 @@
 //! - The liveness bounds of `docs/design/AUTOBOT-FORMAL-SURFACE.md` §6 are fixture constants
 //!   chosen per fixture, so they are parameters of `autobot-testkit`, not profile values.
 //! - [`schemars::JsonSchema`] is derived for the types a custom resource spec carries: the
-//!   [`Sandbox`] constraints, which an execution profile pins, and [`ProfileDigest`].
+//!   [`Sandbox`] constraints, which an execution profile pins, and [`ProfileDigest`]. The
+//!   `Sandbox` schema has no `additionalProperties`, which a Kubernetes structural schema
+//!   does not allow beside `properties`, although parsing refuses unknown keys.
 
 mod digest;
 mod values;

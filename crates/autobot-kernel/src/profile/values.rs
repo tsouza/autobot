@@ -1,7 +1,7 @@
 //! The typed values of a profile, one struct per profile area.
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use schemars::{JsonSchema, Schema};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
@@ -127,7 +127,8 @@ pub struct ApiBudget {
     pub burst: NonZeroU32,
     /// Keys the work queue holds.
     pub queue_keys: NonZeroU32,
-    /// Work classes with capacity reserved in the queue.
+    /// Work classes with capacity reserved in the queue: at least one, each listed once.
+    #[serde(deserialize_with = "distinct_nonempty")]
     pub reserved_control: BTreeSet<ControlWork>,
 }
 
@@ -210,6 +211,7 @@ pub struct DefectMaturity {
 /// Sandbox constraints of a worker runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = allow_unknown_in_schema)]
 #[non_exhaustive]
 pub struct Sandbox {
     /// Operating system of the runtime.
@@ -277,4 +279,33 @@ pub enum SandboxModelApi {
     Disabled,
     /// Optional, only through a metered proxy that cannot reach production endpoints.
     MeteredProxy,
+}
+
+/// Reads a set that must be non-empty and list each member once, rather than merging repeats.
+fn distinct_nonempty<'de, D, T>(deserializer: D) -> Result<BTreeSet<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Ord,
+{
+    let items = Vec::<T>::deserialize(deserializer)?;
+    let len = items.len();
+    let set: BTreeSet<T> = items.into_iter().collect();
+    if set.is_empty() {
+        Err(serde::de::Error::custom("the set is empty"))
+    } else if set.len() != len {
+        Err(serde::de::Error::custom(
+            "the set lists a member more than once",
+        ))
+    } else {
+        Ok(set)
+    }
+}
+
+/// Drops the `additionalProperties: false` that `deny_unknown_fields` puts in the JSON schema.
+///
+/// A Kubernetes structural schema may not combine `additionalProperties` with `properties`.
+/// Parsing still refuses unknown keys; only the schema a custom resource embeds is relaxed, and
+/// admission of unknown fields is left to the API server's pruning.
+fn allow_unknown_in_schema(schema: &mut Schema) {
+    schema.remove("additionalProperties");
 }

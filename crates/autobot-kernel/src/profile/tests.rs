@@ -142,6 +142,11 @@ fn refuses_documents_that_do_not_match_the_schema() {
         ("os = \"linux\"", "os = \"windows\""),
         ("[\"hold\",", "[\"drain\","),
         ("[registers]", "[registers"),
+        ("[\"hold\", \"fence\", \"receipt-repair\"]", "[]"),
+        (
+            "[\"hold\", \"fence\", \"receipt-repair\"]",
+            "[\"hold\", \"hold\"]",
+        ),
     ] {
         let result = Profile::parse(&edited(from, to));
         assert!(
@@ -202,4 +207,22 @@ fn json_schema_of_the_digest_is_a_patterned_string() {
     let schema = schemars::schema_for!(ProfileDigest);
     assert_eq!(schema.get("type"), Some(&"string".into()));
     assert_eq!(schema.get("pattern"), Some(&"^sha256:[0-9a-f]{64}$".into()));
+}
+
+#[test]
+fn sandbox_json_schema_is_structural() {
+    let schema = schemars::schema_for!(Sandbox);
+    let json = schema.as_value().to_string();
+    assert!(!json.contains("additionalProperties"), "{json}");
+    let properties = schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .map(|o| o.keys().count());
+    assert_eq!(properties, Some(9), "{json}");
+}
+
+#[test]
+fn sandbox_parsing_still_refuses_unknown_keys() {
+    let result = Profile::parse(&edited("devices = false", "devices = false\ngpus = 1"));
+    assert!(matches!(result, Err(ProfileError::Toml(_))), "{result:?}");
 }

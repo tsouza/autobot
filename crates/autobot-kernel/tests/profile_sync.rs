@@ -2,18 +2,29 @@
 //! `docs/design/AUTOBOT-M0-AND-GATES.md` §2.
 //!
 //! Each row of the table must contain the phrases [`claims`] renders from the profile for that
-//! area, the table must have exactly the areas [`claims`] names, and every number in a row, in
-//! digits or as a word, must lie inside one of those phrases. A failure means the two disagree;
-//! the design is the authority, so the fix is a `design` finding that decides which one is
-//! wrong, not an edit of either side to match.
+//! area, each running to the end of a clause ([`find_clause`]); the table must have exactly the
+//! areas [`claims`] names; and every number in a row, meaning every digit run, even one joined to
+//! letters, outside the names in [`NAMES`], and the words one to ten, must lie inside one of those
+//! phrases. A failure means the two disagree; the design is the authority, so the fix is a
+//! `design` finding that decides which one is wrong, not an edit of either side to match.
 
 use autobot_devtools::markdown::{section, tables};
-use autobot_kernel::profile::{ControlWork, Profile, ProfileValues, SandboxModelApi};
+use autobot_kernel::profile::{
+    ControlWork, Profile, ProfileValues, SandboxEgress, SandboxImage, SandboxModelApi,
+    SandboxNetwork, SandboxOs,
+};
 use std::collections::BTreeSet;
 
 const DESIGN: &str = include_str!("../../../docs/design/AUTOBOT-M0-AND-GATES.md");
 const M0: &str = include_str!("../../../profiles/m0.toml");
 const SECTION: &str = "2. M0 profile";
+
+/// Words in the table that contain digits but are names, not numbers.
+const NAMES: [&str; 2] = ["M0", "S3"];
+
+/// Characters that end a clause of a table cell. A comma does not: it also separates list items,
+/// so a list rendered with fewer items would end at one.
+const SEPARATORS: [char; 3] = [';', '.', '—'];
 
 /// Number words the table may use.
 const WORDS: [&str; 10] = [
@@ -61,6 +72,14 @@ fn claims(v: &ProfileValues) -> Vec<(&'static str, Vec<String>)> {
             _ => "an unknown control class",
         })
         .collect();
+    let reserved = if reserved.is_empty() {
+        "no reserved control capacity".to_owned()
+    } else {
+        format!(
+            "reserved control capacity for {}",
+            english(&reserved, "and")
+        )
+    };
     let slow = if d.compatibility_risk == d.security_or_data_integrity {
         format!(
             "({} for `SECURITY_OR_DATA_INTEGRITY` and `COMPATIBILITY_RISK`)",
@@ -72,12 +91,33 @@ fn claims(v: &ProfileValues) -> Vec<(&'static str, Vec<String>)> {
             d.security_or_data_integrity, d.compatibility_risk
         )
     };
-    let closed = [
+    let mounts = [
         ("host mount", s.host_mounts),
         ("privileged container", s.privileged),
         ("device", s.devices),
     ];
-    let denied: Vec<&str> = closed.iter().filter(|c| !c.1).map(|c| c.0).collect();
+    let denied: Vec<&str> = mounts.iter().filter(|c| !c.1).map(|c| c.0).collect();
+    let os = match s.os {
+        SandboxOs::Linux => "Linux",
+        _ => "an unknown OS",
+    };
+    let image = match s.image {
+        SandboxImage::PinnedOci => "pinned OCI image",
+        _ => "an unknown image policy",
+    };
+    let network = match s.network {
+        SandboxNetwork::DefaultDeny => "default-deny network",
+        _ => "an unknown network default",
+    };
+    let egress = match s.egress {
+        SandboxEgress::BrokerOnly => "broker-only egress",
+        _ => "an unknown egress route",
+    };
+    let closed = if denied.is_empty() {
+        "host mounts, privileged containers and devices allowed".to_owned()
+    } else {
+        format!("no {}", english(&denied, "or"))
+    };
     let model_api = match s.model_api {
         SandboxModelApi::MeteredProxy => {
             "optional live model API only through a metered proxy that cannot reach production endpoints"
@@ -137,7 +177,7 @@ fn claims(v: &ProfileValues) -> Vec<(&'static str, Vec<String>)> {
                     ),
                 ),
                 format!(
-                    "{} simulated Managers and {} simulated installation identities",
+                    "{} simulated Managers and {} simulated installation identities to exercise races",
                     word(v.scale.simulated_managers),
                     word(v.scale.simulated_installation_identities),
                 ),
@@ -161,11 +201,13 @@ fn claims(v: &ProfileValues) -> Vec<(&'static str, Vec<String>)> {
         (
             "API budget",
             vec![
-                format!("{} requests/s, burst {}", a.requests_per_second, a.burst),
-                format!("queue of {} keys", a.queue_keys),
                 format!(
-                    "reserved control capacity for {}",
-                    english(&reserved, "and")
+                    "{} requests/s, burst {}, per operator process",
+                    a.requests_per_second, a.burst
+                ),
+                format!(
+                    "queue of {} keys, FIFO within priority, {reserved}",
+                    a.queue_keys
                 ),
             ],
         ),
@@ -186,12 +228,13 @@ fn claims(v: &ProfileValues) -> Vec<(&'static str, Vec<String>)> {
             "RPO / RTO",
             vec![
                 format!(
-                    "at most the uncheckpointed {} s plus {} bounded in-flight operation",
+                    "at most the uncheckpointed {} s plus {} bounded in-flight operation, with \
+                     `last_verified_checkpoint_age` and `at_risk_interval` exposed",
                     v.checkpoint.max_active_work_secs,
                     word(v.recovery.in_flight_operations),
                 ),
                 format!(
-                    "restore of a {} MiB fixture within {} minutes",
+                    "restore of a {} MiB fixture within {} minutes with healthy dependencies",
                     v.recovery.restore_fixture_mib, v.recovery.restore_within_minutes,
                 ),
             ],
@@ -224,40 +267,66 @@ fn claims(v: &ProfileValues) -> Vec<(&'static str, Vec<String>)> {
         (
             "Sandbox",
             vec![
-                "Linux, pinned OCI image, default-deny network, broker-only egress".to_owned(),
-                format!("{} writable mount", word(s.writable_mounts)),
-                if denied.is_empty() {
-                    "host mounts, privileged containers and devices allowed".to_owned()
-                } else {
-                    format!("no {}", english(&denied, "or"))
-                },
+                format!(
+                    "{os}, {image}, {network}, {egress}, {} writable mount, {closed}",
+                    word(s.writable_mounts)
+                ),
                 model_api.to_owned(),
             ],
         ),
     ]
 }
 
-/// Byte ranges of the numbers in `text`: digit runs not joined to a letter, and number words.
+/// Byte ranges of the numbers in `text`: every run of digits, wherever it stands in a word (`60`,
+/// `60s`, `x2`), except inside a name in [`NAMES`], and every number word in [`WORDS`].
 fn numbers(text: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i].is_ascii_alphanumeric() {
-            let start = i;
-            while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
-                i += 1;
-            }
-            let token = &text[start..i];
-            let digits = token.bytes().all(|b| b.is_ascii_digit());
-            if digits || WORDS.contains(&token.to_lowercase().as_str()) {
-                out.push((start, i));
-            }
-        } else {
+        if !bytes[i].is_ascii_alphanumeric() {
             i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
+            i += 1;
+        }
+        let token = &text[start..i];
+        if WORDS.contains(&token.to_lowercase().as_str()) {
+            out.push((start, i));
+        } else if !NAMES.contains(&token) {
+            let mut j = start;
+            while j < i {
+                if bytes[j].is_ascii_digit() {
+                    let run = j;
+                    while j < i && bytes[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    out.push((run, j));
+                } else {
+                    j += 1;
+                }
+            }
         }
     }
     out
+}
+
+/// Where `phrase` occurs in `cell` running to the end of a clause: it starts at the start of the
+/// cell or after a character that is not a letter or digit, and it ends at the end of the cell or
+/// before optional spaces and a clause separator in [`SEPARATORS`]. A phrase that stops short of
+/// the end of its clause, such as a list rendered with fewer items, therefore does not match.
+fn find_clause(cell: &str, phrase: &str) -> Option<usize> {
+    cell.match_indices(phrase).map(|(at, _)| at).find(|&at| {
+        let starts = cell[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let rest = cell[at + phrase.len()..].trim_start_matches(' ');
+        let ends = rest.is_empty() || rest.starts_with(SEPARATORS);
+        starts && ends
+    })
 }
 
 /// Every disagreement between `design`, a copy of the M0 design document, and `profile`.
@@ -294,7 +363,7 @@ fn disagreements(design: &str, profile: &ProfileValues) -> Vec<String> {
         };
         let mut covered = Vec::new();
         for phrase in phrases {
-            match cell.find(phrase.as_str()) {
+            match find_clause(cell, phrase) {
                 Some(at) => covered.push((at, at + phrase.len())),
                 None => out.push(format!("{area}: the table does not say `{phrase}`")),
             }
@@ -356,15 +425,21 @@ fn an_edited_value_in_the_design_is_a_disagreement() {
 
 #[test]
 fn a_value_added_to_the_design_is_a_disagreement() {
-    let found = disagreements(&edited_design("burst 20,", "burst 20, 3 retries,"), &m0());
+    let found = disagreements(
+        &edited_design(
+            "drops nothing accepted",
+            "drops nothing accepted, 3 retries",
+        ),
+        &m0(),
+    );
     assert_eq!(
         found,
         ["API budget: `3` in the table is not a profile value"]
     );
     let found = disagreements(
         &edited_design(
-            "one writable mount",
-            "one writable mount, two scratch mounts",
+            "production endpoints",
+            "production endpoints; two scratch mounts",
         ),
         &m0(),
     );
@@ -383,7 +458,8 @@ fn an_edited_phrase_in_the_design_is_a_disagreement() {
     assert_eq!(
         found,
         [
-            "Sandbox: the table does not say `Linux, pinned OCI image, default-deny network, broker-only egress`"
+            "Sandbox: the table does not say `Linux, pinned OCI image, default-deny network, broker-only egress, one writable mount, no host mount, privileged container or device`",
+            "Sandbox: `one` in the table is not a profile value",
         ]
     );
 }
@@ -412,7 +488,7 @@ fn an_edited_profile_is_a_disagreement() {
     assert_eq!(
         found,
         [
-            "API budget: the table does not say `10 requests/s, burst 25`",
+            "API budget: the table does not say `10 requests/s, burst 25, per operator process`",
             "API budget: `10` in the table is not a profile value",
             "API budget: `20` in the table is not a profile value",
         ]
@@ -425,5 +501,110 @@ fn a_missing_section_or_table_is_a_disagreement() {
     assert_eq!(
         disagreements(&renamed, &m0()),
         ["the design has no section `2. M0 profile`"]
+    );
+}
+
+#[test]
+fn a_number_glued_to_letters_is_a_disagreement() {
+    for added in ["60s", "5min", "2x", "x2", "v1beta2"] {
+        let found = disagreements(
+            &edited_design(
+                "drops nothing accepted",
+                &format!("drops nothing accepted, retries {added}"),
+            ),
+            &m0(),
+        );
+        let digits: Vec<&str> = added
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let expected: Vec<String> = digits
+            .iter()
+            .map(|d| format!("API budget: `{d}` in the table is not a profile value"))
+            .collect();
+        assert_eq!(found, expected, "added `{added}`");
+    }
+}
+
+#[test]
+fn names_with_digits_are_not_numbers() {
+    assert_eq!(numbers("an S3-compatible store during M0"), []);
+    assert_eq!(numbers("S3 at 4S3"), [(6, 7), (8, 9)]);
+}
+
+#[test]
+fn a_phrase_matches_only_a_whole_clause() {
+    let full = "queue of 500 keys, FIFO within priority, reserved control capacity for hold, fence and receipt repair";
+    let cell = format!("{full}; a full queue stops admission");
+    assert_eq!(find_clause(&cell, full), Some(0));
+    for short in [
+        "queue of 500 keys",
+        "queue of 500 keys, FIFO within priority, reserved control capacity for",
+        "queue of 500 keys, FIFO within priority, reserved control capacity for hold",
+        "queue of 500 keys, FIFO within priority, reserved control capacity for hold, fence",
+        &full[1..],
+        "queue of 50",
+    ] {
+        assert_eq!(find_clause(&cell, short), None, "`{short}` matched");
+    }
+}
+
+#[test]
+fn a_shortened_list_in_the_design_is_a_disagreement() {
+    let found = disagreements(
+        &edited_design("hold, fence and receipt repair", "hold and fence"),
+        &m0(),
+    );
+    assert_eq!(
+        found,
+        [
+            "API budget: the table does not say `queue of 500 keys, FIFO within priority, reserved control capacity for hold, fence and receipt repair`",
+            "API budget: `500` in the table is not a profile value",
+        ]
+    );
+}
+
+#[test]
+fn a_profile_with_fewer_reserved_classes_is_a_disagreement() {
+    let edited = M0.replacen(
+        "[\"hold\", \"fence\", \"receipt-repair\"]",
+        "[\"hold\", \"fence\"]",
+        1,
+    );
+    let values = match Profile::parse(&edited) {
+        Ok(p) => p.values().clone(),
+        Err(e) => panic!("{e}"),
+    };
+    assert_eq!(
+        disagreements(DESIGN, &values),
+        [
+            "API budget: the table does not say `queue of 500 keys, FIFO within priority, reserved control capacity for hold and fence`",
+            "API budget: `500` in the table is not a profile value",
+        ]
+    );
+}
+
+#[test]
+fn an_empty_or_repeating_reserved_set_is_refused() {
+    for set in ["[]", "[\"hold\", \"hold\", \"fence\", \"receipt-repair\"]"] {
+        let edited = M0.replacen("[\"hold\", \"fence\", \"receipt-repair\"]", set, 1);
+        assert!(Profile::parse(&edited).is_err(), "accepted {set}");
+    }
+}
+
+#[test]
+fn a_profile_listing_only_the_first_reserved_class_is_a_disagreement() {
+    // The rendered phrase is then a prefix of the design's clause, ending before `, fence`.
+    let edited = M0.replacen("[\"hold\", \"fence\", \"receipt-repair\"]", "[\"hold\"]", 1);
+    let values = match Profile::parse(&edited) {
+        Ok(p) => p.values().clone(),
+        Err(e) => panic!("{e}"),
+    };
+    assert_eq!(
+        disagreements(DESIGN, &values),
+        [
+            "API budget: the table does not say `queue of 500 keys, FIFO within priority, reserved control capacity for hold`",
+            "API budget: `500` in the table is not a profile value",
+        ]
     );
 }
