@@ -83,6 +83,12 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 
 - **`WorkBrief` / `Intake` / `PlanProposal`** — The immutable source document; its processing record; the mutable candidate graph whose acceptance creates the `Plan`. *(ONBOARD §1)*
 - **`Project` / `Repository`** — A logical product or initiative that may span repositories; a forge location with its own branch, CI and toolchain. Neither is a plan. *(ONBOARD §1)*
+- **`Charter` / `ProjectCharter`** — The human-authored statement of what must be true of all work in a `WorkContext`, and in one `Project`, whatever the plan: Identity, Constitution, Rules, Conventions, Vocabulary and the project's Non-goals, in immutable, digested revisions. Every project inherits its context's `Charter`; a `ProjectCharter` may only tighten it. *(ONBOARD §7; KERNEL §5, §10)*
+- **Effective charter** — The union of a project's `ProjectCharter` and the `Charter` it inherits; a conflict between two entries resolves toward the stricter one. *(ONBOARD §7)*
+- **Law / Constitution** — An absolute guardrail of a charter, and the set of them; a law changes only through a new charter revision authored by a human, is never waived and is never `advisory`. *(ONBOARD §7)*
+- **Rule / waiver** — A waivable guardrail of a charter; an exception to one is a `Decision` scoped to one plan revision or one task, with a named human approver, a reason and an expiry, visible in the `EvidenceBundle`; no agent grants one. *(ONBOARD §7)*
+- **Enforcement mode** — What each charter entry declares, chosen by its human author: `mechanical` (checked by code in the broker or at checkpoints), `review` (a violation is a blocking finding), `judged` (a block-only typed question with a `review` backstop) or `advisory` (context only). *(ONBOARD §7)*
+- **Charter pin / charter in force / charter digest** — The accepted charter revisions a plan revision pins at acceptance; those revisions strengthened by every law a later accepted revision adds or tightens; and the digest of that set, which every capsule and `EvidenceBundle` carries. Relaxing a law or changing a rule waits for the next plan revision. *(KERNEL §5)*
 - **Execution profile** — A named entry of `Repository.spec`: image, checkout, setup, build and verify commands, and the sandbox constraints (single writable mount, no additional mounts or devices, broker-only egress) a `TaskRun` pins at admission; a departure from it is a profile violation that fences the run. *(ROLES §2; ONBOARD §2; M0 §1)*
 - **`Plan` / plan revision / `PlanSnapshot`** — The accepted immutable execution contract; one immutable version of it; the immutable graph bundle of one revision. *(KERNEL §5, §10)*
 - **Activation cut** — `ActivatePlanRevision`, the register CAS `plan_authority[plan] := (revision, snapshot_digest, activation_receipt_uid, ACTIVE, plan_generation + 1)`; `Plan` and `PlanSnapshot` acknowledge it; `GraphActivationReceipt` records it. *(KERNEL §5)*
@@ -93,7 +99,7 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 
 ### Scope, identity and fencing
 
-- **`ScopeCapsule`** — The immutable assignment contract of one `TaskRun`: objective, repositories, path globs, tools, effect kinds, non-goals, limits, authorizing revisions, digest. *(ROLES §2)*
+- **`ScopeCapsule`** — The immutable assignment contract of one `TaskRun`: objective, repositories, path globs, tools, effect kinds, non-goals, limits, authorizing revisions, the charter digest with the relevant entries of the charter in force, digest. *(ROLES §2)*
 - **Scope canonicalization** — A verdict is computed on `realpath` and inode on the single writable mount, links checked at both ends, renames as delete plus create; preventive before effect, detective at every checkpoint before evidence. *(ROLES §2)*
 - **`Finding`** — A scoped discovery outside the capsule, linked *historically* to a task; never changes an active capsule. *(ROLES §2)*
 - **Consequence class / worker floor** — `REVERSIBLE`, `COMPATIBILITY_RISK`, `SECURITY_OR_DATA_INTEGRITY`; the class sets the minimum worker tier and the review requirement; policy may raise it, a judgment may only raise it. *(THESIS; ONBOARD §5)*
@@ -102,7 +108,7 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 - **`execution_epoch`** — A per-TaskRun counter advanced on fencing; part of every identity, grant and checkpoint. *(KERNEL §6)*
 - **Fence / `FenceSession`** — Epoch increment, grant and broker revocation, process stop, workspace write fence, verification, `FenceConfirmed`; tracked by the `fence_state` control field (transitions in KERNEL §10). *(KERNEL §6)*
 - **`FENCED_UNCERTAIN`** — Fence not confirmable; replacement, cleanup and privileged effects blocked. *(KERNEL §6)*
-- **Continuation / `AgentCheckpoint`** — Resumption of the same `AgentRun` (`session_sequence + 1`) from a `VERIFIED` checkpoint with the same identity, grant lineage, capsule and reservation, cumulative counters, open invocations resumed. *(KERNEL §9)*
+- **Continuation / `AgentCheckpoint`** — Resumption of the same `AgentRun` (`session_sequence + 1`) from a `VERIFIED` checkpoint with the same identity, grant lineage, capsule and reservation (a fresh capsule only for a law added or tightened since), cumulative counters, open invocations resumed. *(KERNEL §9)*
 - **Drift label** — The vocabulary of a task-local assessment: `ON_TRACK`, `DRIFT_RISK`, `DRIFTED`, `BLOCKED`, `COMPROMISED`, `INSUFFICIENT_EVIDENCE`; each has a fixed escalation. *(ROLES §1)*
 - **MicroManager** — The optional task-local guardian role; classifies a run's state and may nudge, pause, checkpoint, preserve, fence or request recovery; its absence changes no permission. *(ROLES §1)*
 
@@ -118,7 +124,7 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 
 ### Evidence and integration
 
-- **`EvidenceBundle`** — Everything an acceptance binds: candidate, base and head digests, plan and scope revisions, criteria, environment, provider runs, attestations, reviewer identity, remote generation, expiry; invalidated on any change. *(KERNEL §5)*
+- **`EvidenceBundle`** — Everything an acceptance binds: candidate, base and head digests, plan and scope revisions, charter digest and waivers, criteria, environment, provider runs, attestations, reviewer identity, remote generation, expiry; invalidated on any change. *(KERNEL §5)*
 - **Acceptance adjudication** — The recorded acceptance decision of a task or milestone, committed by the Task controller from `RECORDED` evidence bundles under deterministic acceptance policy, listing required, optional, missing, rejected and expired evidence; a no-test exception is visible as an exception and needs a human approver. *(ONBOARD §3)*
 - **Human adjudication** — The human `Intervention` (`ADJUDICATE_OPERATION`, `ADJUDICATE_CONFLICT`) that is the only exit from `UNRESOLVED` or a `WorkspaceConflict`. *(KERNEL §3.3, §7; ROLES §5)*
 - **`VerificationRun`** — Tool, CI or reviewer evidence for one pinned candidate. *(KERNEL §10)*
