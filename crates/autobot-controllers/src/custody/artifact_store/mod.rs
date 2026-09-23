@@ -27,7 +27,8 @@
 //!   trait has no dedicated refusal. The footprint of a workspace over several artifacts is
 //!   left to the custody controller, which knows which keys belong to a workspace.
 //! - Each request opens its own connection, so a failure belongs to one request. A put that
-//!   fails before its connection is open, or is answered with a client error or `503`, answers
+//!   fails before its connection is open, or is answered with a redirect, a client error other than
+//!   `409` and `412` (another client took the version) or `503`, answers
 //!   [`StoreError::Unavailable`]; any other failure after the connection is open, and any other
 //!   server error, answers [`StoreError::Uncertain`]. A get or lookup that gets no usable answer
 //!   answers [`StoreError::Unavailable`].
