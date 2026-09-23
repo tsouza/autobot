@@ -55,8 +55,8 @@ check-retired-terms:
 trace-lint *args:
     {{rs}} scripts/trace_lint.rs "$@"
 
-# Everything CI checks, locally.
-ci: fmt-check clippy test doc deny machete
+# Everything CI checks, locally: every CI job.
+ci: ci-fmt ci-clippy ci-test ci-doc ci-deny ci-machete
 
 # Apply the ruleset and repository settings to GitHub; `--dry-run` only prints the diff.
 repo-settings *args:
@@ -72,8 +72,9 @@ ci-fmt: fmt-check
 # CI job: lints.
 ci-clippy: clippy
 
-# CI job: tests.
-ci-test: test
+# CI job: tests, the design-set check, the retired-term check, the traceability lint (stages 1
+# to 3, stage 2 for every group with a fixture directory) and its diff rule.
+ci-test: test check-design check-retired-terms trace-lint (trace-lint "--diff")
 
 # CI job: documentation.
 ci-doc: doc
