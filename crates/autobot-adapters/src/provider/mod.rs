@@ -22,6 +22,11 @@
 //! - An adapter refuses, before any send, an operation it has no qualified capability for and a
 //!   send that lacks the source and base heads its capability requires. The broker refuses both
 //!   before any send (KERNEL §3.3); the adapter's refusal is a second fence, not the first.
+//! - A rate-limited send is [`SendError::RateLimited`], not a transport fault: the provider
+//!   answered, and the answer is that nothing was applied. The design leaves open
+//!   what follows: KERNEL §3.3 step 4 names no operation state for a rate-limited send, and
+//!   a rate-limit answer is not one of the two proofs of non-application reconciliation
+//!   accepts, so this module claims nothing about either.
 //! - `COMPENSATED` has no contract yet (#318): this module offers no compensation call.
 
 mod contract;
@@ -189,6 +194,10 @@ pub enum SendError {
     /// Refused before any send: the capability requires source and base heads the request
     /// lacks.
     MissingHeadBase,
+    /// The provider answered that it is rate limiting the caller and did not take the request.
+    /// Unlike a transport fault this is an answer, so the outcome is known: nothing was
+    /// applied.
+    RateLimited,
     /// The request may or may not have reached the provider.
     Transport(TransportFault),
 }
@@ -255,7 +264,8 @@ pub trait ProviderAdapter {
     ///
     /// # Errors
     ///
-    /// [`SendError::Unqualified`] or [`SendError::MissingHeadBase`] before any send, and
+    /// [`SendError::Unqualified`] or [`SendError::MissingHeadBase`] before any send,
+    /// [`SendError::RateLimited`] when the provider rate limited it, and
     /// [`SendError::Transport`] when the outcome is unknown.
     fn send(&mut self, request: &SendRequest) -> Result<SendAck, SendError>;
 

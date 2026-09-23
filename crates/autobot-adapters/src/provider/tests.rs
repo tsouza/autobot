@@ -17,6 +17,8 @@ enum Break {
     AppliesResend,
     ClaimsDedup,
     HidesLostAck,
+    RateLimitAsTimeout,
+    AppliesWhenRateLimited,
 }
 
 fn name<T: std::str::FromStr>(s: &str) -> T
@@ -124,6 +126,15 @@ impl ProviderAdapter for Double {
                 } else {
                     Err(SendError::Transport(TransportFault::Disconnect))
                 }
+            }
+            Some(ProviderFault::RateLimited) if self.is(Break::RateLimitAsTimeout) => {
+                Err(SendError::Transport(TransportFault::Timeout))
+            }
+            Some(ProviderFault::RateLimited) => {
+                if self.is(Break::AppliesWhenRateLimited) {
+                    self.apply(req);
+                }
+                Err(SendError::RateLimited)
             }
             None => Ok(self.apply(req)),
         }
@@ -246,6 +257,11 @@ fn each_broken_double_fails_its_rule() {
         (Break::AppliesResend, ProviderRule::DedupOnce),
         (Break::ClaimsDedup, ProviderRule::DedupClaimed),
         (Break::HidesLostAck, ProviderRule::FaultIsUnknown),
+        (Break::RateLimitAsTimeout, ProviderRule::RateLimitReported),
+        (
+            Break::AppliesWhenRateLimited,
+            ProviderRule::RateLimitReported,
+        ),
     ];
     for (broken, rule) in cases {
         assert_breaks(&run(&mut Harness::new(Some(broken))), &rule);
@@ -314,6 +330,7 @@ fn a_capability_reconciles_only_by_what_it_supports() {
 fn only_refusals_are_before_send() {
     assert!(SendError::Unqualified.before_send());
     assert!(SendError::MissingHeadBase.before_send());
+    assert!(!SendError::RateLimited.before_send());
     assert!(!SendError::Transport(TransportFault::Timeout).before_send());
     assert!(!SendError::Transport(TransportFault::Disconnect).before_send());
 }

@@ -119,10 +119,7 @@ fn a_rate_limit_throttles_its_window_and_then_lets_calls_through() {
         forge(Script::new().then(Trigger::any(Call::Send), Fault::RateLimited { calls: 2 }));
     let req = request("label", key(3));
     for _ in 0..2 {
-        assert_eq!(
-            p.send(&req),
-            Err(SendError::Transport(TransportFault::Timeout))
-        );
+        assert_eq!(p.send(&req), Err(SendError::RateLimited));
         assert_eq!(p.applications(&req.operation, &req.operation_key), 0);
     }
     assert!(p.script().is_empty());

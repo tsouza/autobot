@@ -13,6 +13,7 @@ enum Break {
     StaleEpoch,
     SkipsOutbox,
     IgnoresOutboxRefusal,
+    OutboxRefusalAsCrash,
     FailureAsRefusal,
     EveryFailureIsCrash,
     RefusalAsFailure,
@@ -113,7 +114,11 @@ impl RuntimeAdapter for Double {
                 Err(RuntimeFailure::MalformedOutput)
             }
             _ if written.is_err() && !self.is(Break::IgnoresOutboxRefusal) => {
-                Err(RuntimeFailure::Crash)
+                if self.is(Break::OutboxRefusalAsCrash) {
+                    Err(RuntimeFailure::Crash)
+                } else {
+                    Err(RuntimeFailure::OutboxRefused)
+                }
             }
             Ending::Complete => Ok(SessionEnd::Completed {
                 candidate: Some(Digest::from_bytes([5; 32])),
@@ -161,6 +166,7 @@ fn each_broken_double_fails_its_rule() {
         (Break::StaleEpoch, RuntimeRule::CheckpointIdentity),
         (Break::SkipsOutbox, RuntimeRule::OutboxBeforeEnd),
         (Break::IgnoresOutboxRefusal, RuntimeRule::NoEndWithoutOutbox),
+        (Break::OutboxRefusalAsCrash, RuntimeRule::NoEndWithoutOutbox),
         (Break::FailureAsRefusal, RuntimeRule::FailureCategory),
         (Break::EveryFailureIsCrash, RuntimeRule::FailureCategory),
         (Break::RefusalAsFailure, RuntimeRule::SemanticEnd),

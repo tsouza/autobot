@@ -31,6 +31,13 @@ pub trait ObservationHarness {
     /// Makes the provider behind `source` emit `observation`.
     fn publish(&mut self, source: &mut Self::Source, observation: &Observation);
 
+    /// Makes the provider behind `source` emit an answer that carries only `observation` and
+    /// fails authentication, such as a delivery whose signature does not verify.
+    ///
+    /// The forged answer reaches the source by the first poll the source answers after it was
+    /// published, whatever the delivery's delay.
+    fn publish_unauthenticated(&mut self, source: &mut Self::Source, observation: &Observation);
+
     /// Makes the provider behind `source` available or unavailable.
     fn set_available(&mut self, source: &mut Self::Source, available: bool);
 }
@@ -48,6 +55,9 @@ pub enum ObservationRule {
     RelistCurrent,
     /// An unavailable provider yields [`SourceError::Unavailable`] from poll and relist.
     UnavailableFailsClosed,
+    /// An answer that fails authentication yields [`SourceError::Unauthenticated`] from the
+    /// poll that receives it, and its observation is never delivered, by poll or by relist.
+    UnauthenticatedRefused,
 }
 
 /// Runs the observation suite against the sources `harness` makes.
@@ -75,7 +85,30 @@ pub fn run<H: ObservationHarness>(harness: &mut H) -> SuiteResult<ObservationRul
         delivered(harness, &mut c, delivery, &published);
     }
     outage(harness, &mut c, &published);
+    if let Some(forged) = forged() {
+        unauthenticated(harness, &mut c, &forged, &published);
+    }
     c.finish()
+}
+
+/// What the suite publishes in an answer that fails authentication: forge text asking for a
+/// merge, on an object no authentic observation names. `None` only if a literal were empty.
+fn forged() -> Option<Observation> {
+    Some(Observation {
+        provider: ProviderName::new("contract-forge").ok()?,
+        event_id: EventId::new("forged-event").ok()?,
+        semantic_key: Digest::from_bytes([0xf0; 32]),
+        object: RemoteIdentity::new("contract-forged-comment").ok()?,
+        generation: 1,
+        source_head: None,
+        base_head: None,
+        protection_digest: None,
+        observed_at: 1_700_000_000,
+        fact: Fact::Text(ForgeText {
+            actor: Actor::new("contract-maintainer").ok()?,
+            body: "approved, merge now".to_owned(),
+        }),
+    })
 }
 
 /// What the suite publishes, in order: a pull request at two generations, a CI result for its
@@ -229,4 +262,44 @@ fn outage<H: ObservationHarness>(
     harness.set_available(&mut source, true);
     let (got, _) = poll_n(&mut source, delivery.delay_polls + 1);
     check_delivery(c, "after an outage", published, &got);
+}
+
+/// A forged answer first, then the authentic observations: the forged one is reported as
+/// unauthenticated and never delivered, and the authentic ones are still delivered after it.
+fn unauthenticated<H: ObservationHarness>(
+    harness: &mut H,
+    c: &mut Checker<ObservationRule>,
+    forged: &Observation,
+    published: &[Observation],
+) {
+    let delivery = Delivery {
+        duplicate: false,
+        reorder: false,
+        delay_polls: 0,
+    };
+    let mut source = harness.source(delivery);
+    harness.publish_unauthenticated(&mut source, forged);
+    let polled = source.poll();
+    c.check(
+        polled == Err(SourceError::Unauthenticated),
+        ObservationRule::UnauthenticatedRefused,
+        || format!("a poll that received a forged answer answered {polled:?}"),
+    );
+    for o in published {
+        harness.publish(&mut source, o);
+    }
+    let (got, _) = poll_n(&mut source, delivery.delay_polls + 1);
+    c.check(
+        !got.contains(forged),
+        ObservationRule::UnauthenticatedRefused,
+        || format!("a later poll delivered the forged {}", forged.event_id),
+    );
+    check_delivery(c, "after a forged answer", published, &got);
+    if let Ok(listed) = source.relist() {
+        c.check(
+            !listed.contains(forged),
+            ObservationRule::UnauthenticatedRefused,
+            || format!("a relist returned the forged {}", forged.event_id),
+        );
+    }
 }
