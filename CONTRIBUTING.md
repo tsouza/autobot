@@ -4,7 +4,7 @@
 
 - Every change delivers exactly one task issue. A task issue is a scope capsule with these sections: **Objective**, **Design refs**, **Allowed paths**, **Non-goals**, **Acceptance evidence**, and optionally **Owns**, which names the design elements (kinds, F-n fixtures, formal modules) the task is the single owner of.
 - A task is a sub-issue of one epic and belongs to that epic's milestone. Ordering between issues is expressed only as native "blocked by" dependencies: minimal, acyclic, and never pointing at an issue in a later milestone.
-- Work order: the earliest open milestone first, then issues with no open blockers, then issues on the critical path of the blocked-by graph. The `urgent` label is the only override. There are no priority labels.
+- Work order: the earliest open milestone first, then issues with no open blockers, then issues on the critical path of the blocked-by graph, which `just dag --critical` computes. The `urgent` label is the only override. There are no priority labels.
 - Epics carry `type:epic`, tasks `type:task`.
 
 ## Findings
