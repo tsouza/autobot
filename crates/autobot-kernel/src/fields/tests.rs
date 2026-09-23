@@ -46,6 +46,12 @@ struct LedgerEntry {
     state: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct BlockedTarget {
+    target: String,
+    operation: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, FieldClasses)]
 struct WorkContextStatus {
     #[serde(flatten)]
@@ -65,6 +71,8 @@ struct WorkContextStatus {
     dispatch_authority_generation: u64,
     #[field(reconciliation)]
     dispatch_ledger: Vec<LedgerEntry>,
+    #[field(reconciliation)]
+    blocked_targets: Vec<BlockedTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, FieldClasses)]
@@ -193,6 +201,10 @@ fn work_context() -> WorkContextStatus {
         dispatch_ledger: vec![LedgerEntry {
             permit: "permit-1".to_owned(),
             state: "ACCEPTED".to_owned(),
+        }],
+        blocked_targets: vec![BlockedTarget {
+            target: "repo-a/branch-a".to_owned(),
+            operation: "op-0".to_owned(),
         }],
     }
 }
@@ -559,8 +571,15 @@ fn reconciliation_only_writes_are_recognised() {
     advanced.dispatch_ledger[0].state = "SETTLED".to_owned();
     let mut removed = before.clone();
     removed.dispatch_ledger.clear();
+    let mut blocked = before.clone();
+    blocked.blocked_targets.push(BlockedTarget {
+        target: "repo-a/branch-b".to_owned(),
+        operation: "op-1".to_owned(),
+    });
+    let mut released = before.clone();
+    released.blocked_targets.clear();
 
-    for after in [cleared, published, advanced, removed] {
+    for after in [cleared, published, advanced, removed, blocked, released] {
         assert_eq!(
             classify(&before, &after).write(),
             Ok(Write::ReconciliationOnly)
