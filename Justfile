@@ -45,6 +45,10 @@ machete:
 check-design:
     {{rs}} scripts/check_design.rs docs/design
 
+# Fail when a GLOSSARY retired term is used in the design, the crates, formal or deploy.
+check-retired-terms:
+    {{rs}} scripts/retired_terms.rs .
+
 # Everything CI checks, locally.
 ci: fmt-check clippy test doc deny machete
 
