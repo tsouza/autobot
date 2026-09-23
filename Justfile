@@ -102,3 +102,14 @@ hook-pre-push *args:
 [positional-arguments]
 doctor *args:
     {{rs}} scripts/doctor.rs "$@"
+
+# Lint the issue graph on GitHub (read-only).
+dag-lint:
+    {{rs}} scripts/dag_lint.rs
+
+# Render the blocked-by graph as Mermaid; `--critical` prints the longest open chain instead.
+dag *args:
+    {{rs}} scripts/dag.rs {{args}}
+
+# Scheduled job: issue-graph lint.
+ci-dag-lint: dag-lint

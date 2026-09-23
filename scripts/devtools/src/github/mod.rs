@@ -6,6 +6,7 @@
 
 pub mod settings;
 pub mod verdict;
+pub mod graph;
 
 use crate::process::Cmd;
 use crate::{Error, Result};
