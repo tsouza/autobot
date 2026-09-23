@@ -1,0 +1,71 @@
+# The M0 profile: the proposed limits of the M0 design, section 2 (AUTOBOT-M0-AND-GATES.md).
+# Values are in the unit their key names. crates/autobot-kernel/tests/profile_sync.rs fails
+# when this file and that table disagree.
+version = 1
+
+[replay]
+window_days = 30
+margin_days = 7
+
+[control_ring]
+entries = 8
+entry_max_kib = 4
+
+[dispatch_ledger]
+entries = 64
+
+[registers]
+plans = 8
+integration_bases = 8
+
+[scale]
+contexts = 1
+repositories = 4
+tasks = 100
+active_task_runs = 1
+simulated_managers = 2
+simulated_installation_identities = 2
+
+[objects]
+status_max_kib = 256
+pending_slot_max_kib = 32
+effect_intents_per_command = 8
+late_event_buffer = 64
+
+[api]
+requests_per_second = 10
+burst = 20
+queue_keys = 500
+reserved_control = ["hold", "fence", "receipt-repair"]
+
+[checkpoint]
+max_active_work_secs = 60
+indivisible_write_max_secs = 60
+
+[recovery]
+in_flight_operations = 1
+restore_fixture_mib = 100
+restore_within_minutes = 10
+
+[artifacts]
+workspace_max_gib = 1
+
+[evidence]
+ttl_hours = 24
+no_test_expiry_days = 7
+
+[evidence.defect_maturity_days]
+reversible = 14
+compatibility_risk = 30
+security_or_data_integrity = 30
+
+[sandbox]
+os = "linux"
+image = "pinned-oci"
+network = "default-deny"
+egress = "broker-only"
+writable_mounts = 1
+host_mounts = false
+privileged = false
+devices = false
+model_api = "metered-proxy"
