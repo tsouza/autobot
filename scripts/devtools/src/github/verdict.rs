@@ -167,17 +167,15 @@ pub fn post(api: &impl Api, status: &Status) -> Result<()> {
 }
 
 /// Entry point of `scripts/review_gate.rs`: evaluates the pull request whose number is the
-/// only argument, posts the status and prints it. The repository is `GITHUB_REPOSITORY`.
+/// only argument, posts the status and prints it. The repository is resolved by
+/// [`super::repository`] from the current directory.
 ///
 /// # Errors
-/// Fails on a missing or non-numeric argument, an unset `GITHUB_REPOSITORY`, or a failed
+/// Fails on a missing or non-numeric argument, an unresolvable repository, or a failed
 /// GitHub call.
 pub fn main(args: impl IntoIterator<Item = String>) -> Result<()> {
     let pr = parse_args(args)?;
-    let repo = std::env::var("GITHUB_REPOSITORY")
-        .ok()
-        .filter(|r| !r.is_empty())
-        .ok_or_else(|| Error::Parse("GITHUB_REPOSITORY must name owner/name".to_owned()))?;
+    let repo = super::repository(".")?;
     let client = Client::new(repo)?;
     let status = evaluate(&client, pr)?;
     post(&client, &status)?;

@@ -20,7 +20,6 @@
 //! off. A ruleset that breaks the policy is rejected and nothing is sent.
 
 use super::{Client, Method};
-use crate::process::Cmd;
 use crate::{Error, Result};
 use serde_json::{Map, Value};
 use std::path::Path;
@@ -236,8 +235,7 @@ pub fn apply(api: &impl Api, plan: &Plan) -> Result<()> {
 /// Entry point of `scripts/repo_settings.rs`: prints the diff, then applies it unless the
 /// only argument is `--dry-run`.
 ///
-/// The repository is `GITHUB_REPOSITORY` when set, otherwise the one the `origin` remote
-/// points at.
+/// The repository is resolved by [`super::repository`] from the checkout's root.
 ///
 /// # Errors
 /// Fails on an unknown argument, an unreadable or invalid file, or a failed GitHub call.
@@ -250,15 +248,7 @@ pub fn main(args: impl IntoIterator<Item = String>) -> Result<()> {
         }
     }
     let root = crate::git::toplevel(".")?;
-    let repo = match std::env::var("GITHUB_REPOSITORY") {
-        Ok(repo) if !repo.is_empty() => repo,
-        _ => repo_from_remote(
-            &Cmd::new("git")
-                .args(["remote", "get-url", "origin"])
-                .current_dir(&root)
-                .output()?,
-        )?,
-    };
+    let repo = super::repository(&root)?;
     let ruleset = read_json(&Path::new(&root).join(RULESET_PATH))?;
     let settings = read_json(&Path::new(&root).join(SETTINGS_PATH))?;
     let client = Client::new(repo.clone())?;
@@ -273,28 +263,6 @@ pub fn main(args: impl IntoIterator<Item = String>) -> Result<()> {
         apply(&client, &plan)?;
     }
     Ok(())
-}
-
-/// The `owner/name` of a GitHub remote URL, in SSH (`git@host:owner/name.git`) or HTTPS
-/// (`https://github.com/owner/name`) form.
-///
-/// # Errors
-/// Fails if the URL does not end in `owner/name`.
-pub fn repo_from_remote(url: &str) -> Result<String> {
-    let trimmed = url.trim().trim_end_matches('/');
-    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
-    let mut parts = trimmed.rsplit(['/', ':']);
-    match (parts.next(), parts.next()) {
-        (Some(name), Some(owner))
-            if !name.is_empty() && !owner.is_empty() && !owner.contains('@') =>
-        {
-            Ok(format!("{owner}/{name}"))
-        }
-        _ => Err(Error::Parse(format!(
-            "not a GitHub remote URL: `{}`",
-            url.trim()
-        ))),
-    }
 }
 
 fn read_json(path: &Path) -> Result<Value> {
@@ -649,19 +617,5 @@ mod tests {
     fn settings_must_be_an_object() {
         let err = plan(&FakeRepo::recorded(), &parse(DESIRED_RULESET), &json!([])).unwrap_err();
         assert!(err.to_string().contains(SETTINGS_PATH), "{err}");
-    }
-
-    #[test]
-    fn repo_from_remote_reads_ssh_and_https_urls() {
-        for url in [
-            "git@github.com-tsouza:tsouza/autobot.git\n",
-            "git@github.com:tsouza/autobot",
-            "https://github.com/tsouza/autobot.git",
-            "https://github.com/tsouza/autobot/",
-        ] {
-            assert_eq!(repo_from_remote(url).unwrap(), "tsouza/autobot", "{url}");
-        }
-        assert!(repo_from_remote("git@github.com:autobot.git").is_err());
-        assert!(repo_from_remote("").is_err());
     }
 }
