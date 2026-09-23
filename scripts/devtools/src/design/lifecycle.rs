@@ -763,6 +763,24 @@ mod tests {
             sources(own, "BLOCKED_UNSUPPORTED"),
             [st("REQUESTED"), st("PERMITTED")]
         );
+        assert_eq!(sources(own, "RELEASED"), [st("REQUESTED")]);
+        assert_eq!(
+            sources(own, "UNRESOLVED"),
+            [st("RECONCILING"), st("REQUESTED")]
+        );
+        assert_eq!(
+            sources(own, "CONFIRMED"),
+            [
+                st("DISPATCHING"),
+                st("RECONCILING"),
+                st("UNRESOLVED"),
+                st("REQUESTED")
+            ]
+        );
+        assert!(
+            !own.transitions.iter().any(|t| t.from == st("RELEASED")),
+            "RELEASED is terminal"
+        );
         assert!(
             op.notes
                 .iter()
