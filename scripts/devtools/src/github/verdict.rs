@@ -27,7 +27,7 @@
 //! `issue_comment` event does not attach to the pull request's head commit.
 
 use super::settings::Api;
-use super::{Client, Method};
+use super::{Client, Method, pages, pr_number};
 use crate::{Error, Result};
 use serde_json::Value;
 
@@ -36,9 +36,6 @@ pub const CONTEXT: &str = "review-gate";
 
 /// The start of every verdict line.
 pub const VERDICT_PREFIX: &str = "Review verdict: ";
-
-/// Comments requested per page; a shorter page is the last one.
-const PAGE_SIZE: usize = 100;
 
 /// A parsed verdict line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +108,7 @@ pub fn evaluate(api: &impl Api, pr: u64) -> Result<Status> {
         return Err(Error::Parse(format!("pulls/{pr}: no `head.sha`")));
     };
     let short = |sha: &str| sha.chars().take(7).collect::<String>();
-    let comments = comments(api, pr)?;
+    let comments = pages(api, &format!("issues/{pr}/comments"))?;
     for comment in comments.iter().rev() {
         let Some(verdict) = comment["body"].as_str().and_then(parse_verdict) else {
             continue;
@@ -174,7 +171,7 @@ pub fn post(api: &impl Api, status: &Status) -> Result<()> {
 /// Fails on a missing or non-numeric argument, an unresolvable repository, or a failed
 /// GitHub call.
 pub fn main(args: impl IntoIterator<Item = String>) -> Result<()> {
-    let pr = parse_args(args)?;
+    let pr = pr_number(args, "review_gate")?;
     let repo = super::repository(".")?;
     let client = Client::new(repo)?;
     let status = evaluate(&client, pr)?;
@@ -186,36 +183,6 @@ pub fn main(args: impl IntoIterator<Item = String>) -> Result<()> {
         status.description
     );
     Ok(())
-}
-
-/// The pull request number, the only argument.
-fn parse_args(args: impl IntoIterator<Item = String>) -> Result<u64> {
-    let mut args = args.into_iter();
-    match (args.next(), args.next()) {
-        (Some(pr), None) => pr
-            .parse()
-            .map_err(|_| Error::Parse(format!("not a pull request number: `{pr}`"))),
-        _ => Err(Error::Parse(
-            "usage: review_gate <pull-request-number>".to_owned(),
-        )),
-    }
-}
-
-/// Every comment on pull request `pr`, oldest first.
-fn comments(api: &impl Api, pr: u64) -> Result<Vec<Value>> {
-    let mut all = Vec::new();
-    for page in 1.. {
-        let path = format!("issues/{pr}/comments?per_page={PAGE_SIZE}&page={page}");
-        let Value::Array(batch) = api.request(Method::Get, &path, None)? else {
-            return Err(Error::Parse(format!("{path}: not a JSON array")));
-        };
-        let last = batch.len() < PAGE_SIZE;
-        all.extend(batch);
-        if last {
-            break;
-        }
-    }
-    Ok(all)
 }
 
 /// Whether the comment's author has write access, as described in the module docs.
@@ -241,6 +208,7 @@ fn has_write_access(api: &impl Api, comment: &Value) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::github::PAGE_SIZE;
     use serde_json::json;
     use std::cell::RefCell;
     use std::collections::BTreeMap;
@@ -523,13 +491,13 @@ mod tests {
 
     #[test]
     fn the_only_argument_is_a_pull_request_number() {
-        assert_eq!(parse_args(["236".to_owned()]).unwrap(), 236);
+        assert_eq!(pr_number(["236".to_owned()], "review_gate").unwrap(), 236);
         for args in [
             vec![],
             vec!["x".to_owned()],
             vec!["1".to_owned(), "2".to_owned()],
         ] {
-            assert!(parse_args(args.clone()).is_err(), "{args:?}");
+            assert!(pr_number(args.clone(), "review_gate").is_err(), "{args:?}");
         }
     }
 }

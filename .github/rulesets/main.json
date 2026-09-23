@@ -68,6 +68,10 @@
           {
             "context": "machete",
             "integration_id": 15368
+          },
+          {
+            "context": "labels",
+            "integration_id": 15368
           }
         ]
       }

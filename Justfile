@@ -72,6 +72,10 @@ review-gate pr:
 main-red *args:
     {{rs}} scripts/main_red.rs "$@"
 
+# Fail pull request `pr` when a changed human-lane path lacks the `human-lane` or `design-change` label.
+label-gate pr:
+    {{rs}} scripts/label_gate.rs {{pr}}
+
 # CI job: formatting.
 ci-fmt: fmt-check
 

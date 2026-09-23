@@ -1,0 +1,37 @@
+# The `labels` check: fails a pull request whose changed human-lane paths lack the
+# `human-lane` label, or the `design-change` label for docs/design. Adding or removing a label
+# re-runs it. The gate script and recipe are checked out from the default branch, so a pull
+# request cannot change them; the changed files and labels come from the GitHub API. This
+# workflow file itself runs from the pull request, so an edit to it is a human-lane change that
+# the reviewer must see.
+name: labels
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# A newer event on the same pull request supersedes an older run.
+concurrency:
+  group: labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  labels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        with:
+          tool: just,rust-script
+      - run: just label-gate "$PR"
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ github.token }}
