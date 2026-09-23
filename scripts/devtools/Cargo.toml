@@ -10,10 +10,12 @@ publish.workspace = true
 [features]
 default = []
 github = ["dep:ureq"]
+hooks = ["dep:regex"]
 
 # Pinned exactly: rust-script resolves these in its own generated project,
 # outside the workspace lock file.
 [dependencies]
+regex = { version = "=1.13.1", optional = true, default-features = false, features = ["std", "unicode"] }
 serde_json = "=1.0.151"
 ureq = { version = "=3.4.2", optional = true, default-features = false, features = ["rustls", "json"] }
 
