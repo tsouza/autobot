@@ -19,10 +19,11 @@
 //! are read as UTF-8 with invalid bytes replaced.
 
 use crate::design::check::GLOSSARY;
+use crate::design::{self, is_word_char, offset_in};
 use crate::{Error, Result, markdown};
 use std::collections::BTreeSet;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 /// The design directory, relative to the repository root.
@@ -82,15 +83,21 @@ pub fn check(root: &Path) -> Result<(BTreeSet<String>, Vec<Hit>)> {
     let retired = retired_identifiers(&glossary)?;
 
     let mut files = Vec::new();
-    collect(root, &root.join(DESIGN_DIR), |_| true, &mut files)?;
-    collect(
-        root,
-        &root.join("crates"),
-        |p| p.ends_with(".rs"),
-        &mut files,
-    )?;
-    collect(root, &root.join("formal"), |_| true, &mut files)?;
-    collect(root, &root.join("deploy"), |_| true, &mut files)?;
+    for (dir, only_rs) in [
+        (DESIGN_DIR, false),
+        ("crates", true),
+        ("formal", false),
+        ("deploy", false),
+    ] {
+        let dir = root.join(dir);
+        if dir.is_dir() {
+            files.extend(
+                design::walk(root, &dir)?
+                    .into_iter()
+                    .filter(|(rel, _)| !only_rs || rel.ends_with(".rs")),
+            );
+        }
+    }
 
     let mut hits = Vec::new();
     for (rel, path) in files {
@@ -157,7 +164,7 @@ fn without_section(glossary: &str) -> String {
     let Some(body) = markdown::section(glossary, SECTION) else {
         return glossary.to_owned();
     };
-    let start = body.as_ptr() as usize - glossary.as_ptr() as usize;
+    let start = offset_in(glossary, body);
     let end = start + body.len();
     let blank = "\n".repeat(body.matches('\n').count());
     format!("{}{blank}{}", &glossary[..start], &glossary[end..])
@@ -166,10 +173,6 @@ fn without_section(glossary: &str) -> String {
 /// The contents of the inline code spans of `text` (single backticks, no nesting).
 fn code_spans(text: &str) -> Vec<&str> {
     text.split('`').skip(1).step_by(2).collect()
-}
-
-fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
 }
 
 fn is_identifier(s: &str) -> bool {
@@ -182,49 +185,10 @@ fn identifiers(text: &str) -> impl Iterator<Item = &str> {
         .filter(|w| !w.is_empty())
 }
 
-/// Adds every file under `dir` accepted by `keep` (given its path relative to `root`) to `out`,
-/// as `(relative path, path)`. A missing `dir` adds nothing; `target` directories are skipped.
-fn collect(
-    root: &Path,
-    dir: &Path,
-    keep: impl Fn(&str) -> bool,
-    out: &mut Vec<(String, PathBuf)>,
-) -> Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        let entries = std::fs::read_dir(&d)
-            .map_err(|e| Error::Parse(format!("listing {}: {e}", d.display())))?;
-        for entry in entries {
-            let path = entry
-                .map_err(|e| Error::Parse(format!("listing {}: {e}", d.display())))?
-                .path();
-            if path.is_dir() {
-                if path.file_name().is_none_or(|n| n != "target") {
-                    stack.push(path);
-                }
-                continue;
-            }
-            let rel = path
-                .strip_prefix(root)
-                .map_err(|e| Error::Parse(e.to_string()))?
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
-            if keep(&rel) {
-                out.push((rel, path));
-            }
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
