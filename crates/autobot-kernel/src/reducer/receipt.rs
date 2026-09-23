@@ -181,7 +181,10 @@ impl TransitionReceipt {
     /// - [`ReceiptError::ControlEffects`] if a control commit carries effect intents;
     /// - [`ReceiptError::EffectOrder`] if the effect indexes do not strictly increase;
     /// - [`ReceiptError::DisabledGuards`] if `disabled_guards` is not in table order without
-    ///   repeats.
+    ///   repeats;
+    /// - [`ReceiptError::LanePartition`] if a domain commit changes the control digest, or a
+    ///   control commit changes the domain digest without
+    ///   [`GuardId::ControlFieldsOnly`] in `disabled_guards`.
     pub fn new(fields: TransitionReceiptFields) -> Result<Self, ReceiptError> {
         let f = &fields;
         if f.schema_version != RECEIPT_SCHEMA_VERSION {
@@ -205,6 +208,16 @@ impl TransitionReceipt {
         }
         if f.disabled_guards.windows(2).any(|w| w[0] >= w[1]) {
             return Err(ReceiptError::DisabledGuards);
+        }
+        let crosses = match f.lane {
+            Lane::Domain => f.before_digests.control != f.after_digests.control,
+            Lane::Control => {
+                f.before_digests.domain != f.after_digests.domain
+                    && !f.disabled_guards.contains(&GuardId::ControlFieldsOnly)
+            }
+        };
+        if crosses {
+            return Err(ReceiptError::LanePartition(f.lane));
         }
         Ok(Self(Box::new(fields)))
     }
@@ -263,6 +276,9 @@ pub enum ReceiptError {
     EffectOrder,
     /// Disabled guards out of table order or repeated.
     DisabledGuards,
+    /// A commit on this lane that changed the other lane's digest, which no commit made under
+    /// the guards it lists can do.
+    LanePartition(Lane),
     /// Text that is not an action name.
     ActionName(String),
 }
@@ -287,6 +303,10 @@ impl fmt::Display for ReceiptError {
             Self::DisabledGuards => {
                 f.write_str("disabled guards are out of table order or repeated")
             }
+            Self::LanePartition(lane) => write!(
+                f,
+                "a {lane} commit changed the other lane's digest under the guards it lists"
+            ),
             Self::ActionName(s) => write!(f, "`{s}` is not an action name"),
         }
     }
