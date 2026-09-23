@@ -1157,9 +1157,10 @@ pub fn owned_by(module: &str) -> Option<Vec<u32>> {
     Some(ids(list, "F-"))
 }
 
-/// Every `F<n>_<Name>` invariant a module declares: F-n, name, 1-based line.
+/// Every `val`, `def` or `temporal` declaration, `pure` or not, a module makes at the start of
+/// a line: name and 1-based line, in order.
 #[must_use]
-pub fn model_invariants(module: &str) -> Vec<(u32, String, usize)> {
+pub fn declarations(module: &str) -> Vec<(&str, usize)> {
     let mut out = Vec::new();
     for (i, line) in module.lines().enumerate() {
         let t = line.trim_start();
@@ -1172,7 +1173,16 @@ pub fn model_invariants(module: &str) -> Vec<(u32, String, usize)> {
         };
         let rest = rest.trim_start();
         let len = rest.find(|c: char| !is_word_char(c)).unwrap_or(rest.len());
-        let name = &rest[..len];
+        out.push((&rest[..len], i + 1));
+    }
+    out
+}
+
+/// Every `F<n>_<Name>` invariant a module declares: F-n, name, 1-based line.
+#[must_use]
+pub fn model_invariants(module: &str) -> Vec<(u32, String, usize)> {
+    let mut out = Vec::new();
+    for (name, line) in declarations(module) {
         let Some(tail) = name.strip_prefix('F') else {
             continue;
         };
@@ -1181,7 +1191,7 @@ pub fn model_invariants(module: &str) -> Vec<(u32, String, usize)> {
             .strip_prefix('_')
             .is_some_and(|n| !n.is_empty());
         if let (true, Ok(n)) = (has_name, tail[..digits].parse()) {
-            out.push((n, name.to_owned(), i + 1));
+            out.push((n, name.to_owned(), line));
         }
     }
     out
@@ -1926,6 +1936,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(fixture_dirs(&dir).unwrap(), []);
         assert_eq!(modules(&dir).unwrap(), []);
+    }
+
+    #[test]
+    fn declarations_are_line_initial_val_def_and_temporal_names() {
+        let module = "module m {\n  val A = 1\n  pure def  B_2(x) = x\n  temporal C = true\n  \
+                      pure val D = 1\n  action E = true\n  var F: int\n  val G=1 val H = 2\n\
+                      // val I = 1\n  valJ = 1\n}\n";
+        assert_eq!(
+            declarations(module),
+            [("A", 2), ("B_2", 3), ("C", 4), ("D", 5), ("G", 8)]
+        );
     }
 
     #[test]
