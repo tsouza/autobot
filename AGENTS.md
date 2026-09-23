@@ -10,7 +10,7 @@
 ## While working
 
 - If the design text looks wrong, stop and file a `design` finding; do not work around it in code.
-- Never run CI locally: `just ci` and the recipes it is made of run only in CI, on the self-hosted runners or on GitHub for what cannot run there. Locally, run only the narrow command you are iterating on, such as one crate's `cargo check` or one test, then push and read the pull request's checks. Acceptance is those checks plus a PASS verdict for the head SHA.
+- Never run CI locally: `just ci`, every `ci-*` recipe and the recipes they call (such as `test`, `clippy` or `formal-verify` over the whole workspace) run only in CI, on the self-hosted runners or on GitHub for what cannot run there. Locally, run only the narrow command you are iterating on, such as one crate's `cargo check` or one test, then push and read the pull request's checks. Acceptance is those checks plus a PASS verdict for the head SHA.
 
 ## Reviewer checklist
 
