@@ -7,8 +7,10 @@
 //! disconnect the operation is `OUTCOME_UNKNOWN`, and reconciliation proves definitive
 //! non-application only through [`ProviderAdapter::lookup`] or through deduplication by
 //! [`ProviderAdapter::send`] of the same `operation_key`, and only where the operation's
-//! [`ProviderCapability`] declares it. A rate-limit answer proves non-application only where
-//! the capability declares its rate-limit answers authoritative.
+//! [`ProviderCapability`] declares it. A rate-limit answer is no outcome: the broker handles
+//! every one like a timeout. At reconciliation it proves non-application only where the
+//! capability declares its rate-limit answers authoritative, and the re-request then waits for
+//! the back-off the answer states.
 //!
 //! Choices this module makes where the design is open:
 //!
@@ -24,9 +26,14 @@
 //!   send that lacks the source and base heads its capability requires. The broker refuses both
 //!   before any send (KERNEL §3.3); the adapter's refusal is a second fence, not the first.
 //! - A rate-limited send is [`SendError::RateLimited`], not a transport fault: the provider
-//!   answered that it did not take the request. The answer claims non-application exactly
-//!   when the operation's capability declares `rate_limit_authoritative`; any other
-//!   rate-limit answer proves nothing and the broker treats it like a timeout (KERNEL §3.3).
+//!   answered that it did not take the request. The broker still handles it like a timeout,
+//!   whatever the capability declares (KERNEL §3.3 step 4). The answer claims non-application
+//!   exactly when the operation's capability declares `rate_limit_authoritative`, and that
+//!   claim is read only at reconciliation; any other rate-limit answer proves nothing there.
+//! - A rate-limit answer carries the provider's [`BackOff`] when the provider states one, and
+//!   an answer under a capability that declares `rate_limit_authoritative` always states one:
+//!   a re-request after the proven non-application waits for it (KERNEL §3.3). An adapter
+//!   reports the back-off the provider stated, never one of its own.
 //! - `COMPENSATED` is an outcome a human adjudication of an `UNRESOLVED` operation records
 //!   with evidence of compensation outside AutoBot (KERNEL §3.3): AutoBot sends no
 //!   compensating effect, so this module offers no compensation call.
@@ -35,6 +42,7 @@ mod contract;
 
 pub use contract::{ProviderFault, ProviderHarness, ProviderRule, run};
 
+use crate::backoff::BackOff;
 use crate::text::{Head, OperationName, ProviderName, RemoteIdentity, TargetIdentity};
 use autobot_kernel::types::Digest;
 use std::fmt;
@@ -79,7 +87,8 @@ pub struct ProviderCapability {
     pub requires_head_base: bool,
     /// The operation can be validated without being applied.
     pub supports_dry_run: bool,
-    /// A rate-limit answer to a send proves the provider applied nothing (KERNEL §3.3).
+    /// A rate-limit answer to a send proves, at reconciliation, that the provider applied
+    /// nothing, and states the provider's back-off (KERNEL §3.3).
     pub rate_limit_authoritative: bool,
     /// How an operation in `RECONCILING` is resolved.
     pub reconciliation_method: ReconciliationMethod,
@@ -203,9 +212,12 @@ pub enum SendError {
     /// request.
     RateLimited {
         /// The answer proves the provider applied nothing. It is true exactly when the
-        /// operation's capability declares `rate_limit_authoritative`; otherwise the send
-        /// is treated like a timeout (KERNEL §3.3).
+        /// operation's capability declares `rate_limit_authoritative`. The broker handles the
+        /// send like a timeout either way and reads this only at reconciliation (KERNEL §3.3).
         proves_non_application: bool,
+        /// The back-off the provider stated, which a re-request waits for; always present
+        /// when `proves_non_application` is true.
+        back_off: Option<BackOff>,
     },
     /// The request may or may not have reached the provider.
     Transport(TransportFault),

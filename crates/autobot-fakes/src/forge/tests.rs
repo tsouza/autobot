@@ -1,4 +1,5 @@
 use super::*;
+use autobot_adapters::backoff::BackOff;
 use autobot_adapters::observation::run;
 use autobot_adapters::trust::TrustClass;
 
@@ -221,7 +222,7 @@ fn an_unreachable_forge_fails_closed_and_keeps_what_it_emitted() {
 }
 
 #[test]
-fn a_rate_limit_answers_unavailable_and_does_not_eat_into_the_delay() {
+fn a_rate_limit_states_its_back_off_and_does_not_eat_into_the_delay() {
     let delivery = Delivery {
         duplicate: false,
         reorder: false,
@@ -230,10 +231,16 @@ fn a_rate_limit_answers_unavailable_and_does_not_eat_into_the_delay() {
     let mut f = forge(delivery);
     let pull = f.open(head("h1"), head("main"), digest(1)).unwrap();
     f.push(&pull, head("h2")).unwrap();
-    f.feed().throttle(3);
-    assert_eq!(f.poll(), Err(SourceError::Unavailable));
-    assert_eq!(f.relist(), Err(SourceError::Unavailable));
-    assert_eq!(f.permission(&actor("a")), Err(SourceError::Unavailable));
+    let short = BackOff { seconds: 5 };
+    let long = BackOff { seconds: 600 };
+    f.feed().throttle(2, short);
+    let throttled = |back_off| SourceError::RateLimited {
+        back_off: Some(back_off),
+    };
+    assert_eq!(f.poll(), Err(throttled(short)));
+    f.feed().throttle(1, long);
+    assert_eq!(f.relist(), Err(throttled(long)));
+    assert_eq!(f.permission(&actor("a")), Err(throttled(long)));
     // Generation 2 is held back one counted poll; the throttled calls are not counted.
     let first = f.poll().unwrap();
     assert_eq!(

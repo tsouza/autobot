@@ -17,7 +17,8 @@
 //! - A run is started [`CiConclusion::Pending`] at generation 1 and concluded once, at
 //!   generation 2; its remote identity is also its provider run identity. A run observation
 //!   carries the tested head as its source head and no base head or protection digest.
-//! - Delivery, authentication and rate limiting are the feed's, as the fake forge documents.
+//! - Delivery, authentication and rate limiting are the feed's, as the fake forge documents:
+//!   a throttled poll or relist answers [`SourceError::RateLimited`] with its back-off.
 //!
 //! [`FeedHarness`]: crate::forge::FeedHarness
 //! [`ProviderFixture::ci`]: crate::provider::ProviderFixture::ci

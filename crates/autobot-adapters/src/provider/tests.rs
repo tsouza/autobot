@@ -1,6 +1,7 @@
 use super::*;
+use crate::backoff::BackOff;
 use crate::contract::testing::assert_breaks;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One way a broken double departs from the contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,8 @@ enum Break {
     AppliesWhenRateLimited,
     ClaimsNonApplicationUnauthoritatively,
     WithholdsAuthoritativeNonApplication,
+    OmitsAuthoritativeBackOff,
+    InventsBackOff,
 }
 
 fn name<T: std::str::FromStr>(s: &str) -> T
@@ -135,10 +138,10 @@ impl ProviderAdapter for Double {
                     Err(SendError::Transport(TransportFault::Disconnect))
                 }
             }
-            Some(ProviderFault::RateLimited) if self.is(Break::RateLimitAsTimeout) => {
+            Some(ProviderFault::RateLimited(_)) if self.is(Break::RateLimitAsTimeout) => {
                 Err(SendError::Transport(TransportFault::Timeout))
             }
-            Some(ProviderFault::RateLimited) => {
+            Some(ProviderFault::RateLimited(stated)) => {
                 if self.is(Break::AppliesWhenRateLimited) {
                     self.apply(req);
                 }
@@ -148,8 +151,14 @@ impl ProviderAdapter for Double {
                 } else {
                     self.is(Break::ClaimsNonApplicationUnauthoritatively)
                 };
+                let back_off = if self.is(Break::InventsBackOff) {
+                    Some(BackOff { seconds: 1 })
+                } else {
+                    (!self.is(Break::OmitsAuthoritativeBackOff)).then_some(stated)
+                };
                 Err(SendError::RateLimited {
                     proves_non_application,
+                    back_off,
                 })
             }
             None => Ok(self.apply(req)),
@@ -286,6 +295,11 @@ fn each_broken_double_fails_its_rule() {
             Break::WithholdsAuthoritativeNonApplication,
             ProviderRule::RateLimitAuthority,
         ),
+        (
+            Break::OmitsAuthoritativeBackOff,
+            ProviderRule::RateLimitBackOff,
+        ),
+        (Break::InventsBackOff, ProviderRule::RateLimitBackOff),
     ];
     for (broken, rule) in cases {
         assert_breaks(&run(&mut Harness::new(Some(broken))), &rule);
@@ -357,11 +371,72 @@ fn only_refusals_are_before_send() {
     for proves_non_application in [false, true] {
         assert!(
             !SendError::RateLimited {
-                proves_non_application
+                proves_non_application,
+                back_off: Some(BackOff { seconds: 1 }),
             }
             .before_send()
         );
     }
     assert!(!SendError::Transport(TransportFault::Timeout).before_send());
     assert!(!SendError::Transport(TransportFault::Disconnect).before_send());
+}
+
+const FORMAL: &str = include_str!("../../../../docs/design/AUTOBOT-FORMAL-SURFACE.md");
+
+/// The fields of the FORMAL §2 `ProviderCapability` record, comments stripped.
+fn formal_capability_fields() -> BTreeSet<String> {
+    let mut body = String::new();
+    for line in FORMAL
+        .lines()
+        .skip_while(|l| !l.starts_with("ProviderCapability "))
+    {
+        let line = line.split("\\*").next().unwrap_or_default();
+        body.push_str(line);
+        body.push(' ');
+        if line.contains(']') {
+            break;
+        }
+    }
+    let open = body
+        .find('[')
+        .expect("FORMAL §2 has a ProviderCapability record");
+    let close = body.rfind(']').expect("the record closes");
+    body[open + 1..close]
+        .split(',')
+        .map(|f| f.trim().to_owned())
+        .collect()
+}
+
+/// The names of every field of [`ProviderCapability`]. The destructuring has no `..`, so it
+/// stops compiling when a field is added, removed or renamed without this list following.
+macro_rules! capability_fields {
+    ($($field:ident),* $(,)?) => {{
+        #[allow(dead_code)]
+        fn exhaustive(capability: ProviderCapability) {
+            let ProviderCapability { $($field: _),* } = capability;
+        }
+        [$(stringify!($field)),*]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<String>>()
+    }};
+}
+
+#[test]
+fn provider_capability_has_exactly_the_formal_fields() {
+    let formal = formal_capability_fields();
+    assert!(formal.contains("rate_limit_authoritative"), "{formal:?}");
+    let fields = capability_fields!(
+        provider,
+        operation,
+        supports_idempotency,
+        supports_lookup,
+        supports_remote_marker,
+        requires_head_base,
+        supports_dry_run,
+        rate_limit_authoritative,
+        reconciliation_method,
+        qualified,
+    );
+    assert_eq!(fields, formal);
 }

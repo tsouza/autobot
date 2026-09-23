@@ -27,8 +27,11 @@
 //!   from, as FORMAL §2 states: the key is derived when the `EffectIntent` is built
 //!   ([`intent_operation_key`](crate::digest::intent_operation_key)). `provider_binding` is a
 //!   [`ProviderBinding`], the `[provider, operation]` pair, serialized as a record with those
-//!   two fields. The provider and operation names, `desired_outcome`, `target_identity`,
-//!   `contract_revision` and `installation_lineage` are opaque text here.
+//!   two fields. The provider and operation names are opaque, non-empty text, refused when
+//!   empty by [`ProviderBinding::new`] and by deserialization; the fields stay public text, so
+//!   a struct literal is not checked, and the schema does not state the bound.
+//!   `desired_outcome`, `target_identity`, `contract_revision` and `installation_lineage` are
+//!   opaque text here.
 //! - A [`ControlReceipt`]'s `control_revision` is the revision its commit produced, and its
 //!   `audit_envelope` is the same [`AuditEnvelope`] a pending commit holds; the envelope repeats
 //!   the receipt's commit sequence and control revision, as FORMAL §2 does.

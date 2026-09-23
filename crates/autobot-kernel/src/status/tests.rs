@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::RingError;
+use crate::error::{RingError, ValueError};
 use crate::profile::{ControlRing, Profile};
 use crate::types::{
     CommitSequence, ControlRevision, Digest, Lane, PassedRevision, RejectionProof, StateRevision,
@@ -632,4 +632,45 @@ fn the_envelope_schema_matches_its_snapshot() {
         "the StatusEnvelope schema differs from src/status/status_envelope.schema.json; \
          rerun with AUTOBOT_UPDATE_SNAPSHOTS=1 to accept it. Actual schema:\n{actual}"
     );
+}
+
+#[test]
+fn a_provider_binding_refuses_an_empty_name() {
+    assert_eq!(
+        ProviderBinding::new("fake-forge", "comment"),
+        Ok(ProviderBinding {
+            provider: "fake-forge".to_owned(),
+            operation: "comment".to_owned(),
+        })
+    );
+    assert_eq!(
+        ProviderBinding::new("", "comment"),
+        Err(ValueError::Empty("a provider binding's provider"))
+    );
+    assert_eq!(
+        ProviderBinding::new("fake-forge", ""),
+        Err(ValueError::Empty("a provider binding's operation"))
+    );
+
+    let parsed: ProviderBinding =
+        serde_json::from_value(json!({ "provider": "fake-forge", "operation": "comment" }))
+            .expect("non-empty names deserialize");
+    assert_eq!(
+        parsed,
+        ProviderBinding::new("fake-forge", "comment").unwrap()
+    );
+    for (provider, operation, what) in
+        [("", "comment", "provider"), ("fake-forge", "", "operation")]
+    {
+        let refused = serde_json::from_value::<ProviderBinding>(
+            json!({ "provider": provider, "operation": operation }),
+        )
+        .expect_err("an empty name is refused");
+        assert!(
+            refused
+                .to_string()
+                .contains(&format!("a provider binding's {what} is empty")),
+            "{refused}"
+        );
+    }
 }

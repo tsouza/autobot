@@ -31,8 +31,8 @@
 //! - An answer is signed with SHA-256 over a key shared by the fake provider and its source,
 //!   followed by every field of the observation, each length-prefixed. It detects a forged or
 //!   altered answer in tests and claims no cryptographic strength.
-//! - A rate-limited call answers [`SourceError::Unavailable`]: the observation trait has no
-//!   throttled answer, and an unavailable source fails closed.
+//! - A rate-limited call answers [`SourceError::RateLimited`] with the back-off the fixture
+//!   throttled it with ([`Feed::throttle`]); it fails closed like an unreachable forge.
 //! - Permissions are the three ordered levels of [`Permission`]; an actor with no grant has
 //!   none. A permission query reaches the forge like a poll and fails closed the same way.
 //!
@@ -198,7 +198,8 @@ impl FakeForge {
     ///
     /// # Errors
     ///
-    /// [`SourceError::Unavailable`] while the forge is unreachable or rate-limited.
+    /// [`SourceError::Unavailable`] while the forge is unreachable and
+    /// [`SourceError::RateLimited`] while it is rate-limited.
     pub fn permission(&mut self, actor: &Actor) -> Result<Option<Permission>, SourceError> {
         self.feed.reach()?;
         Ok(self.permissions.get(actor).copied())

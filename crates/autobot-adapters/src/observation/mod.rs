@@ -20,11 +20,15 @@
 //! - A provider answer that fails authentication is dropped whole: the poll that receives it
 //!   answers [`SourceError::Unauthenticated`], nothing it carries is delivered or listed, and
 //!   authentic answers before and after it are delivered as usual.
+//! - A provider that rate limits a poll or relist answers [`SourceError::RateLimited`] with the
+//!   back-off it stated, in the [`BackOff`] a rate-limited send carries; it delivers nothing
+//!   and loses nothing, like an unavailable one.
 
 mod contract;
 
 pub use contract::{Delivery, ObservationHarness, ObservationRule, run};
 
+use crate::backoff::BackOff;
 use crate::text::{Actor, EventId, Head, ProviderName, RemoteIdentity, RunIdentity};
 use crate::trust::LabelledText;
 use autobot_kernel::types::Digest;
@@ -117,6 +121,13 @@ pub struct Observation {
 pub enum SourceError {
     /// The provider is unavailable.
     Unavailable,
+    /// The provider answered that it is rate limiting the caller; nothing is delivered and the
+    /// undelivered observations remain.
+    RateLimited {
+        /// The back-off the provider stated, as a rate-limited send reports it
+        /// ([`SendError::RateLimited`](crate::provider::SendError::RateLimited)).
+        back_off: Option<BackOff>,
+    },
     /// The provider's answer failed authentication; nothing from it is delivered.
     Unauthenticated,
 }
