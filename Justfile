@@ -65,3 +65,17 @@ ci-deny: deny
 
 # CI job: unused dependencies.
 ci-machete: machete
+
+# Worktree per pull request: `just wt new <issue#>`, `just wt list`, `just wt rm <issue#>`.
+[positional-arguments]
+wt *args:
+    {{rs}} scripts/wt.rs "$@"
+
+# Install the git pre-push hook that checks pushes against ~/.config/autobot/deny-terms.
+hooks:
+    {{rs}} scripts/hooks.rs install
+
+# What the pre-push hook runs; git passes the remote name and URL, and the refs on stdin.
+[positional-arguments]
+hook-pre-push *args:
+    {{rs}} scripts/hooks.rs pre-push "$@"

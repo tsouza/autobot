@@ -7,8 +7,11 @@ pub mod cargo;
 pub mod git;
 #[cfg(feature = "github")]
 pub mod github;
+#[cfg(feature = "hooks")]
+pub mod hooks;
 pub mod markdown;
 pub mod process;
+pub mod worktree;
 
 /// Error type shared by every module.
 #[derive(Debug)]
