@@ -23,6 +23,8 @@ pub mod image;
 pub mod judge;
 pub mod kind;
 pub mod layering;
+#[cfg(feature = "ledger")]
+pub mod ledger;
 pub mod markdown;
 pub mod process;
 pub mod worktree;

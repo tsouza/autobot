@@ -13,6 +13,7 @@ github = ["dep:ureq"]
 hooks = ["dep:regex"]
 doctor = ["dep:toml"]
 judge = ["github", "dep:ring"]
+ledger = ["judge"]
 gates = ["dep:autobot-kernel", "dep:sha2"]
 
 # Pinned exactly: rust-script resolves these in its own generated project,
