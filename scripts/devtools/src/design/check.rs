@@ -55,6 +55,8 @@ pub const VOCABULARY: &[&str] = &[
     "FORMAL",
     "SURFACE",
     "GATES",
+    // The root charter file a charter is projected into.
+    "CHARTER",
     // Glossary layers.
     "CORE",
     "EXTENSION",

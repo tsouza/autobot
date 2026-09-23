@@ -669,6 +669,7 @@ mod tests {
                 "Intake",
                 "WorkBrief",
                 "Project, Repository",
+                "Charter, ProjectCharter",
                 "ManagerLease",
                 "Task, Milestone",
                 "TaskRun",

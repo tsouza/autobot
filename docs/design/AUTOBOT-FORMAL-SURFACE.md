@@ -80,19 +80,21 @@ ProviderCapability   = [provider, operation, supports_idempotency, supports_look
 
 \* plans, evidence, integration                                   KERNEL §5
 PlanSnapshot         = [uid, plan_uid, plan_revision, brief_digest, members, edges,
-                        acceptance_policy, budget_policy, graph_digest, state]
+                        acceptance_policy, budget_policy, charter_revisions, graph_digest, state]
 GraphActivationReceipt = [uid, plan_uid, plan_revision, snapshot_digest, member_set_digest,
                         work_context_commit_sequence]
 PlanRevisionState    = [plan_uid, revision, state]
 EvidenceBundle       = [uid, candidate_digest, base_head, head, plan_revision, scope_digest,
-                        criteria_digest, environment_digest, provider_runs, ci_attestations,
-                        review_attestations, reviewer_identity, remote_generation, expiry, state]
+                        charter_digest, criteria_digest, environment_digest,
+                        provider_runs, ci_attestations, review_attestations, reviewer_identity,
+                        remote_generation, expiry, state]
 IntegrationBasis     = [uid, plan_uid, basis_generation, source_heads, base_head, overlap_set,
                         merge_order, integrated_candidate, verification_uid, state]
 
 \* scope, identity, fencing, continuation                         KERNEL §6, §9; ROLES §2
 ScopeCapsule         = [uid, task_run_uid, repository_uids, path_globs, tools, effect_kinds,
-                        non_goals, consequence_class, digest, state]
+                        non_goals, consequence_class, charter_digest, charter_entries,
+                        digest, state]
 ScopeCheck           = [capsule_uid, requested_path, canonical_path, inode, link_target,
                         verdict ∈ {ALLOW, DENY, DETECTED_AT_CHECKPOINT}]
 ExecutionIdentity    = [uid, task_run_uid, workspace_uid, agent_run_uid, execution_epoch,
@@ -126,6 +128,12 @@ ExpectedRecords      = [task_run_uid, outcome ∈ {PENDING, RECORDED, GAP},
 OutcomeRecord        = [task_run_uid, candidate_digest, acceptance_revision, outcome, state]
 UsageReceipt         = [task_run_uid, provider, usage_digest, amount, censored_bound, state]
 TelemetryGap         = [uid, gap_kind ∈ {OUTCOME_MISSING, USAGE_MISSING}, task_run_uid, interval, state]
+
+\* charter                                                        KERNEL §5
+CharterRevision      = [uid, charter_uid, charter_kind ∈ {Charter, ProjectCharter}, owner_uid,
+                        inherited_charter_uid, revision, entries, digest, accepted_by, state]
+CharterEntry         = [entry_id, section, mode ∈ {mechanical, review, judged, advisory},
+                        statement, threshold, source]
 
 \* judgment                                                       THESIS I-8
 Decision             = [uid, question_class, evidence_digest, eligible_set_digest, selected,
@@ -179,6 +187,14 @@ BlockUnsupportedOperation
 \* plans and evidence
 VerifyPlanSnapshot · VerifyGraphMembers · RecordGraphActivationReceipt · FailGraphActivation
 AdmitGraphMember · RecordEvidenceBundle (refuses a reviewer below the review tier of the class) · InvalidateEvidence · RecordAcceptanceAdjudication
+
+\* charter
+AcceptCharterRevision       human principal only, every entry accepted; refuses a law marked advisory and a project entry that relaxes an inherited one
+PinCharterRevision          at plan acceptance; refuses acceptance without an accepted charter revision
+ComputeEffectiveCharter     union of the context and project entries; a conflict resolves toward the stricter entry
+DenyCharterViolation        mechanical entry: broker refusal before effect, or the candidate ineligible at the checkpoint
+ApplyTightenedLaw           new or tightened law: in force at once for the broker and for evidence; fresh capsule at the next continuation, the old one revoked
+AskJudgedQuestion           violates above the threshold → candidate blocked, Finding opened; any other answer or none → the review backstop alone
 
 \* scope, identity, fencing, continuation
 IssueScopeCapsule · CanonicalizeScopeCheck · DenyOutOfScopeAction · DetectOutOfScopeAtCheckpoint
@@ -242,7 +258,10 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 - F-23 *Canonical scope.* A verdict is computed on canonical path and inode; a mutation outside the capsule by symlink, hardlink, rename, mount or subprocess is denied before effect or detected at the next checkpoint before any evidence, and the workspace is quarantined.
 - F-24 *Finding isolation.* Linking a finding to a task changes no capsule, contract or evidence requirement.
 - F-25 *Real fencing.* A fenced process cannot write its workspace, use a revoked grant, invoke a privileged tool or produce current evidence; `FenceConfirmed` requires every ledger entry of the fenced run refused or reconciled; uncertainty blocks replacement.
-- F-26 *Continuation.* A continuation has the same `AgentRun`, identity, grant lineage, capsule digest and reservation; cumulative counters are non-decreasing; an open invocation is resumed, never re-issued.
+- F-26 *Continuation.* A continuation has the same `AgentRun`, identity, grant lineage, capsule digest and reservation, except that a law added or tightened since its capsule was issued gives it a fresh capsule differing only in charter digest and entries; cumulative counters are non-decreasing; an open invocation is resumed, never re-issued.
+- F-38 *Charter pin.* No plan revision is accepted without an accepted charter revision; it pins the accepted `ProjectCharter` revision and the `Charter` revision it inherits, with their digests; an accepted revision never changes; every capsule carries the charter digest of the charter in force at its issue and the entries relevant to its task.
+- F-39 *Tighten-only.* The effective charter is the union of the context and project entries, a conflict resolved toward the stricter entry; no project entry relaxes an inherited one; no law is `advisory`; a relaxed law or a changed rule reaches no plan revision pinned before the change.
+- F-40 *Mechanical laws.* A brokered effect that violates a `mechanical` entry of the charter in force is refused before effect, and a checkpoint diff that violates one makes the candidate ineligible for evidence; a new or tightened law is in force for all work not yet accepted from its acceptance, so no `EvidenceBundle` bound to an earlier charter digest satisfies an acceptance, every later capsule carries it, and an active attempt receives it through a fresh capsule at its next continuation that differs from the old one only in charter digest and entries, the old one revoked.
 
 **I-6 Evidence**
 - F-27 *Fresh evidence.* Acceptance binds candidate, base and head, contract, environment, provider run, reviewer identity and current remote generation; any change invalidates; a delayed result for an old basis satisfies nothing.
@@ -251,7 +270,10 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 
 **I-7 Projection** — F-30 No external observation changes an aggregate without a controller CAS; forge text never becomes a command without actor validation.
 
-**I-8 Judgment** — F-31 Every `Decision.selected` is a member of the eligible set computed before the question; no decision grants credential, scope, budget, acceptance or merge; an absent judge takes the conservative branch and widens nothing.
+**I-8 Judgment**
+- F-31 Every `Decision.selected` is a member of the eligible set computed before the question; no decision grants credential, scope, budget, acceptance or merge; an absent judge takes the conservative branch and widens nothing.
+- F-41 *Charter authority.* Only a human principal accepts a charter revision or any of its entries; a model output never promotes a candidate entry; no law is waived, and no agent grants a waiver.
+- F-42 *Block-only judgment.* A `judged` answer can only block: "violates" above the entry's threshold blocks the candidate and opens a `Finding`; "complies" satisfies nothing the `review` backstop has not; an outage or abstention leaves the backstop as the only check, never a pass.
 
 **I-9 Ledger** — F-32 A terminal `TaskRun` whose `record_deadline` has passed has `expected_records.outcome` and `.usage` each `RECORDED` or `GAP`, and no `TaskRun` is counted by any outcome or cost computation while either is `PENDING`; a `CENSORED` receipt carries `min(reservation ceiling, rate-card bound)` and counts at it; an `UNKNOWN` reservation stays held.
 
@@ -280,6 +302,11 @@ A check is vacuous unless removing a guard produces a counterexample. Each varia
 | no gap created at `record_deadline` | F-32 |
 | reviewer identity equal to worker session | F-28 |
 | admission without the floor comparison | F-37 |
+| plan acceptance without a pinned charter revision | F-38 |
+| a project entry that weakens an inherited law | F-39 |
+| continuation keeping its capsule after a law was tightened | F-40 |
+| charter revision accepted by an agent principal | F-41 |
+| a `judged` "complies" satisfying the `review` backstop | F-42 |
 
 ## 6. Conditional liveness
 
