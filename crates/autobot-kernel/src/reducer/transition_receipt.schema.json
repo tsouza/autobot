@@ -273,6 +273,24 @@
       "type": "string",
       "minLength": 1
     },
+    "ProviderBinding": {
+      "description": "The `[provider, operation]` pair of an effect intent: the key of the provider capability\nthat carries out the effect (FORMAL §2 `EffectIntentRecord`, KERNEL §3.3).",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "description": "The provider operation that applies it.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "The provider that applies the effect.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "operation"
+      ]
+    },
     "SlotEffectIntent": {
       "description": "One effect intent as a pending commit holds it.\n\nIt holds the fields of the FORMAL §2 `EffectIntent` record that the commit decides. The\nrest follow from it: `aggregate_uid` is the UID of the aggregate whose slot holds the\nintent, `committed_revision` is the slot's `proposed_revision`, `uid` and `operation_key`\nare derived from those and the fields here, and `state` belongs to the `EffectIntent`\nobject materialized from it.",
       "type": "object",
@@ -300,8 +318,8 @@
           "$ref": "#/$defs/Digest"
         },
         "provider_binding": {
-          "description": "The provider binding that is to carry out the effect.",
-          "type": "string"
+          "description": "The provider and operation that are to carry out the effect.",
+          "$ref": "#/$defs/ProviderBinding"
         },
         "target_identity": {
           "description": "The identity of the effect's target at the provider.",

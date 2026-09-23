@@ -5,7 +5,7 @@ use crate as autobot_kernel;
 use crate::fields::FieldClasses;
 use crate::status::{
     AuditEnvelope, Condition, ConditionStatus, ControlReceipt, ControlReceiptRing,
-    ControlReceiptState, PendingCommit, PendingCommitState, StatusEnvelope,
+    ControlReceiptState, PendingCommit, PendingCommitState, ProviderBinding, StatusEnvelope,
 };
 use crate::types::{CommitSequence, ControlRevision, Lane, ObjectRef, StateRevision};
 use proptest::prelude::*;
@@ -303,7 +303,10 @@ fn slot(sequence: u64, state: PendingCommitState) -> PendingCommit {
             effect_index: 0,
             installation_lineage: format!("lineage-{sequence}"),
             payload_digest: Digest::from_bytes([4; 32]),
-            provider_binding: "forge".to_owned(),
+            provider_binding: ProviderBinding {
+                provider: "forge".to_owned(),
+                operation: "merge".to_owned(),
+            },
             desired_outcome: "merged".to_owned(),
             target_identity: "repo".to_owned(),
             contract_revision: "1".to_owned(),

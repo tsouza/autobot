@@ -64,12 +64,22 @@ pub struct SlotEffectIntent {
     pub installation_lineage: String,
     /// The digest of the intent's payload.
     pub payload_digest: Digest,
-    /// The provider binding that is to carry out the effect.
-    pub provider_binding: String,
+    /// The provider and operation that are to carry out the effect.
+    pub provider_binding: ProviderBinding,
     /// The outcome the effect is to produce.
     pub desired_outcome: String,
     /// The identity of the effect's target at the provider.
     pub target_identity: String,
     /// The revision of the provider contract the intent is written against.
     pub contract_revision: String,
+}
+
+/// The `[provider, operation]` pair of an effect intent: the key of the provider capability
+/// that carries out the effect (FORMAL §2 `EffectIntentRecord`, KERNEL §3.3).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct ProviderBinding {
+    /// The provider that applies the effect.
+    pub provider: String,
+    /// The provider operation that applies it.
+    pub operation: String,
 }

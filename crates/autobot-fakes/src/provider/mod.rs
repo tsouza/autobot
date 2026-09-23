@@ -15,16 +15,20 @@
 //!
 //! - Provider names are `fake-forge` and `fake-ci`, and every capability is the fake's own
 //!   declaration, not a claim about any real provider.
-//! - A rate-limited send is reported as [`SendError::RateLimited`]. A rate-limited observation,
-//!   lookup or dry run is reported as [`TransportFault::Timeout`]: [`ProviderError`] has no
-//!   throttled answer, and an unknown outcome is the answer that never claims anything
-//!   (KERNEL §3.3).
+//! - A rate-limited send is reported as [`SendError::RateLimited`], claiming non-application
+//!   exactly when the operation's capability declares `rate_limit_authoritative`. A
+//!   rate-limited observation, lookup or dry run is reported as [`TransportFault::Timeout`]:
+//!   [`ProviderError`] has no throttled answer, and an unknown outcome is the answer that never
+//!   claims anything (KERNEL §3.3).
 //! - A send without declared idempotency that repeats an applied `operation_key` is applied
 //!   again under a new remote identity; a lookup names the first.
 //! - An observation of a remote identity the provider never issued, or that belongs to
 //!   another operation, is [`RemoteOutcome::Failed`].
 //! - A dry run of an undeclared operation is [`ProviderError::Unsupported`].
-//! - `COMPENSATED` has no contract yet (#318), so the fake offers no compensation.
+//! - The fake offers no compensation: `COMPENSATED` is recorded by a human adjudication with
+//!   evidence of compensation outside AutoBot, which sends no compensating effect (KERNEL §3.3).
+//! - `fake-ci` declares its rate-limit answers for `run` authoritative; every other preset
+//!   capability declares them not authoritative.
 
 mod harness;
 mod script;
@@ -65,7 +69,7 @@ pub enum Semantics {
 }
 
 /// A qualified capability of `operation` at `provider` declaring `semantics`, with no dry
-/// run and no required heads.
+/// run, no required heads and rate-limit answers that are not authoritative.
 #[must_use]
 pub fn capability(
     provider: &ProviderName,
@@ -86,6 +90,7 @@ pub fn capability(
         supports_remote_marker: lookup,
         requires_head_base: false,
         supports_dry_run: false,
+        rate_limit_authoritative: false,
         reconciliation_method: method,
         qualified: true,
     }
@@ -132,18 +137,20 @@ impl ProviderFixture {
         Ok(Self::new(provider, vec![comment, push, label, merge]))
     }
 
-    /// `fake-ci`: `run` with lookup and idempotency, and `status` with neither.
+    /// `fake-ci`: `run` with lookup, idempotency and authoritative rate-limit answers, and
+    /// `status` with neither.
     ///
     /// # Errors
     ///
     /// Never in practice: every name is a non-empty literal.
     pub fn ci() -> Result<Self, EmptyText> {
         let provider = ProviderName::new("fake-ci")?;
-        let run = capability(
+        let mut run = capability(
             &provider,
             OperationName::new("run")?,
             Semantics::LookupAndIdempotency,
         );
+        run.rate_limit_authoritative = true;
         let status = capability(&provider, OperationName::new("status")?, Semantics::Neither);
         Ok(Self::new(provider, vec![run, status]))
     }
@@ -243,10 +250,13 @@ impl ProviderAdapter for FakeProvider {
             return Err(SendError::MissingHeadBase);
         }
         let idempotent = cap.supports_idempotency;
+        let proves_non_application = cap.rate_limit_authoritative;
         let fault = self.fixture.script.take(Call::Send, &request.operation);
         match fault {
             Some(Fault::Dropped(t)) => Err(SendError::Transport(t)),
-            Some(Fault::RateLimited { .. }) => Err(SendError::RateLimited),
+            Some(Fault::RateLimited { .. }) => Err(SendError::RateLimited {
+                proves_non_application,
+            }),
             // The acknowledgement is lost whatever it was. A remote identity is never empty,
             // so `apply` never fails; if it did, it applied nothing and the unknown outcome
             // still proves nothing either way.

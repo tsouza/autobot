@@ -24,10 +24,11 @@
 //!   of the commit rebuilds its audit event.
 //! - Each effect intent is a [`SlotEffectIntent`]: the FORMAL §2 `EffectIntentRecord` without
 //!   its `operation_key`, which is derived, and with the `installation_lineage` it is derived
-//!   from. `provider_binding`, `desired_outcome`, `target_identity`, `contract_revision` and
-//!   `installation_lineage` are opaque text here; `provider_binding` is text rather than the
-//!   provider and operation pair FORMAL §2 names, and the slot holds `installation_lineage`
-//!   where FORMAL §2 holds `operation_key` (#384).
+//!   from, as FORMAL §2 states: the key is derived when the `EffectIntent` is built
+//!   ([`intent_operation_key`](crate::digest::intent_operation_key)). `provider_binding` is a
+//!   [`ProviderBinding`], the `[provider, operation]` pair, serialized as a record with those
+//!   two fields. The provider and operation names, `desired_outcome`, `target_identity`,
+//!   `contract_revision` and `installation_lineage` are opaque text here.
 //! - A [`ControlReceipt`]'s `control_revision` is the revision its commit produced, and its
 //!   `audit_envelope` is the same [`AuditEnvelope`] a pending commit holds; the envelope repeats
 //!   the receipt's commit sequence and control revision, as FORMAL §2 does.
@@ -57,7 +58,7 @@ mod slot;
 pub use audit::AuditEnvelope;
 pub use envelope::{Condition, ConditionStatus, StatusEnvelope};
 pub use ring::{ControlReceipt, ControlReceiptRing, ControlReceiptState};
-pub use slot::{PendingCommit, PendingCommitState, SlotEffectIntent};
+pub use slot::{PendingCommit, PendingCommitState, ProviderBinding, SlotEffectIntent};
 
 #[cfg(test)]
 mod tests;

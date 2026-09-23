@@ -1,4 +1,5 @@
 use super::*;
+use crate::status::ProviderBinding;
 use crate::types::{CommitSequence, ControlRevision, StateRevision};
 use schemars::schema_for;
 use serde_json::{Value, json};
@@ -65,7 +66,10 @@ fn intent(index: u32) -> SlotEffectIntent {
         effect_index: index,
         installation_lineage: "install-a".to_owned(),
         payload_digest: sha(&[b"payload", &index.to_be_bytes()]),
-        provider_binding: "fake-forge".to_owned(),
+        provider_binding: ProviderBinding {
+            provider: "fake-forge".to_owned(),
+            operation: "comment".to_owned(),
+        },
         desired_outcome: "comment-posted".to_owned(),
         target_identity: "pr/7".to_owned(),
         contract_revision: "v1".to_owned(),
