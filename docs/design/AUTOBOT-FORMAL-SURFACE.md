@@ -134,7 +134,9 @@ FenceSession         = [uid, task_run_uid, execution_epoch, process_fenced, work
 AgentCheckpoint      = [agent_run_uid, session_sequence, execution_epoch, context_digest,
                         scope_digest, budget_consumed, open_tool_invocations, progress_digest, state]
 ContinuationSession  = [agent_run_uid, from_session, to_session, checkpoint_uid]
-TaskRun              = [uid, task_uid, task_revision, source_basis, execution_profile, routing_pin,
+TaskRun              = [uid, task_uid, task_revision,
+                        planning_subject,        \* NONE for a task's run; the Plan or Intake uid a planning TaskRun serves, its task_uid and task_revision then NONE
+                        source_basis, execution_profile, routing_pin,
                         consequence_class, floor, capsule_digest, budget_reservation_uid,
                         fence_state, execution_epoch, revocation_generation, state]
 AgentRun             = [uid, task_run_uid, session_sequence, identity_uid, credential_grant_uid,
@@ -157,19 +159,26 @@ CustodyCheckpoint    = [uid, workspace_uid,
 WorkspaceConflict    = [workspace_uid, owners, attribution_digest, quarantine_owner,
                         restore_mapping, state]
 RestoreLineage       = [installation_id, restore_generation, witness_generation, old_grant_expiry,
-                        revocation_generation, state]   \* state: the RestoreRequest machine
+                        revocation_generation,
+                        ambiguous_operation_set, \* every operation the restored state holds non-terminal (KERNEL §7)
+                        state]                   \* state: the RestoreRequest machine
 RestoreWitnessReceipt = [installation_id, restore_generation, witness_generation,
-                        old_installation_fence_evidence, ambiguous_operation_set,
-                        ambiguous_operation_set_digest, identity_mapping_digest,
-                        old_grant_expiry, signature]
+                        old_installation_fence_evidence,
+                        ambiguous_operation_set_digest,   \* over RestoreLineage.ambiguous_operation_set; the witness signs the digest only
+                        identity_mapping_digest, old_grant_expiry, signature]
 
 \* budget and canonical records                                   KERNEL §8
 Budget               = [uid, ceiling, allocated, state]
-BudgetReservation    = [uid, budget_uid, task_run_uid, amount, purpose, expires_at, state]
+BudgetReservation    = [uid, budget_uid, task_run_uid, amount,
+                        purpose ∈ {ATTEMPT, EFFECT},   \* ATTEMPT: the model spend of every session of task_run_uid, a planning TaskRun's included; EFFECT: one operation of it
+                        expires_at, state]
 ExpectedRecords      = [task_run_uid, outcome ∈ {PENDING, RECORDED, GAP},
-                        usage ∈ {PENDING, RECORDED, GAP}, record_deadline]
+                        usage,                   \* producer → {PENDING, RECORDED, GAP}, added PENDING before the producer spends; a producer is
+                                                 \* [agent_run_uid, session_sequence] of a session of the TaskRun, or broker for its operations' effects
+                        record_deadline]
 OutcomeRecord        = [task_run_uid, candidate_digest, acceptance_revision, outcome, state]
-UsageReceipt         = [task_run_uid, provider, usage_digest, amount, censored_bound, state]
+UsageReceipt         = [task_run_uid, producer,   \* the producer of ExpectedRecords.usage whose entry it records
+                        provider, usage_digest, amount, censored_bound, state]
 TelemetryGap         = [uid, gap_kind ∈ {OUTCOME_MISSING, USAGE_MISSING}, task_run_uid, interval, state]
 
 \* charter                                                        KERNEL §5
@@ -222,9 +231,9 @@ InstallManagerAuthority     domain; creates manager_authority[plan] with epoch 1
 RenewManagerAuthority       domain; deadline := now + lease duration; precondition holder, lease_uid, epoch match ∧ phase = ACTIVE ∧ now < deadline
 DrainManager                control; phase := DRAINING; precondition deadline passed ∨ takeover requested
 ReserveManagerTransaction   domain; slot := RESERVED for the command; precondition holder, lease_uid, epoch match ∧ phase = ACTIVE ∧ now < deadline ∧ slot empty (absent or RESOLVED)
-ClaimManagerTransaction     domain; RESERVED → APPLYING; precondition the slot holds the command ∧ phase = ACTIVE ∧ epoch = the command's epoch
+ClaimManagerTransaction     domain; RESERVED → APPLYING, submitted by the target's owning controller before it commits or rejects the command; precondition the slot holds the command ∧ manager_authority[plan].phase = ACTIVE ∧ epoch = the command's epoch
 ResolveReservedCommand · CancelReservedCommand      (CAS on the reserved command's target by its owning controller, only while the slot is APPLYING for that command; the cancel consumes the reserved expected revision)
-ReleaseManagerTransaction   domain; → RESOLVED with a non-empty terminal_state and the receipt that proves it; from RESERVED only as CANCELLED, with no target write
+ReleaseManagerTransaction   domain; → RESOLVED with a non-empty terminal_state and the receipt that proves it: from APPLYING as COMMITTED or REJECTED with the target's receipt, or as CANCELLED with the cancel's receipt; from RESERVED only as CANCELLED during a takeover, with no target write, the DrainManager control receipt as proof
 AdvanceManagerEpoch         domain; sets holder, lease_uid, epoch := e+1, deadline; precondition phase = DRAINING ∧ slot empty
 ResumeManager               control; precondition epoch = e+1
 ActivatePlanRevision        domain; first activation: creates plan_authority[plan] = (R, snapshot, receipt, ACTIVE, 1); precondition no entry ∧ manager_authority[plan] present
@@ -248,7 +257,9 @@ ExpireAdmissionStamp        domain; ISSUED → EXPIRED; precondition now ≥ exp
 AcknowledgeDispatch         reconciliation-only; removes the entry only after acceptance ∧ ((a) terminal ∨ OUTCOME_UNKNOWN ∨ (b) REQUESTED ∧ send_attempt = NONE after a currency or register re-validation failure, the entry ACCEPTED_NOT_SENT or SEND_ATTEMPTED) recorded on the operation
 
 \* TaskRun admission (TaskRun controller)
-AdmitTask                   pins routing_pin, consequence_class, floor; refuses a pin whose tier is below the floor; sets ExpectedRecords
+AdmitTask                   pins routing_pin, consequence_class, floor; refuses a pin whose tier is below the floor; sets ExpectedRecords (outcome PENDING, usage empty, record_deadline)
+                            planning TaskRun: planning_subject a Plan or Intake, task_uid NONE, no workspace, a capsule with no path; no consequence class or floor to compare
+                            later attempt: precondition the predecessor terminal ∧ its fence_state ∈ {ACTIVE, FENCED}; inherits its CumulativeCounters and its non-terminal operations, which become its own (KERNEL §9)
 
 \* effects
 RequestToolInvocation       AgentRun controller, on the runtime adapter's command; a domain commit on the AgentRun carrying the intent of one call with an effect outside the workspace
@@ -293,19 +304,40 @@ RejectIntake                by the principal who may accept that Intake (ONBOARD
 \* scope, identity, fencing, continuation
 IssueScopeCapsule · CanonicalizeScopeCheck · DenyOutOfScopeAction · DetectOutOfScopeAtCheckpoint
 QuarantineOutOfScopeWorkspace · LinkFindingHistorically
-IssueExecutionIdentity · IssueCredentialGrant · RevokeCredentialGrant
-BeginFence · ApplyWorkspaceWriteFence · ConfirmFence · MarkFenceUncertain
-CreateCheckpoint · VerifyCheckpoint · RequestContinuation · StartContinuation · ResumeOpenInvocation
-FenceOnUnverifiableCheckpoint
+IssueExecutionIdentity      one per AgentRun, bound to its TaskRun, workspace (NONE if it holds none) and the TaskRun's execution_epoch
+IssueCredentialGrant        one per ExecutionIdentity, carrying only its role's requests (ROLES §4); refused while a RestoreLineage of the installation is not DISPATCH_ENABLED
+RevokeCredentialGrant
+BeginFence                  TaskRun control; fence_state ACTIVE → FENCE_PENDING and execution_epoch+1 in one CAS; the FenceSession at the new epoch created PENDING
+ApplyWorkspaceWriteFence
+ConfirmFence                FenceSession PENDING | UNCERTAIN → CONFIRMED at the TaskRun's execution_epoch; precondition process, workspace and broker fenced ∧ every grant of an AgentRun of the TaskRun REVOKED ∧ no ledger entry names an operation of the TaskRun ∧ none of its operations OUTCOME_UNKNOWN or RECONCILING; the TaskRun's fence_state FENCE_PENDING | FENCED_UNCERTAIN → FENCED acknowledges it
+MarkFenceUncertain          FenceSession PENDING → UNCERTAIN at the TaskRun's execution_epoch, when a fence check cannot be confirmed; fence_state FENCE_PENDING → FENCED_UNCERTAIN acknowledges it
+CreateCheckpoint
+VerifyCheckpoint            AgentCheckpoint CREATED → VERIFIED; precondition its execution_epoch = the TaskRun's ∧ a custody checkpoint of its workspace begun after it VERIFIED, for a session with a workspace (KERNEL §7)
+RequestContinuation
+StartContinuation           session_sequence+1 on the same AgentRun; precondition an AgentCheckpoint of it VERIFIED (so not STALE) at the TaskRun's execution_epoch ∧ fence_state = ACTIVE
+ResumeOpenInvocation        under the invocation's original operation identity only, by a continuation of its AgentRun or by a later attempt that inherited it, with that attempt's grant and EFFECT reservation (KERNEL §9)
+FenceOnUnverifiableCheckpoint   BeginFence on the TaskRun; precondition continuation_deadline passed ∧ no AgentCheckpoint of the AgentRun VERIFIED at the current execution_epoch
 
 \* custody and restore
-InventoryWorkspace · UploadCheckpoint · VerifyIndependentRestore · RecordArtifactCommit
-PreserveWorkspace · RetireWorkspace · QuarantineWorkspaceConflict · AdjudicateConflict
-RestoreState · VerifyRestoreWitness · RecordRestoreWitnessReceipt · FenceOldInstallation
-ExpireOldGrant · MapRestoredIdentity · EnableRestoreDispatch
+BeginCustodyCheckpoint      Workspace IN_USE → PRESERVING at the CustodyPolicy cadence or run end, once its write fence is confirmed
+InventoryWorkspace · UploadCheckpoint · VerifyIndependentRestore
+RecordArtifactCommit        PENDING → VERIFIED; precondition its CustodyCheckpoint VERIFIED with the completion marker written
+PreserveWorkspace           PRESERVING → PRESERVED; precondition an ArtifactCommit VERIFIED for a CustodyCheckpoint begun in this PRESERVING
+ResumeWorkspace             PRESERVED → IN_USE, lifting the write fence; precondition the TaskRun holding it non-terminal ∧ its fence_state = ACTIVE ∧ retire_only unset
+RetireWorkspace             PRESERVED → RETIRED; precondition state = PRESERVED (write fence held since that checkpoint) ∧ no unadjudicated WorkspaceConflict
+QuarantineWorkspaceConflict · AdjudicateConflict
+RestoreState                RestoreLineage REQUESTED → RESTORING, then RESTORING → READ_ONLY once restored; every restored WorkContext's dispatch_authority_generation := NONE, which equals no pin; records ambiguous_operation_set
+VerifyRestoreWitness · RecordRestoreWitnessReceipt · FenceOldInstallation
+ExpireOldGrant · MapRestoredIdentity
+EnableRestoreDispatch       MAPPED → DISPATCH_ENABLED on the COMMITTED receipt of AdvanceDispatchAuthorityGeneration, which the Custody controller submits only from MAPPED; precondition a recorded RestoreWitnessReceipt for this installation_id and restore_generation whose digest is that of ambiguous_operation_set ∧ every operation in it terminal, adjudicated, or with no send_attempt and proven not applied by lookup or deduplication under its operation_key ∧ every old grant revoked or max_old_grant_ttl + broker_revocation_bound passed
 
 \* canonical records
-WriteOutbox · DrainOutbox · RecordCanonicalRecord · CreateGapForMissingRecord · CensorUsage · SettleUsage
+ExpectUsage                 TaskRun domain; usage[producer] := PENDING; the producer's first model call or accepted effect follows its COMMITTED receipt
+WriteOutbox · DrainOutbox
+RecordCanonicalRecord       entry PENDING → RECORDED on its own record's COMMITTED create receipt (outcome: the OutcomeRecord; usage[producer]: that producer's UsageReceipt)
+CreateGapForMissingRecord   precondition now ≥ record_deadline ∧ the entry PENDING, the TaskRun terminal or not; creates a TelemetryGap linked to the TaskRun, entry := GAP(uid)
+CloseGap                    TelemetryGap OPEN → CLOSED, linked to the entry's record committed after it; the entry stays GAP
+CensorUsage · SettleUsage
 
 \* judgment
 ComputeEligibleSet · RecordDecision · AbstainDecision
@@ -338,7 +370,7 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 - F-15 *Restore barrier.* A restored installation dispatches nothing before a signed witness receipt, old-grant expiry or revocation, identity mapping, and reconciliation or adjudication of every operation in the ambiguous set.
 
 **I-3 Custody**
-- F-16 *Custody commit.* A workspace is `PRESERVED` only after an `ArtifactCommit` `VERIFIED` by independent restore; retirement requires `PRESERVED`; uncertain custody is `QUARANTINED`.
+- F-16 *Custody commit.* A workspace is `PRESERVED` only after an `ArtifactCommit` `VERIFIED` by independent restore of a custody checkpoint taken under its write fence, and the fence holds while it is `PRESERVED`, so no write is made after the checkpoint it rests on; retirement requires `PRESERVED`, so a workspace that returned to `IN_USE` is retired only after a later checkpoint; uncertain custody is `QUARANTINED`.
 - F-17 *Conflict.* Mixed ownership or incomplete attribution forces a `WorkspaceConflict` and prevents retirement and assignment until adjudicated.
 
 **I-4 Effects**
