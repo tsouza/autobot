@@ -4,6 +4,8 @@
 //! are unset or empty, it is read from `<cli> auth token`, where `<cli>` is `AUTOBOT_GH_CLI` if
 //! set, otherwise `gh`.
 
+pub mod settings;
+
 use crate::process::Cmd;
 use crate::{Error, Result};
 
@@ -59,17 +61,56 @@ impl Client {
     /// # Errors
     /// Fails on a transport error, a non-success status, or a non-JSON body.
     pub fn get(&self, path: &str) -> Result<serde_json::Value> {
-        let url = format!("{API}/repos/{}/{}", self.repo, path.trim_start_matches('/'));
-        self.agent
-            .get(&url)
-            .header("Authorization", &format!("Bearer {}", self.token))
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "autobot-devtools")
-            .call()
-            .map_err(|e| Error::Http(e.to_string()))?
-            .body_mut()
-            .read_json()
-            .map_err(|e| Error::Http(e.to_string()))
+        self.request(Method::Get, path, None)
     }
+
+    /// Sends `method` to `path` relative to the repository resource (`""` is the repository
+    /// itself, `"pulls/12"` a pull request) with an optional JSON body, and returns the JSON
+    /// response.
+    ///
+    /// # Errors
+    /// Fails on a transport error, a non-success status, or a non-JSON body.
+    pub fn request(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let path = path.trim_start_matches('/');
+        let url = if path.is_empty() {
+            format!("{API}/repos/{}", self.repo)
+        } else {
+            format!("{API}/repos/{}/{path}", self.repo)
+        };
+        let auth = format!("Bearer {}", self.token);
+        let http = |e: ureq::Error| Error::Http(format!("{method:?} {url}: {e}"));
+        let response = match method {
+            Method::Get => headers(self.agent.get(&url), &auth).call(),
+            Method::Post => headers(self.agent.post(&url), &auth).send_json(body),
+            Method::Put => headers(self.agent.put(&url), &auth).send_json(body),
+            Method::Patch => headers(self.agent.patch(&url), &auth).send_json(body),
+        };
+        response.map_err(http)?.body_mut().read_json().map_err(http)
+    }
+}
+
+/// An HTTP method used by [`Client::request`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    /// Read a resource.
+    Get,
+    /// Create a resource.
+    Post,
+    /// Replace a resource.
+    Put,
+    /// Update some fields of a resource.
+    Patch,
+}
+
+/// Adds the authentication and API-version headers every request carries.
+fn headers<B>(req: ureq::RequestBuilder<B>, auth: &str) -> ureq::RequestBuilder<B> {
+    req.header("Authorization", auth)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("User-Agent", "autobot-devtools")
 }
