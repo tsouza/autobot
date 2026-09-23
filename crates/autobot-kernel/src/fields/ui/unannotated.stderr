@@ -1,0 +1,5 @@
+error: field `hold_state` has no #[field(...)] class; every status field is one of domain, control, reconciliation, structural, or `nested` (KERNEL §1)
+ --> src/fields/ui/unannotated.rs:7:5
+  |
+7 |     hold_state: u32,
+  |     ^^^^^^^^^^

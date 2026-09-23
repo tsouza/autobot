@@ -28,7 +28,9 @@
 //! non-numeric argument) makes [`run`] fail.
 //!
 //! Every run prints the model version the service reports, its token usage and the SHA-256 of
-//! the request body, for the record.
+//! the request body, for the record, and writes the same report to the pull request as one
+//! comment that later runs edit in place ([`comment`]). A failure to post the comment is
+//! printed and leaves the exit code as the decision set it.
 //!
 //! Choices the design leaves open:
 //!
@@ -52,6 +54,7 @@
 //!   that is absent or of the wrong type is a malformed answer for that entry only.
 
 pub mod charter;
+pub mod comment;
 
 use crate::github::settings::Api;
 use crate::github::{Client, Method, pages, pr_number};
@@ -311,10 +314,11 @@ pub fn request(entries: &[Entry], state: &str) -> Value {
 /// Why an entry falls back to its `review` backstop.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reason {
-    /// The answer was "complies", which grants nothing.
-    Complies,
-    /// The answer was "unsure".
-    Unsure,
+    /// The answer was "complies", which grants nothing, with its confidence when the answer
+    /// carries one.
+    Complies(Option<f64>),
+    /// The answer was "unsure", with its confidence when the answer carries one.
+    Unsure(Option<f64>),
     /// The answer was "violates" below the entry's threshold.
     LowConfidence(f64),
     /// The answer was malformed, schema-invalid or contradictory.
@@ -335,8 +339,8 @@ pub enum Reason {
 impl std::fmt::Display for Reason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Complies => write!(f, "answered \"{COMPLIES}\", which grants nothing"),
-            Self::Unsure => write!(f, "answered \"{UNSURE}\""),
+            Self::Complies(_) => write!(f, "answered \"{COMPLIES}\", which grants nothing"),
+            Self::Unsure(_) => write!(f, "answered \"{UNSURE}\""),
             Self::LowConfidence(c) => {
                 write!(
                     f,
@@ -370,6 +374,13 @@ fn unit(value: &Value) -> Option<f64> {
     value.as_f64().filter(|v| (0.0..=1.0).contains(v))
 }
 
+/// The confidence an answer states for `option`, for the record only:
+/// `probabilities[option]` when it is a number from 0 to 1, otherwise `confidence` when it is
+/// one.
+fn stated(answer: &Value, option: &str) -> Option<f64> {
+    unit(&answer["probabilities"][option]).or_else(|| unit(&answer["confidence"]))
+}
+
 /// How far above 1 the probabilities of an answer may sum, for floating-point rounding.
 const SUM_TOLERANCE: f64 = 1e-9;
 
@@ -384,8 +395,8 @@ fn decide_one(entry: &Entry, answer: Option<&Value>) -> Outcome {
         return malformed("`type` is not \"choice\"");
     }
     match answer["choice"].as_str() {
-        Some(COMPLIES) => return Outcome::Backstop(Reason::Complies),
-        Some(UNSURE) => return Outcome::Backstop(Reason::Unsure),
+        Some(COMPLIES) => return Outcome::Backstop(Reason::Complies(stated(answer, COMPLIES))),
+        Some(UNSURE) => return Outcome::Backstop(Reason::Unsure(stated(answer, UNSURE))),
         Some(VIOLATES) => {}
         _ => return malformed("`choice` is not complies, violates or unsure"),
     }
@@ -533,19 +544,35 @@ impl Report {
             ExitCode::SUCCESS
         }
     }
+
+    /// The model that answered, or `none reported`.
+    fn model_text(&self) -> &str {
+        self.model.as_deref().unwrap_or("none reported")
+    }
+
+    /// The token usage, or `none reported`.
+    fn usage_text(&self) -> String {
+        self.usage.map_or_else(
+            || "none reported".to_owned(),
+            |(i, o)| format!("{i} input, {o} output tokens"),
+        )
+    }
+
+    /// The request digest, or why there is none.
+    fn digest_text(&self) -> &str {
+        self.digest.as_deref().unwrap_or("none (no request built)")
+    }
 }
 
 impl std::fmt::Display for Report {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let model = self.model.as_deref().unwrap_or("none reported");
-        let usage = self.usage.map_or_else(
-            || "none reported".to_owned(),
-            |(i, o)| format!("{i} input, {o} output tokens"),
-        );
-        writeln!(f, "judge: requested model {MODEL}; answered by {model}")?;
-        writeln!(f, "judge: usage {usage}")?;
-        let digest = self.digest.as_deref().unwrap_or("none (no request built)");
-        writeln!(f, "judge: request sha256 {digest}")?;
+        writeln!(
+            f,
+            "judge: requested model {MODEL}; answered by {}",
+            self.model_text()
+        )?;
+        writeln!(f, "judge: usage {}", self.usage_text())?;
+        writeln!(f, "judge: request sha256 {}", self.digest_text())?;
         for note in &self.notes {
             writeln!(f, "judge: {note}")?;
         }
@@ -612,11 +639,18 @@ pub fn judge(
     }
 }
 
-/// The report when the inputs could not be read: every entry of `entries` (none when the
-/// charter itself is unreadable) falls back with [`Reason::Unavailable`], and the service is
-/// not called.
+/// The report when the inputs could not be read: every entry of `entries` falls back with
+/// [`Reason::Unavailable`], and the service is not called. When `entries` is empty (the
+/// charter itself is unreadable) no entry can state the outage, so a note records it.
 #[must_use]
 pub fn unavailable(entries: Vec<Entry>, why: &str) -> Report {
+    let notes = if entries.is_empty() {
+        vec![format!(
+            "inputs unavailable: {why}; the `review` backstop applies to every judged entry"
+        )]
+    } else {
+        Vec::new()
+    };
     let outcomes = entries
         .into_iter()
         .map(|e| (e, Outcome::Backstop(Reason::Unavailable(why.to_owned()))))
@@ -626,9 +660,7 @@ pub fn unavailable(entries: Vec<Entry>, why: &str) -> Report {
         model: None,
         usage: None,
         digest: None,
-        notes: vec![format!(
-            "inputs unavailable: {why}; the `review` backstop applies to every judged entry"
-        )],
+        notes,
     }
 }
 
@@ -638,7 +670,7 @@ pub fn unavailable(entries: Vec<Entry>, why: &str) -> Report {
 #[must_use]
 pub fn judge_pr<A: Api>(
     charter_text: Result<String>,
-    api: Result<A>,
+    api: Result<&A>,
     pr: u64,
     key: Option<&str>,
     service: &impl Service,
@@ -647,7 +679,7 @@ pub fn judge_pr<A: Api>(
         Ok(entries) => entries,
         Err(e) => return unavailable(Vec::new(), &format!("charter: {e}")),
     };
-    match api.and_then(|api| read_inputs(&api, pr)) {
+    match api.and_then(|api| read_inputs(api, pr)) {
         Ok(inputs) => judge(&entries, &inputs, key, service),
         Err(e) => unavailable(entries, &format!("pull request #{pr}: {e}")),
     }
@@ -698,8 +730,14 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<ExitCode> {
     };
     let env = |name: &str| std::env::var(name).ok();
     let service = Http::new(&api_base(env));
-    let report = judge_pr(charter_text, client, pr, api_key(env).as_deref(), &service);
+    let api = client.as_ref().map_err(|e| Error::Parse(e.to_string()));
+    let report = judge_pr(charter_text, api, pr, api_key(env).as_deref(), &service);
     print!("{report}");
+    let posted = client.and_then(|client| comment::publish(&client, pr, &comment::render(&report)));
+    match posted {
+        Ok(posted) => println!("judge: {posted}"),
+        Err(e) => eprintln!("judge: the report comment was not posted: {e}"),
+    }
     Ok(report.exit_code())
 }
 
@@ -817,10 +855,26 @@ mod tests {
 
     #[test]
     fn complies_and_unsure_fall_back_even_when_certain() {
-        for (choice, reason) in [("complies", Reason::Complies), ("unsure", Reason::Unsure)] {
-            let answer = format!(
-                r#"{{"type":"choice","choice":"{choice}","probabilities":{{"{choice}":1.0}},"confidence":1.0}}"#
-            );
+        let cases = [
+            (
+                "complies",
+                r#","probabilities":{"complies":1.0},"confidence":0.5"#,
+                Reason::Complies(Some(1.0)),
+            ),
+            (
+                "unsure",
+                r#","probabilities":{"unsure":1.0},"confidence":0.5"#,
+                Reason::Unsure(Some(1.0)),
+            ),
+            (
+                "complies",
+                r#","confidence":0.9"#,
+                Reason::Complies(Some(0.9)),
+            ),
+            ("unsure", "", Reason::Unsure(None)),
+        ];
+        for (choice, rest, reason) in cases {
+            let answer = format!(r#"{{"type":"choice","choice":"{choice}"{rest}}}"#);
             let report = judge_l1(&Canned::answering(&response(&answer)));
             assert_eq!(report.outcomes[0].1, Outcome::Backstop(reason), "{choice}");
             assert!(!report.blocks(), "{choice}");
@@ -1202,7 +1256,7 @@ mod tests {
                 .contains("The pull request links #314, which does not exist")
         );
         let service = Canned::answering(&violates(0.95));
-        let report = judge_pr(charter_text(), Ok(api), 320, Some("k"), &service);
+        let report = judge_pr(charter_text(), Ok(&api), 320, Some("k"), &service);
         assert_eq!(service.calls.get(), 1);
         assert_eq!(report.outcomes[0].1, Outcome::Blocks(0.95));
         let text = report.to_string();
@@ -1228,7 +1282,7 @@ mod tests {
             ("files", files_down),
         ] {
             let service = Canned::answering(&violates(1.0));
-            let report = judge_pr(charter_text(), Ok(api), 320, Some("k"), &service);
+            let report = judge_pr(charter_text(), Ok(&api), 320, Some("k"), &service);
             assert_eq!(service.calls.get(), 0, "{what}");
             assert_eq!(report.outcomes.len(), 2, "{what}");
             for (_, outcome) in &report.outcomes {
@@ -1242,7 +1296,7 @@ mod tests {
             assert!(report.to_string().contains("inputs unavailable"), "{what}");
         }
         let service = Canned::answering(&violates(1.0));
-        let no_client: Result<Recorded> = Err(Error::Parse("no token".to_owned()));
+        let no_client: Result<&Recorded> = Err(Error::Parse("no token".to_owned()));
         let report = judge_pr(charter_text(), no_client, 320, Some("k"), &service);
         assert_eq!(service.calls.get(), 0);
         assert_eq!(report.outcomes.len(), 2);
@@ -1259,7 +1313,7 @@ mod tests {
             ),
         ] {
             let service = Canned::answering(&violates(1.0));
-            let report = judge_pr(charter, Ok(github(one_file())), 320, Some("k"), &service);
+            let report = judge_pr(charter, Ok(&github(one_file())), 320, Some("k"), &service);
             assert_eq!(service.calls.get(), 0);
             assert!(report.outcomes.is_empty());
             assert_eq!(report.digest, None);
