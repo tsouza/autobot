@@ -51,7 +51,19 @@ Acceptance evidence is produced independently of the worker that made the candid
 
 ## 4. The agent-runtime contract
 
-An `AgentRun` is one session of one role through a runtime adapter, inside a `TaskRun`. The contract with the runtime, whatever the harness:
+An `AgentRun` is one session of one role through a runtime adapter, inside a `TaskRun`. Every AgentRun holds its own `ExecutionIdentity` and `CredentialGrant` (KERNEL §6); its model spend draws on the `ATTEMPT` reservation of its TaskRun, and each brokered effect on an `EFFECT` reservation of that TaskRun; and each of its sessions (its continuations, KERNEL §9) is a usage producer with its own entry in that TaskRun's expected records (KERNEL §8). Where each role's sessions run, and what their grant allows:
+
+| Role | Runs in | Grant allows |
+|---|---|---|
+| Manager | a planning TaskRun of its own, of its `Plan` or of the `Intake` it serves | once the `Plan` exists, Manager commands under `manager_authority[plan]` (KERNEL §4); no repository write |
+| Integrator | a planning TaskRun of its own, of its `Plan` | basis requests to the Integration controller and the external operations of the merge order, which only the broker sends; no workspace |
+| Worker | the TaskRun of its task | writes to that TaskRun's workspace inside the capsule, and brokered tool calls inside it |
+| Reviewer, Tester | the TaskRun of the task whose candidate it assesses; for a milestone's integrated candidate, a planning TaskRun of its own, of the `Plan` | reads of the pinned candidate and its evidence, and its role's requests (§1); no write to the workspace |
+| MicroManager | the TaskRun it guards | reads of the run's evidence, and its role's requests (§1); no write to the workspace |
+
+A planning TaskRun holds no workspace and no task: its spec names the `Plan` or `Intake` in the task's place, and its capsule allows no path, so its sessions change a repository only through operations the broker sends. Its expected records are those of every TaskRun: one usage entry per session, one for the broker when it sends effects, and an `outcome` entry for the run. A reviewer's session is therefore never the worker's: it is another AgentRun with another identity and grant (§3).
+
+The contract with the runtime, whatever the harness:
 
 **Context in.** The capsule, with the charter entries it carries; the task obligation, acceptance evidence and non-goals; the pinned plan, milestone and task revision; the candidate basis; references to prior checkpoints and findings; the budget and limits. Nothing else is authoritative, and repository or forge text arrives labelled as untrusted content (TRUST).
 
@@ -59,7 +71,7 @@ An `AgentRun` is one session of one role through a runtime adapter, inside a `Ta
 
 **Tools only through the broker.** Every tool call with an effect outside the workspace — forge, CI, deployment, credential — is a `ToolInvocation` under KERNEL §3.3, and a filesystem call inside the workspace is not one: the capsule checks of §2 bound it; every privileged filesystem, forge, CI, deployment or credential action passes the broker's grant, scope and capability checks first. The sandbox gives the session no reusable credential, no egress except to the broker, no mount but the workspace, and a process boundary the fence can stop. Read-only calls may be retried within policy.
 
-**Continuation.** Provider outage, rate limiting, context or session exhaustion, mid-stream disconnect, malformed output, refusal and process crash are separate categories from model quality and are handled by KERNEL §9: checkpoint, then continue the same `AgentRun` from a verified checkpoint; never truncate context silently; treat a refusal as a semantic outcome, not a transport retry; after a crash, fence and preserve before any replacement.
+**Continuation.** Provider outage, rate limiting, context or session exhaustion, mid-stream disconnect, malformed output, refusal, a refused durable-outbox write (`OutboxRefused`, KERNEL §8 step 2) and process crash are separate categories from model quality and are handled by KERNEL §9: checkpoint, then continue the same `AgentRun` from a verified checkpoint; never truncate context silently; treat a refusal as a semantic outcome, not a transport retry; after an `OutboxRefused`, continue and write the records again from the checkpoint, under the producer key of the session that made them, never fence and preserve for it, and if the refusal lasts until `record_deadline` the gap rule of KERNEL §8 step 5 applies; after a crash, fence and preserve before any replacement.
 
 ## 5. Human intervention — a kernel kind
 

@@ -133,12 +133,12 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 ### Custody and restore
 
 - **`Workspace`** — Custody of a checkout; outlives sessions and attempts; retired only from `PRESERVED`. *(KERNEL §7)*
-- **Custody checkpoint / `CustodyCheckpoint` / `ArtifactCommit` / `Artifact`** — Fence → inventory (including the record outbox) → manifest → upload → verified independent restore → marker → `ArtifactCommit(VERIFIED)` → `PRESERVED`. Unknown custody is quarantine. *(KERNEL §7)*
+- **Custody checkpoint / `CustodyCheckpoint` / `ArtifactCommit` / `Artifact`** — Fence → inventory (including the record outbox) → manifest → upload → verified independent restore → marker → `ArtifactCommit(VERIFIED)` → `PRESERVED`; recurs at the `CustodyPolicy` cadence and at run end, the run lifting the fence with `PRESERVED → IN_USE`; the "next checkpoint" of I-5, and the one that covers each earlier `AgentCheckpoint`. Unknown custody is quarantine. *(KERNEL §7)*
 - **`CustodyPolicy`** — The declared loss domains, checkpoint cadence, RPO/RTO and quarantine rules a workspace is kept under. *(KERNEL §7; M0 §2)*
 - **`RestoreRequest`** — The aggregate that drives one isolated restore through its barrier states. *(KERNEL §7, §10)*
 - **`WorkspaceConflict`** — Mixed or unattributable content: attribution manifest, quarantine owner, restore mapping; nothing deleted or assigned until adjudicated. *(KERNEL §7)*
 - **Installation / installation lineage** — The identity of one AutoBot deployment; a restore produces a new `installation_id` and `restore_generation`; part of `operation_key` and every grant. *(KERNEL §7)*
-- **`RestoreWitnessReceipt` / restore barrier / `dispatch_authority_generation`** — The witness-signed record that, with old-grant expiry or revocation, identity mapping and ambiguous-set reconciliation, ends a restored installation's read-only state by advancing the register. *(KERNEL §7)*
+- **`RestoreWitnessReceipt` / restore barrier / `dispatch_authority_generation`** — The witness-signed record, carrying the digest of the ambiguous operation set the `RestoreRequest` records, that, with old-grant expiry or revocation, identity mapping and ambiguous-set reconciliation, ends a restored installation's read-only state by giving the register a value again; until then acceptance, recovery sends and grants are refused. *(KERNEL §7)*
 
 ### Evidence and integration
 
@@ -156,7 +156,7 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 
 - **`Budget` / `BudgetReservation`** — Hard ceiling; recoverable escrow per purpose; `UNKNOWN` stays held until settlement or explicit conservative expiry. *(KERNEL §8)*
 - **Canonical record / ledger** — `OutcomeRecord`, `UsageReceipt` and `TelemetryGap`: aggregates created through the create protocol, never a sampled or best-effort signal. *(KERNEL §8)*
-- **Expected-record obligation** — `TaskRun.status.expected_records{outcome, usage} ∈ PENDING | RECORDED | GAP(uid)` with a `record_deadline`; a record still missing at the deadline becomes a linked gap that counts as unknown outcome and censored cost. *(KERNEL §8)*
+- **Expected-record obligation** — `TaskRun.status.expected_records`: one `outcome` entry and one `usage` entry per usage producer (each session and the broker), each `PENDING | RECORDED | GAP(uid)`, with a `record_deadline`; a record still missing at the deadline, whether or not the run is terminal, becomes a linked gap that counts as unknown outcome or censored cost until a late record closes it. *(KERNEL §8)*
 - **Durable local outbox** — The process-side queue that holds a record until its create receipt is `COMMITTED`; inventoried by custody. *(KERNEL §8)*
 - **Censoring** — An unsettled `UsageReceipt` becomes `CENSORED` at `min(reservation ceiling, rate-card bound)` and counts at that bound. *(KERNEL §8)*
 
