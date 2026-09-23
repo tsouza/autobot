@@ -7,7 +7,7 @@
 //! a path only as a whole: `scripts/*.rs` matches `scripts/judge.rs` and not
 //! `scripts/devtools/src/lib.rs`.
 
-/// The glob `token` in the form [`matches`] reads, or `None` when it is not a glob: it is
+/// The glob `token` in the form [`matches()`] reads, or `None` when it is not a glob: it is
 /// empty, holds whitespace, or has no literal character (such as `*`, `**` or `**/*`), which
 /// would allow every path.
 #[must_use]
