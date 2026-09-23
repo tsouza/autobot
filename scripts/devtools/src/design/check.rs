@@ -20,10 +20,9 @@
 //!    lines and at least one twentieth of its main file's lines.
 //! 6. [`Rule::Link`]: every Markdown link resolves to a file inside the set.
 
-use crate::design::lifecycle;
+use crate::design::{self, RuleName, is_word_char, lifecycle, line_of, offset_in};
 use crate::{Error, Result, markdown};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::path::{Component, Path};
 use std::process::ExitCode;
 
@@ -175,10 +174,8 @@ pub enum Rule {
     Link,
 }
 
-impl Rule {
-    /// The rule's name as printed.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
+impl RuleName for Rule {
+    fn name(self) -> &'static str {
         match self {
             Self::StateVocabulary => "state-vocabulary",
             Self::GlossaryLayer => "glossary-layer",
@@ -190,28 +187,8 @@ impl Rule {
     }
 }
 
-/// One broken rule at one place.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Violation {
-    /// The file, relative to the set's directory.
-    pub file: String,
-    /// The 1-based line, when the violation has one.
-    pub line: Option<usize>,
-    /// The rule broken.
-    pub rule: Rule,
-    /// What is wrong.
-    pub message: String,
-}
-
-impl fmt::Display for Violation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.line {
-            Some(l) => write!(f, "{}:{l}: ", self.file)?,
-            None => write!(f, "{}: ", self.file)?,
-        }
-        write!(f, "[{}] {}", self.rule.name(), self.message)
-    }
-}
+/// One broken rule at one place; its file is relative to the set's directory.
+pub type Violation = design::Violation<Rule>;
 
 /// The files of a design set: Markdown contents, and the paths of every file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -221,38 +198,20 @@ pub struct DesignSet {
 }
 
 impl DesignSet {
-    /// Reads every file under `dir`; paths are relative to it, with `/` separators.
+    /// Reads every file under `dir` outside directories named `target`; paths are relative to
+    /// it, with `/` separators.
     ///
     /// # Errors
     /// Fails if a directory cannot be listed or a Markdown file cannot be read as UTF-8.
     pub fn load(dir: &Path) -> Result<Self> {
         let mut set = Self::default();
-        let mut stack = vec![dir.to_path_buf()];
-        while let Some(d) = stack.pop() {
-            let entries = std::fs::read_dir(&d)
-                .map_err(|e| Error::Parse(format!("listing {}: {e}", d.display())))?;
-            for entry in entries {
-                let path = entry
-                    .map_err(|e| Error::Parse(format!("listing {}: {e}", d.display())))?
-                    .path();
-                if path.is_dir() {
-                    stack.push(path);
-                    continue;
-                }
-                let rel = path
-                    .strip_prefix(dir)
-                    .map_err(|e| Error::Parse(e.to_string()))?
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("/");
-                if rel.ends_with(".md") {
-                    let text = std::fs::read_to_string(&path)
-                        .map_err(|e| Error::Parse(format!("reading {}: {e}", path.display())))?;
-                    set.docs.insert(rel.clone(), text);
-                }
-                set.paths.insert(rel);
+        for (rel, path) in design::walk(dir, dir)? {
+            if rel.ends_with(".md") {
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|e| Error::Parse(format!("reading {}: {e}", path.display())))?;
+                set.docs.insert(rel.clone(), text);
             }
+            set.paths.insert(rel);
         }
         Ok(set)
     }
@@ -323,25 +282,6 @@ pub fn check(set: &DesignSet) -> Result<Vec<Violation>> {
     Ok(out)
 }
 
-fn violation(
-    out: &mut Vec<Violation>,
-    file: &str,
-    line: Option<usize>,
-    rule: Rule,
-    message: String,
-) {
-    out.push(Violation {
-        file: file.to_owned(),
-        line,
-        rule,
-        message,
-    });
-}
-
-fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
 fn state_vocabulary(set: &DesignSet, states: &BTreeSet<String>, out: &mut Vec<Violation>) {
     for (file, text) in set.main_files() {
         for (n, line) in text.lines().enumerate() {
@@ -353,13 +293,12 @@ fn state_vocabulary(set: &DesignSet, states: &BTreeSet<String>, out: &mut Vec<Vi
                     && !VOCABULARY.contains(&word)
                     && seen.insert(word)
                 {
-                    violation(
-                        out,
+                    out.push(Violation::new(
                         file,
                         Some(n + 1),
                         Rule::StateVocabulary,
                         format!("`{word}` is neither a KERNEL §10 state nor in the vocabulary"),
-                    );
+                    ));
                 }
             }
         }
@@ -423,10 +362,6 @@ fn phrase_matches(hay: &str, needle: &str) -> Vec<usize> {
     found
 }
 
-fn line_of(doc: &str, offset: usize) -> usize {
-    doc[..offset].matches('\n').count() + 1
-}
-
 /// Whether a glossary entry line defines a role: its definition begins `The role of`.
 fn is_role(line: &str) -> bool {
     line.trim_start()
@@ -443,16 +378,15 @@ fn glossary_layer(glossary: &str, out: &mut Vec<Violation>) {
     let (Some(core), Some(ext), Some(external)) =
         (section("CORE"), section("EXTENSION"), section("EXTERNAL"))
     else {
-        violation(
-            out,
+        out.push(Violation::new(
             GLOSSARY,
             None,
             Rule::GlossaryLayer,
             "the glossary needs CORE, EXTENSION and EXTERNAL sections".to_owned(),
-        );
+        ));
         return;
     };
-    let core_offset = core.as_ptr() as usize - glossary.as_ptr() as usize;
+    let core_offset = offset_in(glossary, core);
     let roles: String = core
         .lines()
         .filter(|l| is_role(l))
@@ -472,13 +406,12 @@ fn glossary_layer(glossary: &str, out: &mut Vec<Violation>) {
     }
     for (term, layer) in outside {
         for at in phrase_matches(core, &term) {
-            violation(
-                out,
+            out.push(Violation::new(
                 GLOSSARY,
                 Some(line_of(glossary, core_offset + at)),
                 Rule::GlossaryLayer,
                 format!("the CORE section names the {layer} term `{term}`"),
-            );
+            ));
         }
     }
 }
@@ -504,13 +437,12 @@ fn core_depends_on_extension(set: &DesignSet, out: &mut Vec<Violation>) {
                     .find(|e| !phrase_matches(deps, e).is_empty())
             };
             if let Some(e) = named {
-                violation(
-                    out,
+                out.push(Violation::new(
                     file,
                     Some(n + 1),
                     Rule::CoreDependsOnExtension,
                     format!("a core document depends on the extension `{e}`"),
-                );
+                ));
             }
         }
     }
@@ -554,13 +486,12 @@ fn numbers_outside_profile(set: &DesignSet, out: &mut Vec<Violation>) {
                 if ["F-", "I-", "§"].iter().any(|p| token.starts_with(p)) {
                     continue;
                 }
-                violation(
-                    out,
+                out.push(Violation::new(
                     file,
                     Some(n + 1),
                     Rule::NumberOutsideProfile,
                     format!("the number `{token}` belongs in the M0 profile ({M0})"),
-                );
+                ));
             }
         }
     }
@@ -577,18 +508,16 @@ fn background(set: &DesignSet, out: &mut Vec<Violation>) {
         match set.docs.get(&bg) {
             Some(bg_text) => {
                 if last != Some(pointer.as_str()) {
-                    violation(
-                        out,
+                    out.push(Violation::new(
                         file,
                         None,
                         Rule::Background,
                         format!("does not end with the pointer line `{pointer}`"),
-                    );
+                    ));
                 }
                 let (main_lines, bg_lines) = (text.lines().count(), bg_text.lines().count());
                 if bg_lines < BACKGROUND_MIN_LINES || bg_lines * BACKGROUND_MIN_RATIO < main_lines {
-                    violation(
-                        out,
+                    out.push(Violation::new(
                         &bg,
                         None,
                         Rule::Background,
@@ -596,16 +525,15 @@ fn background(set: &DesignSet, out: &mut Vec<Violation>) {
                             "{bg_lines} lines against {main_lines} in {file}: below the floor of \
                              {BACKGROUND_MIN_LINES} lines and 1/{BACKGROUND_MIN_RATIO} of the main file"
                         ),
-                    );
+                    ));
                 }
             }
-            None if points => violation(
-                out,
+            None if points => out.push(Violation::new(
                 file,
                 None,
                 Rule::Background,
                 format!("ends with a background pointer, but {bg} does not exist"),
-            ),
+            )),
             None => {}
         }
     }
@@ -613,13 +541,12 @@ fn background(set: &DesignSet, out: &mut Vec<Violation>) {
         if let Some(stem) = file.strip_suffix(".background.md")
             && !set.docs.contains_key(&format!("{stem}.md"))
         {
-            violation(
-                out,
+            out.push(Violation::new(
                 file,
                 None,
                 Rule::Background,
                 format!("has no main file {stem}.md"),
-            );
+            ));
         }
     }
 }
@@ -743,13 +670,12 @@ fn links(set: &DesignSet, out: &mut Vec<Violation>) {
                     Err(why) => Some(why),
                 };
                 if let Some(why) = problem {
-                    violation(
-                        out,
+                    out.push(Violation::new(
                         file,
                         Some(n + 1),
                         Rule::Link,
                         format!("the link `{target}` {why}"),
-                    );
+                    ));
                 }
             }
         }

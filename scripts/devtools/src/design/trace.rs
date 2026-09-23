@@ -45,10 +45,10 @@
 //! `formal/variants/` hold instances and mutated copies, not owning modules, and are not read.
 
 use crate::design::check::M0;
+use crate::design::{self, RuleName, is_word_char, line_of, offset_in, relative};
 use crate::process::Cmd;
 use crate::{Error, Result, git, markdown};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -91,10 +91,8 @@ pub enum Rule {
     Model,
 }
 
-impl Rule {
-    /// The rule's name as printed.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
+impl RuleName for Rule {
+    fn name(self) -> &'static str {
         match self {
             Self::Invariant => "invariant",
             Self::Group => "group",
@@ -108,37 +106,8 @@ impl Rule {
     }
 }
 
-/// One broken rule at one place.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Violation {
-    /// The file, relative to the repository root.
-    pub file: String,
-    /// The 1-based line, when the violation has one.
-    pub line: Option<usize>,
-    /// The rule broken.
-    pub rule: Rule,
-    /// What is wrong.
-    pub message: String,
-}
-
-impl fmt::Display for Violation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.line {
-            Some(l) => write!(f, "{}:{l}: ", self.file)?,
-            None => write!(f, "{}: ", self.file)?,
-        }
-        write!(f, "[{}] {}", self.rule.name(), self.message)
-    }
-}
-
-fn violation(file: &str, line: Option<usize>, rule: Rule, message: String) -> Violation {
-    Violation {
-        file: file.to_owned(),
-        line,
-        rule,
-        message,
-    }
-}
+/// One broken rule at one place; its file is relative to the repository root.
+pub type Violation = design::Violation<Rule>;
 
 /// Every `<prefix><n>` in `text` (such as `F-7` or `I-10`) in order, with `a … b` and `a..b`
 /// between two of them expanded to every number from `a` to `b`.
@@ -154,7 +123,7 @@ pub fn ids(text: &str, prefix: &str) -> Vec<u32> {
         let bounded = text[..at]
             .chars()
             .next_back()
-            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            .is_none_or(|c| !is_word_char(c));
         if bounded && let Ok(n) = text[start..end].parse() {
             found.push((at, end, n));
         }
@@ -178,10 +147,7 @@ pub fn ids(text: &str, prefix: &str) -> Vec<u32> {
 /// The lines of the section of `doc` headed `heading`, numbered 1-based within `doc`.
 fn section_lines<'a>(doc: &'a str, heading: &str) -> Option<Vec<(usize, &'a str)>> {
     let body = markdown::section(doc, heading)?;
-    let first = doc[..body.as_ptr() as usize - doc.as_ptr() as usize]
-        .matches('\n')
-        .count()
-        + 1;
+    let first = line_of(doc, offset_in(doc, body));
     Some(
         body.lines()
             .enumerate()
@@ -365,7 +331,7 @@ pub fn stage1(d: &Design) -> Vec<Violation> {
     let mut out = Vec::new();
     for &(i, line) in &d.invariants {
         if !d.properties.iter().any(|p| p.invariant == Some(i)) {
-            out.push(violation(
+            out.push(Violation::new(
                 &thesis,
                 Some(line),
                 Rule::Invariant,
@@ -378,7 +344,7 @@ pub fn stage1(d: &Design) -> Vec<Violation> {
         if let Some(i) = p.invariant
             && !d.invariants.iter().any(|&(k, _)| k == i)
         {
-            out.push(violation(
+            out.push(Violation::new(
                 &formal,
                 Some(p.line),
                 Rule::Invariant,
@@ -389,7 +355,7 @@ pub fn stage1(d: &Design) -> Vec<Violation> {
             ));
         }
         if !seen.insert(p.id) {
-            out.push(violation(
+            out.push(Violation::new(
                 &formal,
                 Some(p.line),
                 Rule::Invariant,
@@ -415,7 +381,7 @@ pub fn stage1(d: &Design) -> Vec<Violation> {
             } else {
                 listing.join(", ")
             };
-            out.push(violation(
+            out.push(Violation::new(
                 &formal,
                 line,
                 Rule::Group,
@@ -425,7 +391,7 @@ pub fn stage1(d: &Design) -> Vec<Violation> {
     }
     for g in &d.groups {
         for &f in g.properties.iter().filter(|&&f| !d.known(f)) {
-            out.push(violation(
+            out.push(Violation::new(
                 &m0,
                 Some(g.line),
                 Rule::Group,
@@ -435,7 +401,7 @@ pub fn stage1(d: &Design) -> Vec<Violation> {
     }
     for v in &d.variants {
         if v.properties.is_empty() {
-            out.push(violation(
+            out.push(Violation::new(
                 &formal,
                 Some(v.line),
                 Rule::Variant,
@@ -443,7 +409,7 @@ pub fn stage1(d: &Design) -> Vec<Violation> {
             ));
         }
         for &f in v.properties.iter().filter(|&&f| !d.known(f)) {
-            out.push(violation(
+            out.push(Violation::new(
                 &formal,
                 Some(v.line),
                 Rule::Variant,
@@ -566,9 +532,7 @@ fn fn_name(line: &str) -> Option<&str> {
         }
     }
     let rest = rest.strip_prefix("fn ")?.trim_start();
-    let len = rest
-        .find(|c: char| !c.is_alphanumeric() && c != '_')
-        .unwrap_or(rest.len());
+    let len = rest.find(|c: char| !is_word_char(c)).unwrap_or(rest.len());
     (len > 0).then(|| &rest[..len])
 }
 
@@ -695,30 +659,8 @@ fn entries(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     Ok(out)
 }
 
-/// Every file under `dir` with extension `ext`, recursively, as (path relative to `root`,
-/// contents).
-fn read_tree(root: &Path, dir: &Path, ext: &str, out: &mut BTreeMap<String, String>) -> Result<()> {
-    for path in entries(dir)? {
-        if path.is_dir() {
-            read_tree(root, &path, ext, out)?;
-        } else if path.extension().is_some_and(|e| e == ext) {
-            let text = std::fs::read_to_string(&path).map_err(|e| io_error(&path, &e))?;
-            out.insert(relative(root, &path), text);
-        }
-    }
-    Ok(())
-}
-
-fn relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-/// Every fixture directory `crates/*/tests/g_*/` under the repository `root`.
+/// Every fixture directory `crates/*/tests/g_*/` under the repository `root`, with the `.rs`
+/// files under it outside directories named `target`.
 ///
 /// # Errors
 /// Fails if a directory cannot be listed or a source cannot be read as UTF-8.
@@ -731,7 +673,13 @@ pub fn fixture_dirs(root: &Path) -> Result<Vec<FixtureDir>> {
                 .is_some_and(|n| n.to_string_lossy().starts_with("g_"));
             if dir.is_dir() && is_group {
                 let mut files = BTreeMap::new();
-                read_tree(root, &dir, "rs", &mut files)?;
+                for (rel, path) in design::walk(root, &dir)? {
+                    if path.extension().is_some_and(|e| e == "rs") {
+                        let text =
+                            std::fs::read_to_string(&path).map_err(|e| io_error(&path, &e))?;
+                        files.insert(rel, text);
+                    }
+                }
                 out.push(FixtureDir {
                     path: relative(root, &dir),
                     files,
@@ -757,7 +705,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
     let mut r = Report::default();
     for dir in dirs {
         if !d.groups.iter().any(|g| g.dir_name() == dir.name()) {
-            r.violations.push(violation(
+            r.violations.push(Violation::new(
                 &dir.path,
                 None,
                 Rule::OwningTest,
@@ -765,7 +713,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
             ));
         }
         if dir.fixture_task().is_none() {
-            r.violations.push(violation(
+            r.violations.push(Violation::new(
                 &dir.mod_rs(),
                 Some(1),
                 Rule::Ignore,
@@ -784,7 +732,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
                 .iter()
                 .filter_map(|x| Some(format!("{} #{}", x.path, x.fixture_task()?)))
                 .collect();
-            r.violations.push(violation(
+            r.violations.push(Violation::new(
                 &mine[0].mod_rs(),
                 Some(1),
                 Rule::Ignore,
@@ -801,7 +749,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
             let owners: Vec<&TestFn> = tests.iter().filter(|t| t.owns() == Some(f)).collect();
             match owners.as_slice() {
                 [_] => {}
-                [] => r.violations.push(violation(
+                [] => r.violations.push(Violation::new(
                     place,
                     None,
                     Rule::OwningTest,
@@ -809,7 +757,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
                 )),
                 [first, rest @ ..] => {
                     for t in rest {
-                        r.violations.push(violation(
+                        r.violations.push(Violation::new(
                             &t.file,
                             Some(t.line),
                             Rule::OwningTest,
@@ -836,7 +784,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
                         )
                     },
                 );
-                r.violations.push(violation(
+                r.violations.push(Violation::new(
                     &t.file,
                     Some(t.line),
                     Rule::OwningTest,
@@ -844,7 +792,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
                 ));
             }
             match &t.ignore {
-                Some(Ignore::Other(attr)) => r.violations.push(violation(
+                Some(Ignore::Other(attr)) => r.violations.push(Violation::new(
                     &t.file,
                     Some(t.line),
                     Rule::Ignore,
@@ -863,7 +811,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
                         t.at(),
                         o.name
                     )),
-                    None => r.violations.push(violation(
+                    None => r.violations.push(Violation::new(
                         &t.file,
                         Some(t.line),
                         Rule::OwningTest,
@@ -890,7 +838,7 @@ pub fn stage2(d: &Design, dirs: &[FixtureDir], closed: Option<&str>) -> Report {
 fn close(d: &Design, dirs: &[FixtureDir], name: &str, out: &mut Vec<Violation>) {
     let m0 = design_file(M0);
     let Some(g) = d.group(name) else {
-        out.push(violation(
+        out.push(Violation::new(
             &m0,
             None,
             Rule::Closed,
@@ -900,7 +848,7 @@ fn close(d: &Design, dirs: &[FixtureDir], name: &str, out: &mut Vec<Violation>) 
     };
     let mine: Vec<&FixtureDir> = dirs.iter().filter(|x| x.name() == g.dir_name()).collect();
     if mine.is_empty() {
-        out.push(violation(
+        out.push(Violation::new(
             &m0,
             Some(g.line),
             Rule::Closed,
@@ -912,7 +860,7 @@ fn close(d: &Design, dirs: &[FixtureDir], name: &str, out: &mut Vec<Violation>) 
     }
     for t in mine.iter().flat_map(|x| x.tests()) {
         if t.ignore.is_some() && t.owns().is_some_and(|f| g.properties.contains(&f)) {
-            out.push(violation(
+            out.push(Violation::new(
                 &t.file,
                 Some(t.line),
                 Rule::Closed,
@@ -1030,7 +978,7 @@ pub fn diff_rule(
         }
         let why = format!("{who} is not the fixture task of {dir}");
         if file.binary {
-            out.push(violation(
+            out.push(Violation::new(
                 &file.path,
                 None,
                 Rule::Diff,
@@ -1038,7 +986,7 @@ pub fn diff_rule(
             ));
         }
         for (n, text) in &file.added {
-            out.push(violation(
+            out.push(Violation::new(
                 &file.path,
                 Some(*n),
                 Rule::Diff,
@@ -1051,7 +999,7 @@ pub fn diff_rule(
                     || "may change nothing here".to_owned(),
                     |c| format!("may only delete `{}` lines here", awaiting_line(c)),
                 );
-                out.push(violation(
+                out.push(Violation::new(
                     &file.path,
                     Some(*n),
                     Rule::Diff,
@@ -1223,9 +1171,7 @@ pub fn model_invariants(module: &str) -> Vec<(u32, String, usize)> {
             continue;
         };
         let rest = rest.trim_start();
-        let len = rest
-            .find(|c: char| !c.is_alphanumeric() && c != '_')
-            .unwrap_or(rest.len());
+        let len = rest.find(|c: char| !is_word_char(c)).unwrap_or(rest.len());
         let name = &rest[..len];
         let Some(tail) = name.strip_prefix('F') else {
             continue;
@@ -1253,7 +1199,7 @@ pub fn stage3(d: &Design, modules: &[Module]) -> Vec<Violation> {
         let declared = model_invariants(&m.text);
         for &f in &owned {
             if !d.known(f) {
-                out.push(violation(
+                out.push(Violation::new(
                     &m.path,
                     Some(1),
                     Rule::Model,
@@ -1261,7 +1207,7 @@ pub fn stage3(d: &Design, modules: &[Module]) -> Vec<Violation> {
                 ));
             }
             if let Some(other) = owner.insert(f, &m.path) {
-                out.push(violation(
+                out.push(Violation::new(
                     &m.path,
                     Some(1),
                     Rule::Model,
@@ -1272,7 +1218,7 @@ pub fn stage3(d: &Design, modules: &[Module]) -> Vec<Violation> {
                 declared.iter().filter(|(n, _, _)| *n == f).collect();
             match mine.as_slice() {
                 [_] => {}
-                [] => out.push(violation(
+                [] => out.push(Violation::new(
                     &m.path,
                     Some(1),
                     Rule::Model,
@@ -1280,7 +1226,7 @@ pub fn stage3(d: &Design, modules: &[Module]) -> Vec<Violation> {
                 )),
                 [_, rest @ ..] => {
                     for (_, name, line) in rest {
-                        out.push(violation(
+                        out.push(Violation::new(
                             &m.path,
                             Some(*line),
                             Rule::Model,
@@ -1295,7 +1241,7 @@ pub fn stage3(d: &Design, modules: &[Module]) -> Vec<Violation> {
         let owned = owned_by(&m.text).unwrap_or_default();
         for (f, name, line) in model_invariants(&m.text) {
             if !owned.contains(&f) {
-                out.push(violation(
+                out.push(Violation::new(
                     &m.path,
                     Some(line),
                     Rule::Model,
