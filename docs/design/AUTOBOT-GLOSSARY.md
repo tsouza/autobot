@@ -7,7 +7,7 @@ Depends on: `AUTOBOT-THESIS.md`. Definitions summarize the document named beside
 
 | Layer | Meaning | Dependency rule |
 |---|---|---|
-| **CORE** | Terms without which an invariant in `AUTOBOT-THESIS.md` cannot be stated, or which M0 must implement. | A CORE definition references only CORE terms. It never names an EXTENSION or EXTERNAL term, not even in passing. |
+| **CORE** | Terms without which an invariant in `AUTOBOT-THESIS.md` cannot be stated, or which M0 must implement. Removing one makes AutoBot unsafe, not merely less capable. | A CORE definition references only CORE terms. It never names an EXTENSION or EXTERNAL term, not even in passing. |
 | **EXTENSION** | Capabilities built on the core that can be disabled, replaced or absent while every core invariant still holds: learning and routing, TypeSafe decision policy, forge mirroring, observability, the CLI. | An EXTENSION definition references CORE and EXTENSION terms. An extension never creates authority the core does not grant. |
 | **EXTERNAL** | Systems, actors and tools AutoBot runs on, observes or adapts to but does not own. Their facts enter AutoBot only through authenticated observation and a core commit. | An EXTERNAL thing is never authoritative for AutoBot state. |
 
@@ -17,7 +17,7 @@ The check that closes this glossary: every term used in a core document is defin
 
 An entry enters CORE only if (a) a thesis invariant depends on it, (b) M0 must implement it, or (c) removing it would leave a term used but undefined in a core document. An entry that fails all three is EXTENSION if some extension file uses it, and is otherwise omitted.
 
-One term, one meaning. A term dropped from the core is dropped everywhere; its retired form is listed at the end.
+One term, one meaning. A term dropped from the core is dropped everywhere. The retired forms are listed at the end so nobody reaches for them.
 
 Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **ROLES §n**, **ONBOARD §n**, **FORMAL §n**, **M0 §n**, or `extensions/<name>.md`.
 
@@ -226,7 +226,7 @@ Every entry ends with its authority: **THESIS**, **TRUST**, **KERNEL §n**, **RO
 
 ## Retired terms
 
-Names this set does not use and must not acquire, each with its replacement. Do not reintroduce them.
+Names this set does not use and must not acquire, each with what replaces it. Do not reintroduce them.
 
 - **`ManagerCommitReceipt`** — subsumed by the `active_manager_transaction` reservation and the target's `CommandReceipt`.
 - **`routing_authority` register, `promoted_routing_revision`, `canary_routing_revision`** — routing is a pin on the `TaskRun`, not a register; canary and promotion live in the learning extension.
@@ -242,5 +242,3 @@ Names this set does not use and must not acquire, each with its replacement. Do 
 - **`ModelScore`** — `WorkerCapability`.
 - **The event taxonomy (hundreds of event names)** — event types are named by the kernel where a rule needs one; the list is not a document.
 - **Temporal as a core, PostgreSQL as task-state authority** — optional subordinate services only, never authority.
-
-Background: `AUTOBOT-GLOSSARY.background.md`.

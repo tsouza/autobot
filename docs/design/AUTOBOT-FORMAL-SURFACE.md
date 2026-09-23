@@ -3,7 +3,7 @@
 Authority for: the typed records, actions, safety invariants, negative variants and conditional-liveness assumptions of the **kernel only**; the planned Quint → Apalache → TLC → Rust-refinement stack; the review classification.
 Depends on: `AUTOBOT-THESIS.md` (I-1 … I-10), `AUTOBOT-KERNEL.md` (every section; §10 is the state-domain authority for every `state` field below).
 
-Absence of a compiled model, a check or a refinement test is never a design gap (§9).
+Absence of a compiled model, a check, or a refinement test is expected in the design phase and is never a design gap.
 
 ## 1. Shape
 
@@ -11,13 +11,13 @@ Absence of a compiled model, a check or a refinement test is never a design gap 
 Spec == Init /\ [][Next]_vars /\ Liveness
 ```
 
-`Init` is a finite valid kernel state; `Next` is the disjunction of the §3 actions, external observations, timers, faults and recovery. Safety properties are the §4 invariants. Liveness holds only under the §6 assumptions.
+`Init` is a finite valid kernel state. `Next` is the disjunction of the actions in §3, of external observations, timers, faults and recovery. Safety properties are invariants (§4). Liveness is conditional on the named assumptions of §6 and is never promised unconditionally.
 
-The model represents bounded abstract values, hashes and finite sets, not source trees, unbounded logs, tokens or CI output. `CommitAggregateCAS` and `CommitControlCAS` are the only transitions that commit canonical state; `ReconciliationCAS` records progress of already-committed intents and never changes a digest. Audit events, effect materialization and projections may explain or repair a missing record and never roll back, overwrite or reconstruct a newer aggregate. Extensions (learning, decision policy, mirroring, observability, CLI) are outside this model; a claim about them is not a claim of this surface.
+The model represents bounded abstract values, hashes and finite sets; it does not model source trees, unbounded logs, tokens or CI output. `CommitAggregateCAS` and `CommitControlCAS` are the only transitions that commit canonical state; `ReconciliationCAS` records progress of already-committed intents and never changes a digest. Audit events, effect materialization and projections are modelled so that they can explain or repair a missing record and never roll back, overwrite or reconstruct a newer aggregate. Extensions (learning, decision policy, mirroring, observability, CLI) are outside this model; a claim about them is not a claim of this surface.
 
 ## 2. Typed correspondence
 
-The first compilable model represents these records with these fields, each the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`). The refinement mapping is field by field; a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine.
+The first compilable model represents these records with these fields. Each field is the same field as in the M0 schema (`AUTOBOT-M0-AND-GATES.md`); the refinement mapping is field by field, and a kernel field missing from the model is a model defect. Every `state` domain is exactly its KERNEL §10 machine.
 
 ```text
 \* commit, receipt, audit                                         KERNEL §1–§2
@@ -331,5 +331,3 @@ OUT_OF_SCOPE         explicitly deferred and capability-gated
 ```
 
 Only the first two block design closure. Absence of a model, a check or a refinement test is `PLANNED_ARTIFACT` mapped to M0 or G-FORMAL; a reviewer still rejects a design whose states, actions, guards or refinement boundary cannot be made precise under this stack. Design readiness and implementation readiness are reported separately.
-
-Background: `AUTOBOT-FORMAL-SURFACE.background.md`.
