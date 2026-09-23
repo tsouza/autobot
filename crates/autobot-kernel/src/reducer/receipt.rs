@@ -132,7 +132,7 @@ impl JsonSchema for ActionName {
 /// deserialization applies too. Its serde form is [`TransitionReceiptFields`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "TransitionReceiptFields", into = "TransitionReceiptFields")]
-pub struct TransitionReceipt(TransitionReceiptFields);
+pub struct TransitionReceipt(Box<TransitionReceiptFields>);
 
 /// The fields of a [`TransitionReceipt`], and its serde form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -206,7 +206,7 @@ impl TransitionReceipt {
         if f.disabled_guards.windows(2).any(|w| w[0] >= w[1]) {
             return Err(ReceiptError::DisabledGuards);
         }
-        Ok(Self(fields))
+        Ok(Self(Box::new(fields)))
     }
 
     /// The receipt's fields.
@@ -238,7 +238,7 @@ impl TryFrom<TransitionReceiptFields> for TransitionReceipt {
 
 impl From<TransitionReceipt> for TransitionReceiptFields {
     fn from(r: TransitionReceipt) -> Self {
-        r.0
+        *r.0
     }
 }
 

@@ -82,7 +82,7 @@ impl Reducer for ToyReducer {
     fn reduce(state: &Toy, command: &ToyCommand, _: &Guards) -> Decision<Toy> {
         let with_count = |count| Toy { count, ..*state };
         match *command {
-            ToyCommand::Add(_) | ToyCommand::Emit(_) if state.held => {
+            ToyCommand::Add(_) | ToyCommand::Emit(_) | ToyCommand::Hold if state.held => {
                 Decision::Refuse(RefusalGround::Precondition("not held"))
             }
             ToyCommand::Add(n) => match state.count.checked_add(n) {
@@ -94,9 +94,6 @@ impl Reducer for ToyReducer {
                 with_count(state.count.saturating_add(1)),
                 (0..k).map(intent).collect(),
             )),
-            ToyCommand::Hold if state.held => {
-                Decision::Refuse(RefusalGround::Precondition("not held"))
-            }
             ToyCommand::Hold => Decision::Commit(Transition::control(
                 "RequestHold",
                 Toy {
@@ -524,16 +521,19 @@ fn a_receipt_made_without_a_guard_round_trips_with_that_guard_listed() {
     assert_eq!(parsed, receipt);
 }
 
+/// A named edit of an encoded receipt.
+type Edit = (&'static str, fn(&mut Value));
+
 #[test]
 fn parsing_refuses_a_receipt_that_breaks_its_invariants() {
     let (_, value) = receipt_json();
-    let edits: [(&str, fn(&mut Value)); 7] = [
+    let edits: [Edit; 7] = [
         ("schema version", |v| v["schema_version"] = json!(2)),
         ("sequence skips", |v| {
-            v["after"]["commit_sequence"] = json!(2)
+            v["after"]["commit_sequence"] = json!(2);
         }),
         ("other lane advanced", |v| {
-            v["after"]["control_revision"] = json!(1)
+            v["after"]["control_revision"] = json!(1);
         }),
         ("control lane with intents", |v| {
             v["lane"] = json!("CONTROL");
