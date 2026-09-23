@@ -121,7 +121,7 @@ fn an_armed_crash_fires_on_the_write_that_applies() {
     };
     let origin = autobot_kernel::store::Origin {
         create_receipt_uid: "r".parse().expect("uid"),
-        input_digest: autobot_kernel::store::fields_digest(""),
+        input_digest: autobot_kernel::digest::digest("").expect("digest"),
         context_uid: "ctx".parse().expect("uid"),
     };
     let mut create = autobot_kernel::store::Create::new(key.clone(), String::new(), origin);
@@ -184,7 +184,7 @@ fn a_write_timeout_that_did_not_apply_changes_nothing_and_reports_uncertain() {
     };
     let origin = autobot_kernel::store::Origin {
         create_receipt_uid: "r".parse().expect("uid"),
-        input_digest: autobot_kernel::store::fields_digest(""),
+        input_digest: autobot_kernel::digest::digest("").expect("digest"),
         context_uid: "ctx".parse().expect("uid"),
     };
     let op = StoreOp::Create {
@@ -296,7 +296,7 @@ fn a_late_write_lands_right_after_the_next_read_is_answered() {
     };
     let origin = autobot_kernel::store::Origin {
         create_receipt_uid: "r".parse().expect("uid"),
-        input_digest: autobot_kernel::store::fields_digest(""),
+        input_digest: autobot_kernel::digest::digest("").expect("digest"),
         context_uid: "ctx".parse().expect("uid"),
     };
     store.arm(Fault::LateWrite);

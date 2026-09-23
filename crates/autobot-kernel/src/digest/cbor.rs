@@ -45,10 +45,7 @@ impl Value {
                 head(out, 2, len(b.len()));
                 out.extend_from_slice(b);
             }
-            Self::Text(s) => {
-                head(out, 3, len(s.len()));
-                out.extend_from_slice(s.as_bytes());
-            }
+            Self::Text(s) => text(out, s),
             Self::Array(items) => {
                 head(out, 4, len(items.len()));
                 for item in items {
@@ -72,10 +69,56 @@ impl Value {
             }
             Self::Bool(false) => out.push(0xf4),
             Self::Bool(true) => out.push(0xf5),
-            Self::Null => out.push(0xf6),
+            Self::Null => out.push(NULL),
         }
         Ok(())
     }
+}
+
+/// An identity value: text, unsigned integers, `null` and arrays of them. It holds no map, so
+/// its encoding has no duplicate key to refuse and always exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Identity {
+    /// An unsigned integer.
+    Uint(u64),
+    /// A text string.
+    Text(String),
+    /// `null`.
+    Null,
+    /// An array.
+    Array(Vec<Identity>),
+}
+
+impl Identity {
+    /// The core deterministic encoding of the value, the one [`Value`] of the same shape has.
+    pub(super) fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.encode_into(&mut out);
+        out
+    }
+
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Uint(n) => head(out, 0, *n),
+            Self::Text(s) => text(out, s),
+            Self::Null => out.push(NULL),
+            Self::Array(items) => {
+                head(out, 4, len(items.len()));
+                for item in items {
+                    item.encode_into(out);
+                }
+            }
+        }
+    }
+}
+
+/// The encoding of `null`.
+const NULL: u8 = 0xf6;
+
+/// Appends the text string `s`.
+fn text(out: &mut Vec<u8>, s: &str) {
+    head(out, 3, len(s.len()));
+    out.extend_from_slice(s.as_bytes());
 }
 
 /// A length as a CBOR argument; `usize` is at most 64 bits on every supported target.

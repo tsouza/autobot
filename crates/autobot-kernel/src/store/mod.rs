@@ -42,10 +42,15 @@
 //!   read. Because the transition runs again after every conflict, an acceptance never
 //!   commits against registers other than those it checked. The permit's own state and a
 //!   second acceptance of one permit are open in #298; nothing here reads the `AdmissionStamp`.
-//! - The domain and control digests are the SHA-256 of the encoded fields ([`fields_digest`]).
-//!   The store moves a kind's fields as opaque text, split by the field partition into
+//! - The store moves a kind's fields as opaque text, split by the field partition into
 //!   [`Status::domain`] and [`Status::control`]; a domain commit writes only the first, a
-//!   control commit only the second, so no commit can touch both lanes.
+//!   control commit only the second, so no commit can touch both lanes. [`Status`] declares
+//!   that partition, and a slot's or control receipt's before and after digests are
+//!   [`domain_digest`](crate::digest::domain_digest) and
+//!   [`control_digest`](crate::digest::control_digest) of the status: the domain digest covers
+//!   `state_revision` and the domain text, the control digest `control_revision` and the
+//!   control text. A commit whose status has no canonical encoding ends
+//!   [`CommitOutcome::Unencodable`].
 //! - A domain commit sets `last_receipt_ref` to its command's receipt; a control commit leaves
 //!   it, since its receipt is the ring entry it appends.
 //! - A lane commit refused by a guard of its transition ends [`CommitOutcome::Refused`] with
@@ -72,7 +77,7 @@ pub use commit::{
     DomainChange, EventFields, GuardRefusal, Initialize, InitializeOutcome, Pin, Transition,
 };
 pub use create::{Create, CreateOutcome};
-pub use object::{Kind, Object, ObjectKey, Origin, ResourceVersion, Status, fields_digest};
+pub use object::{Kind, Object, ObjectKey, Origin, ResourceVersion, Status};
 pub use op::{OpKind, Protocol, ProtocolError, Step, StoreOp, StoreResult, WatchEvent};
 pub use watch::Triggers;
 

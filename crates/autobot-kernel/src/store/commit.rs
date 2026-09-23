@@ -2,8 +2,9 @@
 //! reconciliation-only CAS that clears a pending slot.
 
 use super::cas::{Cas, Decide, Decision, Missing};
-use super::object::{Object, ObjectKey, Status, fields_digest};
+use super::object::{Object, ObjectKey, Status};
 use super::op::{Protocol, ProtocolError, Step, StoreResult};
+use crate::digest::{EncodeError, control_digest, domain_digest};
 use crate::error::RingError;
 use crate::profile::ControlRing;
 use crate::status::{
@@ -227,6 +228,8 @@ pub enum CommitOutcome {
     LaneMismatch,
     /// A counter would pass `i64::MAX`.
     Overflow,
+    /// The status has no canonical encoding, so its domain or control digest does not exist.
+    Unencodable(EncodeError),
     /// The aggregate's status is not initialized.
     Uninitialized,
     /// The aggregate is missing.
@@ -378,7 +381,12 @@ fn domain_commit(
         .state_revision
         .next()
         .map_err(|_| CommitOutcome::Overflow)?;
-    let after_digest = fields_digest(&change.fields);
+    let mut next = status.clone();
+    next.domain = change.fields;
+    next.envelope.state_revision = proposed_revision;
+    next.envelope.commit_sequence = commit_sequence;
+    let before_digest = domain_digest(status).map_err(CommitOutcome::Unencodable)?;
+    let after_digest = domain_digest(&next).map_err(CommitOutcome::Unencodable)?;
     let audit_envelope = change.event.envelope(CommitFacts {
         aggregate_uid: aggregate,
         commit_sequence,
@@ -391,7 +399,7 @@ fn domain_commit(
         command_uid: command.clone(),
         receipt_uid: change.receipt.uid.clone(),
         commit_sequence,
-        before_digest: fields_digest(&status.domain),
+        before_digest,
         after_digest,
         expected_revision: envelope.state_revision,
         proposed_revision,
@@ -400,10 +408,6 @@ fn domain_commit(
         effect_intents: change.effect_intents,
         state: PendingCommitState::Occupied,
     };
-    let mut next = status.clone();
-    next.domain = change.fields;
-    next.envelope.state_revision = proposed_revision;
-    next.envelope.commit_sequence = commit_sequence;
     next.envelope.pending_commit = Some(slot);
     next.envelope.last_receipt_ref = Some(change.receipt);
     Ok(next)
@@ -426,7 +430,12 @@ fn control_commit(
         .control_revision
         .next()
         .map_err(|_| CommitOutcome::Overflow)?;
-    let after_control_digest = fields_digest(&change.fields);
+    let mut next = status.clone();
+    next.control = change.fields;
+    next.envelope.control_revision = control_revision;
+    next.envelope.commit_sequence = commit_sequence;
+    let before_control_digest = control_digest(status).map_err(CommitOutcome::Unencodable)?;
+    let after_control_digest = control_digest(&next).map_err(CommitOutcome::Unencodable)?;
     let principal = change.event.actor.clone();
     let audit_envelope = change.event.envelope(CommitFacts {
         aggregate_uid: aggregate,
@@ -440,22 +449,18 @@ fn control_commit(
         control_uid: command.clone(),
         control_revision,
         commit_sequence,
-        before_control_digest: fields_digest(&status.control),
+        before_control_digest,
         after_control_digest,
         audit_envelope,
         principal,
         state: ControlReceiptState::Unpublished,
     };
-    let mut next = status.clone();
     let ring = next
         .envelope
         .control_receipt_ring
         .as_mut()
         .ok_or(CommitOutcome::NoControlLane)?;
     ring.append(receipt, limits).map_err(CommitOutcome::Ring)?;
-    next.control = change.fields;
-    next.envelope.control_revision = control_revision;
-    next.envelope.commit_sequence = commit_sequence;
     Ok(next)
 }
 
