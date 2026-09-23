@@ -1,0 +1,33 @@
+name = "watch-expire"
+summary = "An expired watch is replaced by a relist, which makes every object changed since the last listing due."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "relist"
+expect = ["a"]
+
+[[steps]]
+do = "initialize"
+object = "a"
+expect = "initialized"
+
+[[steps]]
+do = "create"
+object = "b"
+expect = "created"
+
+[[steps]]
+do = "inject"
+fault = { kind = "expire_watch" }
+
+[[steps]]
+do = "poll"
+expect = ["a", "b"]
+
+[[steps]]
+do = "poll"
+expect = []

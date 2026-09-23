@@ -1,0 +1,36 @@
+name = "uid-precondition"
+summary = "A status write conditioned on a UID other than the object's is refused even at the current resource version, so a write meant for an earlier incarnation of a name never lands on a new one."
+
+[[steps]]
+do = "create"
+object = "a"
+expect = "created"
+
+[[steps]]
+do = "initialize"
+object = "a"
+domain = "zero"
+expect = "initialized"
+
+[[steps]]
+do = "read"
+object = "a"
+label = "current"
+
+[[steps]]
+do = "write"
+from = "current"
+uid = "an-earlier-incarnation"
+expect = "conflict"
+
+[[steps]]
+do = "check"
+object = "a"
+state_revision = 0
+commit_sequence = 0
+domain = "zero"
+
+[[steps]]
+do = "write"
+from = "current"
+expect = "updated"

@@ -9,8 +9,6 @@ publish.workspace = true
 
 [dependencies]
 autobot-adapters.workspace = true
-
-[dev-dependencies]
 autobot-kernel.workspace = true
 
 [lints]
