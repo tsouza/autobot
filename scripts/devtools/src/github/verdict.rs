@@ -10,9 +10,10 @@
 //!
 //! Only verdicts written by an account with write access to the repository count. An author
 //! qualifies when the comment's `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`
-//! and the repository permission GitHub reports for the account is `admin` or `write`; the
-//! association filter keeps accounts that cannot be collaborators (bots, deleted users,
-//! outsiders) away from the permission lookup, which fails for them.
+//! and the repository permission GitHub reports for the account is `admin` or `write`. An
+//! author with any other association holds no role in the repository and so cannot have write
+//! access; the association filter skips the permission lookup for such an author, one request
+//! per comment that could only confirm a rejection.
 //!
 //! The latest counting verdict, in comment order, decides the status posted on the head SHA
 //! with context [`CONTEXT`]:
