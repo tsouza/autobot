@@ -111,6 +111,8 @@ pub const VOCABULARY: &[&str] = &[
     "PAUSE",
     "QUIESCE",
     "SUPERSEDE",
+    "FAIL",
+    "CANCEL",
     "KILL_SWITCH",
     "ADJUDICATE_OPERATION",
     "ADJUDICATE_CONFLICT",
@@ -151,6 +153,7 @@ pub const VOCABULARY: &[&str] = &[
     "ON_TRACK",
     "DRIFT_RISK",
     "DRIFTED",
+    "STUCK",
     "COMPROMISED",
     "INSUFFICIENT_EVIDENCE",
     // Extension-gate states named but not printed in a core document.

@@ -15,7 +15,7 @@ Trust is granted to exactly these, and each is trusted for exactly the stated th
 | **EffectBroker** | Being the only path for privileged filesystem, forge, CI, deployment and credential effects; validating grant, scope and capability before every such call. | Deciding what is accepted — acceptance is the Context controller's CAS (KERNEL §3). |
 | **Authority witness** | Holding dispatch authority in a separate failure domain and signing restore receipts. AutoBot cannot self-assert that an old installation is fenced. | Anything else; it is an external control plane (KERNEL §7). |
 | **Artifact store** | Independent, versioned, restorable custody outside the worker-node loss domain. | Being the source of truth for anything but the bytes it stores. |
-| **Authenticated human principals** | Requesting holds, pauses, reviews, plan revisions, adjudications and kill switches through commands and Interventions, under the roles `WorkContext.spec` names; accepting and rejecting proposals, each by the principal ONBOARD §1 step 6 names for it, through the CLI. | Editing protected status. A human acts through the same command path as everything else. |
+| **Authenticated human principals** | Requesting holds, pauses, plan revisions, plan failure and cancellation, adjudications and kill switches through commands and Interventions, under the roles `WorkContext.spec` names (ROLES §5); accepting a plan or a plan revision, only as the reviser `WorkContext.spec.revisionAuthority`; accepting and rejecting proposals, each by the principal ONBOARD §1 step 6 names for it, through the CLI. | Editing protected status. A human acts through the same command path as everything else. |
 
 ## Not trusted
 

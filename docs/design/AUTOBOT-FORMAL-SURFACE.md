@@ -108,14 +108,19 @@ PlanRevisionState    = [plan_uid, revision, state]
 EvidenceBundle       = [uid, candidate_digest, base_head, head, plan_revision, scope_digest,
                         charter_digest, criteria_digest, environment_digest,
                         provider_runs, ci_attestations, review_attestations, reviewer_identity,
+                        correlated,              \* the reviewer ran on the worker's model (ROLES §3)
                         remote_generation, expiry, state]
 IntegrationBasis     = [uid, plan_uid, basis_generation, source_heads, base_head, overlap_set,
                         merge_order, integrated_candidate, verification_uid, state]
 
 \* scope, identity, fencing, continuation                         KERNEL §6, §9; ROLES §2
-ScopeCapsule         = [uid, task_run_uid, repository_uids, path_globs, tools, effect_kinds,
-                        non_goals, consequence_class, charter_digest, charter_entries,
-                        digest, state]
+ScopeCapsule         = [uid, task_run_uid, objective, expected_outcome, repository_uids, path_globs,
+                        branches, tools, effect_kinds, non_goals, acceptance_evidence,
+                        consequence_class, budget_limit, deadline, attempt_limit, repair_limit,
+                        plan_uid, plan_revision, milestone_revision, task_revision,
+                        charter_digest, charter_entries,
+                        digest,                  \* over every field above: the capsule digest
+                        state]
 ScopeCheck           = [capsule_uid, requested_path, canonical_path, inode, link_target,
                         verdict ∈ {ALLOW, DENY, DETECTED_AT_CHECKPOINT}]
 ExecutionIdentity    = [uid, task_run_uid, workspace_uid, agent_run_uid, execution_epoch,
@@ -249,8 +254,10 @@ ReconcileAmbiguousEffect · ProveNonApplication · EscalateUnresolvedOperation �
 BlockUnsupportedOperation
 
 \* plans and evidence
-VerifyPlanSnapshot · VerifyGraphMembers · RecordGraphActivationReceipt · FailGraphActivation
-AdmitGraphMember · RecordEvidenceBundle (refuses a reviewer below the review tier of the class) · InvalidateEvidence · RecordAcceptanceAdjudication
+VerifyPlanSnapshot · VerifyGraphMembers · RecordGraphActivationReceipt · AdmitGraphMember · InvalidateEvidence
+FailGraphActivation         precondition no activation command submitted, or its receipt REJECTED; never while it is UNCERTAIN
+RecordEvidenceBundle        refuses a reviewer below reviewTier of the class, a reviewer in the worker's session, a correlated review as the required review of a class other than REVERSIBLE, and a required SECURITY_OR_DATA_INTEGRITY review from a configuration outside securityReviewers
+RecordAcceptanceAdjudication   Task controller; precondition every bundle it references RECORDED, unexpired and at the current remote generation; records the uid and digest of each
 
 \* charter
 AcceptCharterRevision       human principal only, every entry accepted; refuses a law marked advisory and a project entry that relaxes an inherited one
@@ -286,7 +293,21 @@ ExpireOldGrant · MapRestoredIdentity · EnableRestoreDispatch
 WriteOutbox · DrainOutbox · RecordCanonicalRecord · CreateGapForMissingRecord · CensorUsage · SettleUsage
 
 \* judgment
-ComputeEligibleSet · RecordDecision · AbstainDecision
+ComputeEligibleSet · AbstainDecision
+RecordDecision              Decision controller only; commits RECORDED only; precondition selected ∈ the eligible set whose digest it records, computed before the question
+ClassifyFinding             a RecordDecision of the finding-severity question class over the eligible set computed from the finding's fields; an absent or abstaining judge selects the highest eligible severity; the Finding's CLASSIFIED and the Manager's disposition are outside the model (§2)
+
+\* interventions: no actions of their own (§2); each becomes the kernel action listed
+HOLD, KILL_SWITCH           RequestHold
+RESUME of a hold            ReleaseHold, then CompleteHoldRelease once hold_causes is empty
+RESUME of a QUIESCE or SUPERSEDE   ResumePlanRevision
+QUIESCE                     QuiescePlan
+SUPERSEDE                   QuiescePlan, then SupersedePlanRevision
+FAIL, CANCEL                QuiescePlan while the register holds the revision ACTIVE, then RetirePlanAuthority once the Plan is terminal
+ADJUDICATE_OPERATION        AdjudicateUnresolvedOperation
+ADJUDICATE_CONFLICT         AdjudicateConflict
+PAUSE, RESUME of a PAUSE    none: they change only Plan.phase, which gates TaskRun admission, revokes no accepted effect and weakens no hold (KERNEL §5), so no invariant of §4 depends on them
+                            (the role a principal needs for each action, ROLES §5, is admission's and the owning controller's check, assumed by KERNEL §11 and not modelled)
 
 \* environment
 DetectFault · CrashProcess · PartitionAPI · ProviderTimeout · DuplicateDelivery · ReorderDelivery · Tick
@@ -337,8 +358,8 @@ Each is a property of the bounded model and maps to a guard in §3 and to a fixt
 
 **I-6 Evidence**
 - F-27 *Fresh evidence.* Acceptance binds candidate, base and head, contract, environment, provider run, reviewer identity and current remote generation; any change invalidates; a delayed result for an old basis satisfies nothing.
-- F-28 *Independence.* The reviewer identity of an accepted bundle differs from the worker's session; `WorkerFinished` never implies `TaskAccepted`.
-- F-29 *Integration.* Overlapping changes have one current basis and merge order; milestone acceptance references the integrated candidate.
+- F-28 *Independence.* The reviewer identity of an accepted bundle differs from the worker's session; a `correlated` review is required-review evidence only for `REVERSIBLE`; the required review of `SECURITY_OR_DATA_INTEGRITY` work comes only from a configuration in `securityReviewers`; `WorkerFinished` never implies `TaskAccepted`.
+- F-29 *Integration.* Every milestone's change sets have one current basis and merge order; milestone acceptance references the integrated candidate of its final basis.
 
 **I-7 Projection** — F-30 No external observation changes an aggregate without a controller CAS; forge text never becomes a command without actor validation.
 
