@@ -43,7 +43,8 @@
 //! - The command path, slot repair and audit publication, projections and the create command
 //!   path have no kernel API yet; their scenarios resolve the ports of
 //!   `autobot_testkit::registry::g_commit`, and each implementation task registers its port.
-//! - The store has no delete operation, so the delete scenario observes only a refused delete.
+//! - The delete scenario observes only a delete refused before the create receipt is terminal,
+//!   not a delete after it.
 //! - The design names no condition type for the ring-full degraded condition, so the ring
 //!   scenario checks the refusal and the kept receipts, not a condition.
 //! - The in-memory store has no per-kind outage; the receipt-store outage is the scenarios'

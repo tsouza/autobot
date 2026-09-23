@@ -124,6 +124,13 @@ pr-title title:
 judge pr:
     {{rs}} scripts/judge.rs {{pr}}
 
+# Print review rounds, blocking-finding classes, judge answers against the reviews, time to merge,
+# lines changed and red required runs on main for the pull requests merged from `from` to `to`
+# (UTC dates `YYYY-MM-DD`, inclusive; `to` defaults to `from`) as Markdown on stdout.
+[positional-arguments]
+delivery-ledger from *to:
+    {{rs}} scripts/delivery_ledger.rs "$@"
+
 # CI job: formatting.
 ci-fmt: fmt-check
 
