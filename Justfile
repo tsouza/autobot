@@ -62,9 +62,6 @@ trace-lint *args:
 # Everything CI checks, locally: every CI job.
 ci: ci-fmt ci-clippy ci-test ci-doc ci-deny ci-machete
 
-# Everything CI checks, locally.
-ci: fmt-check clippy layering test doc deny machete
-
 # Apply the ruleset and repository settings to GitHub; `--dry-run` only prints the diff.
 repo-settings *args:
     {{rs}} scripts/repo_settings.rs {{args}}
