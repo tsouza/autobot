@@ -322,10 +322,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no pr-title step in the labels job:\n{jobs}"));
         // The title reaches the shell only as an environment variable, never interpolated into
         // the command line, so a title cannot inject shell syntax.
-        assert!(
-            step.contains("run: just pr-title \"$PR_TITLE\"\n"),
-            "{step}"
-        );
+        assert!(step.contains("    just pr-title \"$PR_TITLE\"\n"), "{step}");
         assert!(
             step.contains("PR_TITLE: ${{ github.event.pull_request.title }}"),
             "{step}"
@@ -344,5 +341,79 @@ mod tests {
                 .any(|t| t == "edited"),
             "{types}"
         );
+    }
+
+    /// The `run:` block of the pr-title step, dedented, as GitHub hands it to bash.
+    fn title_step_script() -> String {
+        let (_, after) = WORKFLOW
+            .split_once("\n        run: |\n")
+            .unwrap_or_else(|| panic!("no block `run:` in labels.yml:\n{WORKFLOW}"));
+        let block: Vec<&str> = after
+            .lines()
+            .take_while(|l| l.starts_with("          "))
+            .map(|l| &l["          ".len()..])
+            .collect();
+        assert!(
+            block.iter().any(|l| l.contains("just pr-title")),
+            "{block:?}"
+        );
+        block.join("\n") + "\n"
+    }
+
+    /// Runs the pr-title step with a stub `just` that has the `pr-title` recipe only when
+    /// `has_recipe`, and whose `pr-title` recipe records its arguments and rejects the title.
+    fn run_title_step(has_recipe: bool, title: &str) -> (Option<i32>, String, String) {
+        use crate::worktree::test_support::TempDir;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let log = tmp.0.join("calls");
+        let stub = tmp.0.join("just");
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\n\
+                 if [ \"$1\" = --show ]; then [ {has} = 1 ] && [ \"$2\" = pr-title ]; exit; fi\n\
+                 printf '%s\\n' \"$@\" >> '{log}'\n\
+                 exit 1\n",
+                has = u8::from(has_recipe),
+                log = log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            tmp.0.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let out = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-eo", "pipefail", "-c"])
+            .arg(title_step_script())
+            .env("PATH", path)
+            .env("PR_TITLE", title)
+            .output()
+            .unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap_or_default();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            calls,
+        )
+    }
+
+    #[test]
+    fn the_title_step_warns_instead_of_failing_before_the_recipe_is_on_the_default_branch() {
+        let (code, stdout, calls) = run_title_step(false, "Update README");
+        assert_eq!(code, Some(0), "{stdout}");
+        assert!(stdout.starts_with("::warning::"), "{stdout}");
+        assert_eq!(calls, "");
+    }
+
+    #[test]
+    fn the_title_step_runs_the_recipe_with_the_literal_title_and_keeps_its_verdict() {
+        let title = "Update \"README\" $HOME `id`";
+        let (code, stdout, calls) = run_title_step(true, title);
+        assert_eq!(code, Some(1), "{stdout}");
+        assert_eq!(calls, format!("pr-title\n{title}\n"));
     }
 }
