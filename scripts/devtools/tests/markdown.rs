@@ -46,17 +46,42 @@ fn tilde_and_longer_fences_hide_headings() {
 }
 
 #[test]
-fn tables_skip_fenced_blocks_and_respect_escapes_and_code() {
-    let text = "```\n| not | a table |\n```\n\n| k | v |\n|---|---|\n| `a|b` | c \\| d |\n";
-    let t = tables(text);
+fn tables_skip_fenced_blocks() {
+    let t =
+        tables("```\n| a | b |\n|---|---|\n| 1 | 2 |\n```\n\n| k | v |\n|---|---|\n| 1 | 2 |\n");
     assert_eq!(t.len(), 1);
-    assert_eq!(t[0][1], vec!["`a|b`".to_owned(), "c | d".to_owned()]);
+    assert_eq!(t[0][0], vec!["k".to_owned(), "v".to_owned()]);
 }
 
 #[test]
-fn code_spans_need_a_matching_closing_run() {
-    let t = tables("| a | b |\n|---|---|\n| it`s | ``x|y`` |\n");
-    assert_eq!(t[0][1], vec!["it`s".to_owned(), "``x|y``".to_owned()]);
+fn cells_split_on_every_unescaped_pipe_like_github() {
+    // GitHub splits `a|b` inside a code span, and renders `\|` as `|` even inside code.
+    let t = tables("| k | v |\n|---|---|\n| `a|b` | c |\n| `x\\|y` | z |\n");
+    assert_eq!(
+        t[0][1],
+        vec!["`a".to_owned(), "b`".to_owned(), "c".to_owned()]
+    );
+    assert_eq!(t[0][2], vec!["`x|y`".to_owned(), "z".to_owned()]);
+}
+
+#[test]
+fn outer_pipes_are_optional() {
+    let t = tables("a | b\n--|:-:\n| 1 | 2\n3 | 4 |\n");
+    assert_eq!(
+        t[0],
+        vec![
+            vec!["a".to_owned(), "b".to_owned()],
+            vec!["1".to_owned(), "2".to_owned()],
+            vec!["3".to_owned(), "4".to_owned()],
+        ]
+    );
+}
+
+#[test]
+fn pipe_lines_without_a_delimiter_row_are_not_a_table() {
+    assert!(tables("| a | b |\n| 1 | 2 |\n").is_empty());
+    // A delimiter row with a different cell count does not start a table either.
+    assert!(tables("| a | b |\n|---|\n").is_empty());
 }
 
 #[test]
@@ -69,4 +94,10 @@ fn only_the_second_row_is_a_delimiter() {
             vec!["-".to_owned(), "-".to_owned()]
         ]
     );
+}
+
+#[test]
+fn a_blank_line_ends_the_table() {
+    let t = tables("| a |\n|---|\n| 1 |\n\n| 2 |\n");
+    assert_eq!(t, vec![vec![vec!["a".to_owned()], vec!["1".to_owned()]]]);
 }

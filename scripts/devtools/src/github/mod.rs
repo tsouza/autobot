@@ -24,7 +24,7 @@ pub fn resolve_token(
     let cli = set("AUTOBOT_GH_CLI").unwrap_or_else(|| "gh".to_owned());
     let token = cli_token(&cli)?.trim().to_owned();
     if token.is_empty() {
-        return Err(Error::Http(format!("`{cli} auth token` printed no token")));
+        return Err(Error::Token(format!("`{cli} auth token` printed no token")));
     }
     Ok(token)
 }

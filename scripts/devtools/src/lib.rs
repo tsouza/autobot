@@ -26,6 +26,9 @@ pub enum Error {
     /// A GitHub API request failed.
     #[cfg(feature = "github")]
     Http(String),
+    /// No GitHub API token could be found.
+    #[cfg(feature = "github")]
+    Token(String),
 }
 
 impl std::fmt::Display for Error {
@@ -35,6 +38,8 @@ impl std::fmt::Display for Error {
             Self::Parse(msg) => write!(f, "parse error: {msg}"),
             #[cfg(feature = "github")]
             Self::Http(msg) => write!(f, "GitHub API error: {msg}"),
+            #[cfg(feature = "github")]
+            Self::Token(msg) => write!(f, "no GitHub token: {msg}"),
         }
     }
 }

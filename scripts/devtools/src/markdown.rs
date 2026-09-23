@@ -79,90 +79,80 @@ pub fn heading_of(line: &str) -> Option<(usize, &str)> {
     }
 }
 
-/// Every pipe table outside fenced code in `text`, each as rows of trimmed cells, without the
-/// delimiter row (the second row of a table, made of dashes and colons).
+/// Every table outside fenced code in `text`, following GitHub Flavored Markdown: a table is a
+/// header row followed by a delimiter row with the same number of cells, and runs until a blank
+/// line or a line without `|`. It is returned as rows of trimmed cells, without the delimiter row.
 ///
-/// Cells are split on unescaped `|` outside code spans; `\\|` yields a literal `|`. A code span
-/// is a backtick run closed by a later run of the same length; an unmatched run is literal text.
+/// Outer pipes are optional. Cells split on every `|` not escaped as `\\|`, including inside
+/// code spans, and `\\|` yields a literal `|`, as GitHub renders them.
 #[must_use]
 pub fn tables(text: &str) -> Vec<Vec<Vec<String>>> {
     let mut out = Vec::new();
-    let mut current: Vec<Vec<String>> = Vec::new();
-    let mut delimiter_seen = false;
     let mut fence = Fence::default();
-    for line in text.lines() {
-        let fenced = fence.step(line);
-        let line = line.trim();
-        if !fenced && line.starts_with('|') && line.ends_with('|') && line.len() > 1 {
-            let cells = split_cells(&line[1..line.len() - 1]);
-            let delimiter = current.len() == 1
-                && !delimiter_seen
-                && cells
-                    .iter()
-                    .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':')));
-            if delimiter {
-                delimiter_seen = true;
-            } else {
-                current.push(cells);
-            }
-        } else {
-            delimiter_seen = false;
-            if !current.is_empty() {
-                out.push(std::mem::take(&mut current));
-            }
+    let lines: Vec<(bool, &str)> = text.lines().map(|l| (fence.step(l), l)).collect();
+    let mut i = 0;
+    while i + 1 < lines.len() {
+        let (fenced, line) = lines[i];
+        let (next_fenced, next) = lines[i + 1];
+        let header = split_row(line);
+        let is_table = !fenced
+            && !next_fenced
+            && line.contains('|')
+            && is_delimiter(next)
+            && split_row(next).len() == header.len();
+        if !is_table {
+            i += 1;
+            continue;
         }
-    }
-    if !current.is_empty() {
-        out.push(current);
+        let mut table = vec![header];
+        i += 2;
+        while i < lines.len() {
+            let (fenced, line) = lines[i];
+            if fenced || line.trim().is_empty() || !line.contains('|') {
+                break;
+            }
+            table.push(split_row(line));
+            i += 1;
+        }
+        out.push(table);
     }
     out
 }
 
-/// Splits the inside of a table row into trimmed cells.
-fn split_cells(row: &str) -> Vec<String> {
-    let bytes = row.as_bytes();
-    let run_at = |i: usize| bytes[i..].iter().take_while(|&&b| b == b'`').count();
+/// Whether `line` is a table delimiter row: cells of dashes with optional edge colons.
+fn is_delimiter(line: &str) -> bool {
+    line.contains('-')
+        && split_row(line).iter().all(|c| {
+            let c = c.trim_start_matches(':').trim_end_matches(':');
+            !c.is_empty() && c.bytes().all(|b| b == b'-')
+        })
+}
+
+/// Splits one table row into trimmed cells, dropping optional outer pipes.
+fn split_row(line: &str) -> Vec<String> {
     let mut cells = Vec::new();
     let mut cell = String::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if bytes.get(i + 1) == Some(&b'|') => {
+    let mut chars = line.trim().chars().peekable();
+    if chars.peek() == Some(&'|') {
+        chars.next();
+    }
+    let mut trailing_pipe = false;
+    while let Some(ch) = chars.next() {
+        trailing_pipe = false;
+        match ch {
+            '\\' if chars.peek() == Some(&'|') => {
                 cell.push('|');
-                i += 2;
+                chars.next();
             }
-            b'`' => {
-                let len = run_at(i);
-                // Find a closing run of exactly the same length.
-                let mut j = i + len;
-                let mut close = None;
-                while j < bytes.len() {
-                    if bytes[j] == b'`' {
-                        let l = run_at(j);
-                        if l == len {
-                            close = Some(j);
-                            break;
-                        }
-                        j += l;
-                    } else {
-                        j += 1;
-                    }
-                }
-                let end = close.map_or(i + len, |c| c + len);
-                cell.push_str(&row[i..end]);
-                i = end;
-            }
-            b'|' => {
+            '|' => {
                 cells.push(std::mem::take(&mut cell).trim().to_owned());
-                i += 1;
+                trailing_pipe = true;
             }
-            _ => {
-                let ch = row[i..].chars().next().unwrap_or_default();
-                cell.push(ch);
-                i += ch.len_utf8();
-            }
+            _ => cell.push(ch),
         }
     }
-    cells.push(cell.trim().to_owned());
+    if !trailing_pipe || !cell.trim().is_empty() {
+        cells.push(cell.trim().to_owned());
+    }
     cells
 }
