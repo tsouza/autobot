@@ -12,6 +12,7 @@ pub mod process;
 
 /// Error type shared by every module.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// A spawned command could not start or exited unsuccessfully.
     Command {

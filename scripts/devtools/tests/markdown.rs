@@ -35,3 +35,20 @@ fn tables_drop_separator_rows() {
         ]]
     );
 }
+
+#[test]
+fn tilde_and_longer_fences_hide_headings() {
+    let doc = "## A\n\n~~~\n## hidden\n~~~\n\n````\n```\n## also hidden\n````\n\n## B\n";
+    let a = section(doc, "A").unwrap();
+    assert!(a.contains("## hidden"));
+    assert!(a.contains("## also hidden"));
+    assert!(!a.contains("## B"));
+}
+
+#[test]
+fn tables_skip_fenced_blocks_and_respect_escapes_and_code() {
+    let text = "```\n| not | a table |\n```\n\n| k | v |\n|---|---|\n| `a|b` | c \\| d |\n";
+    let t = tables(text);
+    assert_eq!(t.len(), 1);
+    assert_eq!(t[0][1], vec!["`a|b`".to_owned(), "c | d".to_owned()]);
+}
